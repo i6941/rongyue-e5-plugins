@@ -105,7 +105,7 @@ body.ingame main{top:0;bottom:0}
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
-  <div id="cfgfoot"><button id="cfgdef" type="button">恢复默认</button><button id="cfgdone" type="button">完成</button></div>
+  <div id="cfgfoot"><button id="cfgdef" type="button">恢复默认</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
 <script>
@@ -144,6 +144,34 @@ function bindTap(el,fn){
     });
   };
 })();
+/* 运行库把核心文件缓存在 IndexedDB 的 EmulatorJS-core 库里。
+   之前那次卡死很可能把不完整/损坏的 .data 写进了缓存，之后每次启动都用这份
+   坏文件 → wasm 陷阱 → 加载完两三秒就死。清一次缓存让它重新从本地文件取。 */
+function clearEjsCoreCache(cb){
+  try{
+    if(!window.indexedDB){ if(cb) cb('no-idb'); return; }
+    var rq=indexedDB.deleteDatabase('EmulatorJS-core');
+    rq.onsuccess=function(){ if(cb) cb('ok'); };
+    rq.onerror=function(){ if(cb) cb('err'); };
+    rq.onblocked=function(){ if(cb) cb('blocked'); };
+  }catch(e){ if(cb) cb('ex '+e); }
+}
+try{
+  if(!localStorage.getItem('e5corecleared')){
+    localStorage.setItem('e5corecleared','1');
+    clearEjsCoreCache(function(r){ try{ logs.push('清核心缓存 '+r); }catch(e){} });
+  }
+}catch(e){}
+
+/* 全局错误监听：wasm 陷阱只会给一句 "RuntimeError: ...", 这里把文件名和行号也留下 */
+window.addEventListener('error',function(e){
+  try{
+    var msg=(e.message||'')+' @ '+(e.filename||'?')+':'+(e.lineno||'?')+':'+(e.colno||'?');
+    logs.push('uncaught '+msg); if(logs.length>20) logs.shift();
+    lastErr='uncaught '+msg.slice(0,160);
+    if(e.error&&e.error.stack){ logs.push('estack '+String(e.error.stack).replace(/\s+/g,' ').slice(0,300)); if(logs.length>20) logs.shift(); }
+  }catch(x){}
+},true);
 var BASE='/plugins/e5-emulator/';
 
 /* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
@@ -398,7 +426,7 @@ function releaseAll(){ for(var b in held){ if(held[b]===true) releaseBtn(b); } }
 /* ---- 自动存档 / 自动读档 ----
    状态存到 IndexedDB（和运行库自己的存档分开，互不干扰）：
    玩的过程中每 15 秒存一次，退出游戏时再存一次；下次进同一个游戏自动读回来。 */
-var idbPromise=null, autoLoaded=false, autoTick=0;
+var idbPromise=null, autoLoaded=false, autoTick=0, stallTicks=0;
 function idb(){
   if(!idbPromise){
     idbPromise=new Promise(function(res,rej){
@@ -502,6 +530,9 @@ function start(i){
   window.EJS_disableAutoLang=false;
   window.EJS_hideSettings=true;
   window.EJS_defaultOptions={};
+  /* 旧版核心（不带 WebGL2）：设备上 fceumm-legacy-wasm.data 也在，
+     万一 WebGL2 路径在这台机器的 WebKit 上有问题，可以切过去试。 */
+  try{ if(localStorage.getItem('e5legacy')==='1') window.EJS_forceLegacyCores=true; }catch(e){}
   window.EJS_ready=function(){
     phase='core-ready'; marks.coreReady=Date.now()-t0;
     applyKeymap();
@@ -749,6 +780,16 @@ bindTap($('cfgdef'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
   saveKeymap(); applyKeymap(); refreshCfg(); $('cfgtip').textContent='已恢复默认';
 });
+/* 核心版本切换（WebGL2 / 旧版）+ 清掉运行库缓存的核心文件 */
+function coreLabel(){ try{ return localStorage.getItem('e5legacy')==='1'?'旧版':'WebGL2'; }catch(e){ return 'WebGL2'; } }
+bindTap($('cfgnode'),function(){
+  try{
+    var legacy=localStorage.getItem('e5legacy')==='1';
+    if(legacy){ localStorage.setItem('e5legacy','0'); $('cfgtip').textContent='核心：WebGL2（下次进游戏生效）'; }
+    else { localStorage.setItem('e5legacy','1'); $('cfgtip').textContent='核心：旧版（下次进游戏生效）'; }
+    clearEjsCoreCache(function(r){ $('cfgtip').textContent='核心：'+coreLabel()+' · 缓存已清 '+r; });
+  }catch(e){ $('cfgtip').textContent='切换失败 '+e; }
+});
 
 /* 画面模式：
    wide  = 左右铺满、上下保持同一缩放比（不拉伸，像素不变形）——默认
@@ -841,6 +882,15 @@ setInterval(function(){
       }
     }catch(e){}
     $('tfps').innerHTML='<b>'+(window.__fps?window.__fps.toFixed(1):'--')+'</b> FPS';
+    /* 卡死检测：帧号连续 5 秒不动 = 主循环已经死了（wasm 陷阱），给个提示 */
+    try{
+      var g2=gm();
+      if(g2&&typeof g2.getFrameNum==='function'){
+        var fn=g2.getFrameNum();
+        if(window.__lastFrameNum===fn) stallTicks++; else { stallTicks=0; window.__lastFrameNum=fn; }
+        if(stallTicks>=5){ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; }
+      }
+    }catch(e){}
     autoTick++;
     if(autoTick%15===0) autoSave();   /* 每 15 秒自动存档一次 */
     /* 加载阶段把进度显示在顶部条的分辨率位置（核心编译慢，让用户知道在等什么） */
@@ -892,6 +942,8 @@ function snapshot(){
     if(em){ s.started=!!em.started; s.paused=!!em.paused; s.failedToStart=!!em.failedToStart;
       s.ejsText=(em.textElem&&em.textElem.innerText||'').slice(0,90);
       s.ejsWebgl2=(em.webgl2Enabled===true); s.ejsSupWebgl2=(em.supportsWebgl2===true);
+      try{ if(em.controls&&em.controls[0]){ var ks=Object.keys(em.controls[0]); s.ctrlN=ks.length;
+        s.ctrl=ks.map(function(k){ var c=em.controls[0][k]; return k+':'+((c&&(c.label||c.name))||''); }).join(','); } }catch(e2){}
       var g=em.gameManager; s.hasGameManager=!!g;
       if(g){ s.fn=g.functions?Object.keys(g.functions).length:0;
         try{ s.frame=g.functions.getFrameNum(); }catch(e){}
@@ -911,7 +963,16 @@ function snapshot(){
   console[k]=function(){
     var a=Array.prototype.slice.call(arguments).map(function(x){ try{ return typeof x==='object'?JSON.stringify(x):String(x); }catch(e){ return String(x); } }).join(' ');
     logs.push(k+': '+a.slice(0,240)); if(logs.length>20) logs.shift();
-    if(k==='error') lastErr=a.slice(0,180);
+    if(k==='error'){
+      lastErr=a.slice(0,180);
+      /* 把异常的堆栈也留下来：wasm 陷阱只给一句话，看不出是在哪条链上抛的 */
+      for(var i=0;i<arguments.length;i++){
+        try{
+          var st=arguments[i]&&arguments[i].stack;
+          if(st){ logs.push('stack '+String(st).replace(/\s+/g,' ').slice(0,300)); if(logs.length>20) logs.shift(); break; }
+        }catch(x){}
+      }
+    }
     try{ if(typeof orig==='function') orig.apply(console,arguments); }catch(e){}
   };
 });
