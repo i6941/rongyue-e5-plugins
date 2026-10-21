@@ -355,10 +355,22 @@ var held={}, keyLog=[], keyCount=0, lastBackId='', lastBackTime=0, backKeyupSinc
    （如果按住 5 时系统上报了 5 的 keyup，那是硬件/内核只能报一个键）。 */
 function keyLogPush(s){ keyLog.push(s); if(keyLog.length>40) keyLog.shift(); }
 
+function btnMax(){
+  /* 核心声明的按键数量（controls[0] 的长度）。超出这个范围的按钮号发过去，
+     会让 wasm 里的输入回调以错误的签名被 call_indirect 调用，直接抛陷阱、
+     主循环停摆 —— 表现就是"一按键就死机"。 */
+  try{
+    var em=window.EJS_emulator;
+    if(em&&em.controls&&em.controls[0]&&em.controls[0].length) return em.controls[0].length;
+  }catch(e){}
+  return 0;
+}
 function sim(btn,val){
   try{
     var g=gm();
     if(!g||typeof g.simulateInput!=='function'){ window.__simErr='no-gm'; return false; }
+    var mx=btnMax();
+    if(mx>0 && btn>=mx){ window.__simErr='btn-oob '+btn+'>='+mx; return false; }
     g.simulateInput(0,btn,val);
     simCalls++;
     window.__lastBtn=btn; window.__lastVal=val;

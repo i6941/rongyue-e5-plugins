@@ -83,7 +83,7 @@ def main() -> int:
     print("webkit cache:", out.strip() or err.strip())
 
     for path in ["/plugins/e5-emulator/index.html", "/plugins/e5-keepalive/index.html",
-                 "/roms/fc-contra.nes"]:
+                 "/plugins/e5-emulator/index.html"]:
         rc, out, _e = sh(client, "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8088" + path)
         print("check", path, "->", out.strip())
     client.close()

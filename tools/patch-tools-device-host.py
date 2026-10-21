@@ -51,6 +51,12 @@ def main():
                 text = text.replace(old, new)
                 changes.append("host -> E5_HOST")
 
+        # A commercial ROM name in the verification list would disclose the
+        # device's game library in a public repository.
+        if "/roms/fc-contra.nes" in text:
+            text = text.replace("/roms/fc-contra.nes", "/plugins/e5-emulator/index.html")
+            changes.append("commercial ROM path removed")
+
         # Any remaining mention is prose in a docstring; point it at the env var.
         if ADDRESS in text:
             text = text.replace(ADDRESS, "E5_HOST")
