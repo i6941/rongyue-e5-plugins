@@ -342,13 +342,56 @@ function showStall(){
   try{ $('stall').classList.add('show'); }catch(e){}
   try{ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; }catch(e){}
 }
-/* 重进：重载插件页并自动进同一个游戏，自动存档会读回原来的进度 */
+/* 重进：先删掉可能残缺的核心缓存，再重载（删除完成之后才重载，
+   就不会再出现"重载把缓存写坏"的情况），存档会自动读回。 */
 function resumeGame(legacy){
   try{ if(legacy) localStorage.setItem('e5legacy','1'); if(current) localStorage.setItem('e5resume',current.n); }catch(e){}
-  try{ location.reload(); }catch(e){}
+  clearEjsCoreCache(function(r){
+    try{ logs.push('重进清缓存 '+r); }catch(e){}
+    setTimeout(function(){ try{ location.reload(); }catch(e){} },250);
+  });
 }
 bindTap($('sresume'),function(){ resumeGame(false); });
 bindTap($('slegacy'),function(){ resumeGame(true); });
+
+/* 核心缓存完整性自检。
+   运行库把核心文件缓存在 IndexedDB 的 EmulatorJS-core 库里；如果写入过程被打断
+   （页面被重载、浏览器被 OOM 杀掉、息屏），缓存里会留下截断的文件。下次启动
+   运行库只比对版本号就会拿这份残缺核心去跑，wasm 跑到缺失的那段函数时抛
+   "call_indirect to a signature that does not match"，主循环断掉、画面定格。
+   这里拿缓存条目的长度和设备上 .data 的实际长度对比，对不上就删掉缓存。 */
+function checkCoreCache(cb){
+  try{
+    if(!window.indexedDB){ if(cb) cb('no-idb'); return; }
+    var name=(window.EJS_core||'fceumm')+'-wasm.data';
+    var rq=indexedDB.open('EmulatorJS-core',1);
+    rq.onerror=function(){ if(cb) cb('no-db'); };
+    rq.onsuccess=function(){
+      var db=rq.result;
+      var tx,st,q;
+      try{
+        tx=db.transaction(['core'],'readonly');
+        st=tx.objectStore('core');
+        q=st.get(name);
+      }catch(e){ if(cb) cb('ex '+e); return; }
+      q.onsuccess=function(){
+        var rec=q.result;
+        var have=rec&&rec.data?rec.data.byteLength:0;
+        if(!have){ if(cb) cb('empty'); return; }
+        fetch(BASE+'ejs/data/cores/'+name,{method:'HEAD'}).then(function(r){
+          var len=+(r.headers.get('Content-Length')||0);
+          if(len && have!==len){
+            var d=indexedDB.deleteDatabase('EmulatorJS-core');
+            d.onsuccess=function(){ if(cb) cb('truncated '+have+'!='+len+' 已清'); };
+            d.onerror=function(){ if(cb) cb('truncated '+have+'!='+len+' 删失败'); };
+            d.onblocked=function(){ if(cb) cb('truncated '+have+'!='+len+' 被占用'); };
+          }else if(cb) cb('ok '+have);
+        }).catch(function(){ if(cb) cb('head-fail'); });
+      };
+      q.onerror=function(){ if(cb) cb('read-err'); };
+    };
+  }catch(e){ if(cb) cb('ex2 '+e); }
+}
 
 function applyKeymap(){
   try{
@@ -534,7 +577,15 @@ function autoLoad(){
 
 
 function start(i){
-  clearTimeout(reloadTimer);   /* 别把刚开的游戏连同重载一起干掉 */
+  var g=flatList[i]; if(!g) return;
+  /* 进游戏前先验一下运行库缓存的核心是不是完整：长度对不上就删掉，
+     让运行库重新下载一份（这是"进游戏几十秒后死"的真正原因）。 */
+  checkCoreCache(function(r){
+    try{ logs.push('core-cache '+r); }catch(e){}
+    reallyStart(i);
+  });
+}
+function reallyStart(i){
   var g=flatList[i]; if(!g) return;
   try{ localStorage.setItem('e5resume',g.n); }catch(e){}
   stallShown=false;
@@ -620,11 +671,10 @@ function leave(){
   $('title').textContent='复古游戏机';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
   drawMenu();
-  /* 彻底清场：重载插件页，把上一个实例残留的一切（定时器、主循环、监听、
-     WebAssembly 堆）全部丢掉。存档在 IndexedDB 里，重载不会丢。
-     用户在重载前又进了新游戏，就取消这次重载。 */
-  clearTimeout(reloadTimer);
-  reloadTimer=setTimeout(function(){ try{ location.reload(); }catch(e){} },700);
+  /* 注意：这里**不要**重载页面。之前为了"多开游戏卡死"在这里加了 location.reload()，
+     结果把运行库写核心缓存的过程打断，IndexedDB 里留下截断的核心文件；
+     下次启动拿这份残缺核心去跑，wasm 跑到缺失的函数就抛 call_indirect 陷阱，
+     表现就是"进游戏几十秒后画面定格、CPU 空闲"。旧实例靠上面的停机逻辑收尾即可。 */
 }
 var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
