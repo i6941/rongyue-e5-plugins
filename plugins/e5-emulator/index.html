@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>复古游戏机</title>
+<style>
+*{box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden}
+body{margin:0;background:#0b111b;color:#edf3fc;font:12px "Noto Sans CJK SC",sans-serif;position:relative;min-height:100%}
+header{position:absolute;top:0;left:0;right:0;height:24px;z-index:5;padding:2px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;white-space:nowrap}
+h1{font-size:12px;margin:0;display:inline-block;max-width:46%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:52%;vertical-align:middle}
+main{position:absolute;top:24px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+#menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 42px}
+.cell{position:relative;display:block;width:100%;padding:0 0 4px;background:#141d2c;color:inherit;border:1px solid #223047;border-radius:6px;font:inherit;overflow:hidden}
+.cell.sel{border-color:#65bdff;background:#1d2c44}
+.cell .art{position:relative;width:100%;height:56px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#cfe4ff;background:#1b2740}
+.cell .art img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.cell .cap{display:block;padding:2px 4px 0;font-size:11px;line-height:1.2;height:28px;overflow:hidden;text-align:left}
+.cell .num{position:absolute;left:3px;top:3px;z-index:2;min-width:16px;height:16px;line-height:16px;padding:0 3px;text-align:center;background:#0b111b;border:1px solid #2f4463;border-radius:4px;color:#9fc6ef;font-size:10px}
+.cell.sel .num{background:#65bdff;color:#04121f;border-color:#65bdff}
+#stage{display:none;position:absolute;inset:0;background:#000}
+#stage.on{display:flex;align-items:center;justify-content:center}
+/* 顶部条（游戏名/分辨率/帧率）+ 底部 HUD 各自占一条，画面在中间那块 */
+body.ingame #stage.on{padding:18px 0 40px 0}
+#topbar{position:absolute;top:0;left:0;right:0;height:18px;z-index:6;display:none;align-items:center;gap:6px;padding:0 5px;background:#0b111b;border-bottom:1px solid #29354a;font-size:10px;color:#a8bad0;overflow:hidden;white-space:nowrap}
+body.ingame #topbar{display:flex}
+#topbar b{color:#8ff0b0}
+#topbar #tkey{color:#ffd479;max-width:78px;overflow:hidden}
+#topbar #tfps{color:#a8bad0}
+#topbar .sp{flex:1 1 auto}
+#ejs_game{display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto}
+/* 社区常见做法：画面比例和屏幕不一致时，别留一片死黑，而是把空处做成"机身饰边" */
+body.ingame #stage{background:linear-gradient(#141c2b 0%,#0c1220 60%,#080d16 100%)}
+body.ingame #ejs_game{border-radius:5px;box-shadow:0 0 0 2px #26344c,0 0 0 3px #06090f,0 3px 12px rgba(0,0,0,.65)}
+body.ingame.fitfull #ejs_game{border-radius:0;box-shadow:none}
+#ejs_game>div{max-width:100%;max-height:100%}
+#ejs_game canvas{image-rendering:pixelated;display:block;max-width:100%;max-height:100%}
+/* 底部操作条：手指能按到的尺寸（原来 15px 高、30px 宽，点不中） */
+#hud{position:absolute;left:0;right:0;bottom:0;height:40px;z-index:8;display:flex;align-items:center;gap:5px;
+  padding:0 6px;background:#0b111b;border-top:1px solid #29354a;font-size:10px;color:#a8bad0;
+  user-select:none;-webkit-user-select:none}
+#hud b{color:#8ff0b0}
+#hud .sp{flex:1 1 auto}
+#hud button{margin:0;flex:1 1 0;min-width:0;height:32px;padding:0 2px;font:inherit;font-size:15px;font-weight:600;
+  line-height:30px;text-align:center;background:#22304a;color:#dce8f8;border:1px solid #3a4c6b;border-radius:6px;
+  white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#hud button:active{background:#31527f;color:#fff;border-color:#5b7fb0}
+#hud button.hit{background:#3a5f96;color:#fff;border-color:#7fa6dd}
+/* 开局提示条：把这一版的按键分工直接写在屏幕上，玩一会儿就消失 */
+#hint{position:absolute;left:6px;right:6px;top:50%;transform:translateY(-50%);z-index:7;display:none;
+  padding:5px 6px;background:rgba(8,13,22,.85);border:1px solid #2b3a52;border-radius:6px;
+  color:#cfe0f5;font-size:11px;line-height:16px;text-align:center}
+body.ingame #hint.show{display:block}
+/* ---- 按键设置面板 ---- */
+#bcfg{position:absolute;right:6px;bottom:26px;z-index:9;height:30px;padding:0 12px;font:inherit;font-size:13px;
+  color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:15px;
+  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#bcfg:active{background:#31527f}
+body.ingame #bcfg{display:none}
+#cfg{position:absolute;inset:0;z-index:20;display:none;flex-direction:column;background:#0b111b}
+#cfg.open{display:flex}
+#cfghead{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 6px;background:#101827;border-bottom:1px solid #29354a;font-size:12px}
+#cfghead .sp{flex:1 1 auto}
+#cfgtip{font-size:10px;color:#ffd479;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:62%}
+#cfghead button{font:inherit;font-size:12px;height:24px;padding:0 9px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:5px}
+#cfgrid{flex:1 1 auto;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:6px;align-content:start;overflow-y:auto}
+.cfgcell{position:relative;height:46px;padding:4px 6px;background:#141d2c;border:1px solid #223047;border-radius:6px;text-align:left}
+.cfgcell .nm{font-size:12px;color:#edf3fc}
+.cfgcell .kv{font-size:11px;color:#8ff0b0;margin-top:3px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-right:18px}
+.cfgcell.sel{border-color:#65bdff;background:#1d2c44}
+.cfgcell.listen{border-color:#ffd479;background:#2a2440}
+.cfgcell.listen .kv{color:#ffd479}
+.cfgcell .clr{position:absolute;right:2px;top:2px;width:22px;height:22px;padding:0;font:inherit;font-size:12px;line-height:20px;
+  color:#9fb4cf;background:#182234;border:1px solid #2b3a52;border-radius:4px}
+.cfgcell .clr.hit{background:#3a5f96;color:#fff}
+#cfgfoot{flex:0 0 auto;display:flex;gap:6px;padding:6px;background:#101827;border-top:1px solid #29354a}
+#cfgfoot button{flex:1 1 0;height:32px;font:inherit;font-size:13px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
+#cfgfoot button:active{background:#31527f}
+footer{position:absolute;bottom:0;left:0;right:0;height:20px;z-index:6;padding:1px 6px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:10px;overflow:hidden;white-space:nowrap}
+body.ingame footer{display:none}
+/* 进游戏后页头/页脚那些字没信息量，却白占竖向空间：藏掉，把画面让出来 */
+body.ingame header{display:none}
+body.ingame main{top:0;bottom:0}
+/* 运行库自带的 UI 全部藏掉：菜单栏、上下文菜单、弹窗、开始按钮、虚拟手柄、设置页… */
+.ejs_menu_bar,.ejs_menu_button,.ejs_context_menu,.ejs_popup_container,.ejs_popup_box,.ejs_popup_body,
+.ejs_start_button,.ejs_message,.ejs_control_bar,.ejs_control_body,.ejs_settings_parent,.ejs_settings_main_bar,
+.ejs_settings_center_left,.ejs_settings_center_right,.ejs_cheat_parent,.ejs_cheat_main,.ejs_netplay_header,
+.ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
+.ejs_game_background,.ejs_loading_text{display:none !important}
+</style></head><body>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div></header>
+<main>
+  <div id="menu"></div>
+  <div id="stage"><div id="ejs_game"></div>
+    <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
+    <div id="hud"><span class="sp"></span>
+      <button id="bview" type="button">画面</button><button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
+      <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
+    <div id="hint"></div>
+  </div>
+</main>
+<footer id="foot">↑↓←→ 选游戏　数字 直达　确认 开始</footer>
+<button id="bcfg" type="button">按键</button>
+<div id="cfg">
+  <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
+  <div id="cfgrid"></div>
+  <div id="cfgfoot"><button id="cfgdef" type="button">恢复默认</button><button id="cfgdone" type="button">完成</button></div>
+</div>
+<script src="/sdk/e5.js"></script>
+<script>
+'use strict';
+var $=function(id){return document.getElementById(id)};
+/* 这台机器的触摸不一定合成 click 事件，所以按钮直接绑 touchstart；
+   同时保留 mousedown/click（鼠标或辅助输入），用时间窗去重，一次点击只执行一遍。 */
+function bindTap(el,fn){
+  if(!el) return;
+  var last=0;
+  function run(e){
+    if(e){ try{ e.preventDefault(); }catch(x){} }
+    var now=Date.now();
+    if(now-last<400) return;
+    last=now;
+    try{ el.classList.add('hit'); setTimeout(function(){ el.classList.remove('hit'); },180); }catch(x){}
+    try{ fn(e); }catch(x){}
+  }
+  el.addEventListener('touchstart',function(e){ run(e); },{passive:false});
+  el.addEventListener('mousedown',function(e){ run(e); });
+  el.addEventListener('click',function(e){ run(e); });
+}
+var BASE='/plugins/e5-emulator/';
+
+/* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
+   核心初始化音频时会抛 NotAllowedError，主循环随即停住（灰屏、FPS 0、按键无效）。
+   这里换成静音实现，让核心继续跑（?audio=1 可保留真实音频）。 */
+(function(){
+  try{ if((new URLSearchParams(location.search).get('audio')||'')==='1') return; }catch(e){}
+  var Real=window.AudioContext||window.webkitAudioContext;
+  if(!Real) return;
+  function Fake(){
+    this.state='running'; this.currentTime=0; this.sampleRate=44100; this.onstatechange=null;
+    this.destination={maxChannelCount:2};
+    this.audioWorklet={addModule:function(){ return Promise.resolve(); }};
+  }
+  Fake.prototype.resume=function(){ this.state='running'; return Promise.resolve(); };
+  Fake.prototype.suspend=function(){ this.state='suspended'; return Promise.resolve(); };
+  Fake.prototype.close=function(){ this.state='closed'; return Promise.resolve(); };
+  Fake.prototype.createGain=function(){ return {gain:{value:1,setValueAtTime:function(){},linearRampToValueAtTime:function(){},exponentialRampToValueAtTime:function(){}},connect:function(){return this;},disconnect:function(){}}; };
+  Fake.prototype.createScriptProcessor=function(){ return {connect:function(){return this;},disconnect:function(){}}; };
+  Fake.prototype.createBufferSource=function(){ return {buffer:null,connect:function(){return this;},start:function(){},stop:function(){}}; };
+  Fake.prototype.createBuffer=function(c,l,r){ return {getChannelData:function(){ return new Float32Array(l||1); },length:l||1,numberOfChannels:c||1,sampleRate:r||44100}; };
+  Fake.prototype.createAnalyser=function(){ return {getByteFrequencyData:function(){},getFloatFrequencyData:function(){},fftSize:2048,frequencyBinCount:1024}; };
+  Fake.prototype.createDynamicsCompressor=function(){ return {threshold:{value:0},knee:{value:0},ratio:{value:1},attack:{value:0},release:{value:0},connect:function(){return this;}}; };
+  Fake.prototype.createStereoPanner=function(){ return {pan:{value:0},connect:function(){return this;}}; };
+  Fake.prototype.createPanner=function(){ return {panningModel:'equalpower',positionX:{value:0},positionY:{value:0},positionZ:{value:0},orientationX:{value:0},orientationY:{value:0},orientationZ:{value:0},connect:function(){return this;},disconnect:function(){}}; };
+  Fake.prototype.createDelay=function(){ return {delayTime:{value:0},connect:function(){return this;}}; };
+  Fake.prototype.createConvolver=function(){ return {buffer:null,connect:function(){return this;}}; };
+  Fake.prototype.createOscillator=function(){ return {frequency:{value:440},type:'sine',detune:{value:0},connect:function(){return this;},start:function(){},stop:function(){}}; };
+  Fake.prototype.createConstantSource=function(){ return {offset:{value:0},connect:function(){return this;},start:function(){},stop:function(){}}; };
+  Fake.prototype.createChannelMerger=function(){ return {connect:function(){return this;}}; };
+  Fake.prototype.createChannelSplitter=function(){ return {connect:function(){return this;}}; };
+  Fake.prototype.createWaveShaper=function(){ return {curve:null,oversample:'none',connect:function(){return this;}}; };
+  Fake.prototype.setSinkId=function(){ return Promise.resolve(); };
+  Fake.prototype.decodeAudioData=function(b){ return Promise.resolve({getChannelData:function(){return new Float32Array(1);},length:1}); };
+  Fake.prototype.createPeriodicWave=function(){ return {connect:function(){return this;}}; };
+  window.AudioContext=Fake; window.webkitAudioContext=Fake;
+  window.__audioStubbed=true;
+})();
+
+/* 页面不可见时 requestAnimationFrame 不触发 → 兜底用 setTimeout，息屏后游戏也不会停 */
+(function(){
+  var native=window.requestAnimationFrame?window.requestAnimationFrame.bind(window):null;
+  window.requestAnimationFrame=function(cb){
+    if(native&&document.visibilityState==='visible') return native(cb);
+    return setTimeout(function(){ cb(performance.now()); },16);
+  };
+  window.cancelAnimationFrame=function(id){ clearTimeout(id); };
+})();
+
+var GAMES=[
+  {sys:'FC', core:'fceumm', key:'fc-croom', games:[
+    {n:'Concentration Room', f:'fc/croom.nes', w:256, h:240},
+    {n:'Cybercoaster', f:'fc/cybercoaster.nes', w:256, h:240},
+    {n:'Thwaite', f:'fc/thwaite.nes', w:256, h:240},
+    {n:'Zap Ruder', f:'fc/zap-ruder.nes', w:256, h:240},
+    {n:'Nova the Squirrel', f:'fc/nova.nes', w:256, h:240},
+    {n:'RHDE Furniture Fight', f:'fc/rhde.nes', w:256, h:240},
+    {n:'240p Test Suite', f:'fc/240p-test-suite.nes', w:256, h:240}
+  ]},
+  {sys:'GB', core:'gambatte', key:'gb-airaki', games:[
+    {n:'Airaki', f:'gb/airaki.gb', w:160, h:144},
+    {n:'2048', f:'gb/2048.gb', w:160, h:144},
+    {n:'GB Corp.', f:'gb/gb-corp.gb', w:160, h:144},
+    {n:'Big2Small', f:'gb/big2small.gb', w:160, h:144},
+    {n:'Breksta Cat', f:'gb/brekstas-cat.gb', w:160, h:144},
+    {n:'Carazu', f:'gb/carazu.gb', w:160, h:144},
+    {n:'Dusky Dungeon', f:'gb/dusky-dungeon.gb', w:160, h:144}
+  ]},
+  {sys:'GBA', core:'mgba', key:'gba-gbatris', games:[
+    {n:'GBAtris', f:'gba/gbatris.gba', w:240, h:160},
+    {n:'MeteoRain', f:'gba/meteorain.gba', w:240, h:160},
+    {n:'Minicraft', f:'gba/minicraft.gba', w:240, h:160},
+    {n:'uCity Advance', f:'gba/ucity-advance.gba', w:240, h:160},
+    {n:'Trogdor for GBA', f:'gba/trogdor-gba.gba', w:240, h:160}
+  ]}
+];
+
+var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
+var sel=0, cells=[], flatList=[], backTimer=0, simCalls=0, lastSave='', keyCount=0;
+
+function note(t){ }
+function flat(){ var o=[]; GAMES.forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
+function hue(s){ var h=0; for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360; return h; }
+
+/* 九宫格：3 列，纵向滚动；序号按“当前可见的第一格”往后排 */
+function drawMenu(){
+  flatList=flat();
+  var m=$('menu'); m.replaceChildren();
+  cells=[];
+  flatList.forEach(function(g,i){
+    var b=document.createElement('button'); b.type='button'; b.className='cell';
+    var art=document.createElement('span'); art.className='art';
+    art.style.background='hsl('+hue(g.n)+',34%,26%)';
+    art.textContent=g.n.charAt(0);
+    var img=document.createElement('img'); img.alt=''; img.style.display='none';
+    img.onerror=function(){ img.style.display='none'; };
+    img.onload=function(){ art.style.background='transparent'; img.style.display='block'; };
+    img.src='/roms/art/'+g.key+'.jpg';
+    art.appendChild(img);
+    var num=document.createElement('span'); num.className='num';
+    var cap=document.createElement('span'); cap.className='cap'; cap.textContent=g.n;
+    b.append(art,num,cap);
+    bindTap(b,function(){ start(i); });
+    m.appendChild(b);
+    cells.push(b);
+  });
+  sel=Math.max(0,Math.min(sel,cells.length-1));
+  renumber();
+  $('status').textContent='共 '+flatList.length+' 个游戏';
+}
+function renumber(){
+  var m=$('menu'), top=m.getBoundingClientRect().top;
+  var first=0;
+  for(var i=0;i<cells.length;i++){
+    var r=cells[i].getBoundingClientRect();
+    if(r.bottom>top+2){ first=i; break; }
+  }
+  for(var j=0;j<cells.length;j++){
+    var n=cells[j].querySelector('.num');
+    var d=j-first;
+    n.textContent=(d>=0&&d<9)?String(d+1):'·';
+  }
+  window.__first=first;
+}
+function selectIdx(i){
+  if(!cells.length) return;
+  sel=(i+cells.length)%cells.length;
+  for(var j=0;j<cells.length;j++) cells[j].classList.toggle('sel', j===sel);
+  var c=cells[sel];
+  if(c&&c.scrollIntoView) c.scrollIntoView({block:'nearest'});
+  renumber();
+}
+$('menu').addEventListener('scroll',function(){ renumber(); },{passive:true});
+
+function applyKeymap(){
+  try{
+    var em=window.EJS_emulator;
+    if(!em||!em.controls||!em.controls[0]) return;
+    var c=em.controls[0];
+    /* 运行库自己的键盘通道也按当前配置填一遍（它每个按钮只能记一个键码，取最后一个） */
+    for(var i=0;i<ACTIONS.length;i++){
+      var a=ACTIONS[i], ks=keymap[a.id]||[];
+      for(var j=0;j<ks.length;j++){
+        var code=codeOf(ks[j]);
+        if(code!==null && c[a.btn]) c[a.btn].value=code;
+      }
+    }
+    window.__keymap=JSON.stringify(c);
+  }catch(e){}
+}
+function focusCanvas(){
+  try{
+    var c=document.querySelector('#ejs_game canvas');
+    if(!c) return;
+    c.setAttribute('tabindex','-1'); c.focus();
+    window.__focused=(document.activeElement===c);
+  }catch(e){}
+}
+function gm(){ try{ return window.EJS_emulator&&window.EJS_emulator.gameManager; }catch(e){ return null; } }
+function coreFn(n){ try{ var g=gm(); return g&&g.functions&&g.functions[n]; }catch(e){ return null; } }
+
+/* 游戏动作 → libretro 按钮号：0=B 2=SELECT 3=START 4=上 5=下 6=左 7=右 8=A 10=L 11=R
+   键位可以改：菜单里的"按键"设置页能重新绑定，存在本机 localStorage。 */
+var ACTIONS=[
+  {id:'up',name:'上',btn:4},{id:'down',name:'下',btn:5},
+  {id:'left',name:'左',btn:6},{id:'right',name:'右',btn:7},
+  {id:'a',name:'A',btn:8},{id:'b',name:'B',btn:0},
+  {id:'start',name:'START',btn:3},{id:'select',name:'SELECT',btn:2},
+  {id:'l',name:'L',btn:10},{id:'r',name:'R',btn:11}
+];
+/* 默认键位：方向用物理方向键；A=确认键或3；B=6；START=#；SELECT=*。
+   两个侧键（呼叫/返回）不参与游戏输入，返回键只保留"长按退出游戏"。 */
+var DEFAULT_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
+                  a:['Enter','3'],b:['6'],start:['#'],select:['*'],l:[],r:[]};
+var keymap=loadKeymap();
+function loadKeymap(){
+  var m=null;
+  try{ var s=localStorage.getItem('e5keymap'); if(s) m=JSON.parse(s); }catch(e){}
+  var out={};
+  for(var i=0;i<ACTIONS.length;i++){
+    var id=ACTIONS[i].id, v=(m&&Array.isArray(m[id]))?m[id]:(DEFAULT_KEYS[id]||[]);
+    out[id]=v.filter(function(x){ return typeof x==='string'&&x; });
+  }
+  return out;
+}
+function saveKeymap(){ try{ localStorage.setItem('e5keymap',JSON.stringify(keymap)); }catch(e){} }
+function btnOf(id){ for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btn; return undefined; }
+/* 一个键可以同时绑多个动作 */
+function actsOf(tok){
+  var out=[];
+  for(var i=0;i<ACTIONS.length;i++){
+    var ks=keymap[ACTIONS[i].id]||[];
+    for(var j=0;j<ks.length;j++) if(ks[j]===tok) out.push(ACTIONS[i].id);
+  }
+  return out;
+}
+function codeOf(tok){
+  if(tok && tok.indexOf('code:')===0) return parseInt(tok.slice(5),10)||null;
+  if(tok && tok.length===1) return tok.charCodeAt(0);
+  var map={ArrowUp:38,ArrowDown:40,ArrowLeft:37,ArrowRight:39,Enter:13,Space:32,Escape:27};
+  return map[tok]!==undefined?map[tok]:null;
+}
+function tokenOf(e){
+  if(e.key) return e.key;
+  return 'code:'+(e.keyCode||0);
+}
+var held={}, keyLog=[], keyCount=0, lastBackId='', lastBackTime=0, backKeyupSincePress=false, backTick=0, hintTimer=0;
+
+function sim(btn,val){
+  try{
+    var g=gm();
+    if(!g||typeof g.simulateInput!=='function'){ window.__simErr='no-gm'; return false; }
+    g.simulateInput(0,btn,val);
+    simCalls++;
+    window.__lastBtn=btn; window.__lastVal=val;
+    return true;
+  }catch(e){ window.__simErr=String(e).slice(0,120); return false; }
+}
+function pressBtn(btn){
+  if(held[btn]) return;
+  held[btn]=true;
+  sim(btn,1);
+  /* 兜底松开：WebKit 偶尔会丢 keyup（焦点在画布/弹层之间切换时），
+     没有兜底按钮会一直按住，表现就是"按一下人物自己一直走"。 */
+  held['t'+btn]=setTimeout(function(){ releaseBtn(btn); },450);
+}
+function releaseBtn(btn){
+  if(!held[btn]) return;
+  held[btn]=false;
+  try{ clearTimeout(held['t'+btn]); }catch(e){}
+  sim(btn,0);
+}
+function releaseAll(){ for(var b in held){ if(held[b]===true) releaseBtn(b); } }
+
+
+function start(i){
+  var g=flatList[i]; if(!g) return;
+  current=g; running=true; phase='loading'; logs=[]; lastErr=''; marks={}; t0=Date.now(); simCalls=0;
+  try{ clearInterval(backTick); }catch(e){} backTick=0;
+  try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
+  $('menu').style.display='none';
+  $('stage').style.display='flex';
+  $('stage').classList.add('on');
+  document.body.classList.add('ingame');
+  try{
+    $('hint').textContent=hintText();
+    $('hint').classList.add('show');
+    clearTimeout(hintTimer);
+    hintTimer=setTimeout(function(){ try{ $('hint').classList.remove('show'); }catch(e){} },7000);
+  }catch(e){}
+  $('tname').textContent=g.sys+' · '+g.n;
+  $('tres').textContent='加载中…';
+  $('tfps').innerHTML='<b>--</b> FPS';
+  hostChrome(true);
+  $('title').textContent=g.sys+' · '+g.n;
+  $('status').textContent='加载核心 '+g.core+' …';
+  $('ejs_game').replaceChildren();
+  window.EJS_player='#ejs_game';
+  window.EJS_core=g.core;
+  window.EJS_gameUrl='/roms/'+g.f;
+  window.EJS_gameName=g.n;
+  window.EJS_pathtodata=BASE+'ejs/data/';
+  window.EJS_biosUrl='';
+  window.EJS_startOnLoaded=true;
+  window.EJS_disableDatabases=false;
+  window.EJS_threads=false;
+  window.EJS_DEBUG_XX=false;
+  window.EJS_fullscreenOnLoaded=false;
+  window.EJS_AdMode=0; window.EJS_AdUrl=''; window.EJS_AdTimer=0; window.EJS_AdSize='';
+  window.EJS_color='#000000';
+  window.EJS_alignStartButton=false;
+  window.EJS_disableAutoLang=false;
+  window.EJS_hideSettings=true;
+  window.EJS_defaultOptions={};
+  window.EJS_ready=function(){
+    phase='core-ready'; marks.coreReady=Date.now()-t0;
+    applyKeymap();
+    try{ var em=window.EJS_emulator; if(em&&em.closePopup) em.closePopup(); }catch(e){}
+  };
+  var s=document.createElement('script');
+  s.src=BASE+'ejs/data/loader.js';
+  s.onerror=function(){ phase='loader-error'; $('status').textContent='无法加载运行库'; };
+  document.head.appendChild(s);
+}
+function leave(){
+  running=false; phase='menu';
+  try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(false); }catch(e){}
+  try{ window.EJS_emulator&&EJS_emulator.stop&&EJS_emulator.stop(); }catch(x){}
+  $('stage').style.display='none';
+  $('stage').classList.remove('on');
+  document.body.classList.remove('ingame');
+  hostChrome(false);
+  releaseAll();
+  $('menu').style.display='grid';
+  $('title').textContent='复古游戏机';
+  try{ clearInterval(backTick); }catch(e){} backTick=0;
+  drawMenu();
+}
+bindTap($('quit'),function(){ leave(); });
+bindTap($('bsave'),function(){
+  try{ var f=coreFn('saveSaveFiles'); if(f){ f(); lastSave='savefiles'; } }catch(e){ lastSave='save-err '+e; }
+  try{ gm().quickSave('1'); }catch(e){}
+});
+bindTap($('bload'),function(){
+  try{ var f=coreFn('loadSaveFiles'); if(f){ f(); lastSave='loadfiles'; } }catch(e){ lastSave='load-err '+e; }
+  try{ gm().quickLoad('1'); }catch(e){}
+});
+bindTap($('bpause'),function(){
+  try{ var em=window.EJS_emulator; if(em&&em.paused){ em.play&&em.play(); $('bpause').textContent='暂停'; } else if(em){ em.pause&&em.pause(); $('bpause').textContent='继续'; } }catch(e){}
+});
+
+/* ---- 按键：页面自己在 window 上接，不走 SDK 的转发 ----
+   两道闸门会吃掉所有按键：
+     - 宿主页面在 appOpen 时 preventDefault 后把焦点搬进 iframe（第一个键必被吞）；
+     - SDK 在 blank（息屏）或 input-blocked（通知卡）时直接丢掉按键。
+   所以这里直接在 window 上 capture 监听，自己判断 kind、自己处理。 */
+function keyKindOf(e){
+  var k=e.key, c=e.keyCode;
+  if(k==='ContextMenu'||k==='Menu') return 'menu';
+  if(k==='F13'||k==='Phone'||k==='PickupPhone'||k==='Call') return 'call';
+  if(k==='ArrowLeft'||c===37) return 'left';
+  if(k==='ArrowRight'||c===39) return 'right';
+  if(k==='ArrowUp'||c===38) return 'up';
+  if(k==='ArrowDown'||c===40) return 'down';
+  if(k==='Enter'||k==='Select'||k==='Accept'||c===13) return 'ok';
+  if(k==='BrowserBack'||k==='GoBack'||k==='Backspace'||k==='Escape'||c===8||c===27||c===166) return 'back';
+  if(k==='PowerOff'||k==='Power'||k==='Standby'||k==='Sleep') return 'power';
+  if(k&&k.length===1&&((k>='0'&&k<='9')||k==='*'||k==='#')) return 'digit';
+  return 'other';
+}
+/* 返回键的"身份"：硬件一次按压会上报 KEY_BACK(166) 与 Backspace(8) 两个不同身份。
+   靠身份配对来区分"同一次按压的孪生事件"和"玩家连按"，避免用时间窗把连击也限速。 */
+function backIdOf(e){
+  if(e.keyCode===8||e.key==='Backspace') return 'bs';
+  if(e.keyCode===166||e.key==='BrowserBack'||e.key==='GoBack') return 'bb';
+  return 'k:'+(e.key||'');
+}
+function handleKey(kind,key,repeat,id,code){
+  if(cfgOpen) return cfgKey(kind,key,repeat,code);
+  if(kind==='menu'||kind==='power'||kind==='call'||kind==='other') return false;
+  keyCount++; keyLog.push(kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
+  if(keyLog.length>40) keyLog.shift();
+  try{ $('tkey').textContent=(code||kind)+''; }catch(e){}
+  if(!running){
+    if(kind==='up'){ selectIdx(sel-3); return true; }
+    if(kind==='down'){ selectIdx(sel+3); return true; }
+    if(kind==='left'){ selectIdx(sel-1); return true; }
+    if(kind==='right'){ selectIdx(sel+1); return true; }
+    if(kind==='ok'){ if(cells[sel]) cells[sel].click(); return true; }
+    if(kind==='digit'&&key>='1'&&key<='9'){
+      var idx=(window.__first||0)+(parseInt(key,10)-1);
+      if(idx<flatList.length) start(idx);
+      return true;
+    }
+    return false;
+  }
+  /* 按下第一个键就收起开局提示 */
+  try{ if($('hint').classList.contains('show')) $('hint').classList.remove('show'); }catch(e){}
+  if(kind==='back'){
+    /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
+    if(repeat) return true;
+    var now=Date.now();
+    /* 硬件返回键一次按压会上报 KEY_BACK+Backspace 两个按下事件（<150ms，宿主 app.js 有同样窗口的去重）。
+       不去重的话单击会被当双击，一按就直接退出游戏。 */
+    /* 同一次按压的孪生事件（身份与上一次不同）丢掉；同身份连按不限速，
+       保证格斗/射击游戏的连续出拳不会被吞键。
+       兜底：身份不可靠（取不到 keyCode，两个事件看起来一样）时退回时间窗去重；
+       同一身份在 150ms 内重复且期间没有 keyup，也按孪生处理。 */
+    var pairable=(id==='bb'||id==='bs');
+    if(pairable){
+      if(lastBackId && ((id!==lastBackId&&now-lastBackTime<250) ||
+                        (id===lastBackId&&now-lastBackTime<150&&!backKeyupSincePress))) return true;
+    }else{
+      if(lastBackId && now-lastBackTime<150) return true;
+    }
+    lastBackId=id||''; lastBackTime=now; backKeyupSincePress=false;
+    /* 侧键（返回）不再当 B 键用：之前它既能开枪又会在按住 1.2 秒后退出游戏，
+       玩射击游戏时按住连射就被踢出游戏。现在侧键只做一件事：长按 2.5 秒退出，
+       按住过程中顶部条显示倒计时，松手就取消。 */
+    try{ clearInterval(backTick); }catch(e){}
+    var bt0=Date.now();
+    backTick=setInterval(function(){
+      var left=2.5-(Date.now()-bt0)/1000;
+      if(left<=0){
+        try{ clearInterval(backTick); }catch(e){}
+        backTick=0; leave(); return;
+      }
+      try{ $('tkey').textContent='长按退出 '+left.toFixed(1)+'s'; }catch(e){}
+    },100);
+    return true;
+  }
+  var acts=actsOf(key||('code:'+(code||0)));
+  if(acts.length){
+    for(var i=0;i<acts.length;i++){ var b=btnOf(acts[i]); if(b!==undefined) pressBtn(b); }
+    return true;
+  }
+  return false;
+}
+window.addEventListener('keydown',function(e){
+  if(handleKey(keyKindOf(e),e.key,e.repeat,backIdOf(e),e.keyCode)) e.preventDefault();
+},true);
+window.addEventListener('keyup',function(e){
+  if(!running) return;
+  var kind=keyKindOf(e);
+  if(kind==='back'){
+    try{ clearInterval(backTick); }catch(e){}
+    backTick=0;
+    backKeyupSincePress=true;   /* 出现过 keyup → 下一次同身份事件算新的按压 */
+    return;
+  }
+  var acts=actsOf(e.key||('code:'+(e.keyCode||0)));
+  for(var i=0;i<acts.length;i++){ var b=btnOf(acts[i]); if(b!==undefined) releaseBtn(b); }
+},true);
+/* SDK 回调只负责告诉宿主"这个键插件收了"（否则宿主会把返回键当退出应用），
+   真正的处理在上面的 window 监听里。返回键在菜单态必须放行：
+   SDK 收到 onKey=false 会调用 onBack，onBack 再返回 false 就发 e5:exit 让宿主关掉插件。 */
+if(typeof e5!=='undefined'){
+  if(e5.onKey) e5.onKey(function(k){ if(cfgOpen) return k.kind!=='power'; return k.kind!=='menu'&&k.kind!=='power'&&k.kind!=='call'&&(k.kind!=='back'||running); });
+  if(e5.onBack) e5.onBack(function(){ window.__backTaken=running; return running; });
+}
+
+/* ---- 按键设置面板 ----
+   面板里：点一项（或者用方向键选、确认键进入"听键"状态），再按一个键就绑上。
+   方向键/确认键在面板里只用来移动和切换，不会被绑成游戏动作。 */
+var cfgOpen=false, cfgSel=0, cfgListen=false;
+var BACK_TOKENS=['Backspace','BrowserBack','GoBack','Escape','code:8','code:27','code:166'];
+function cfgLabel(tok){
+  var m={ArrowUp:'↑',ArrowDown:'↓',ArrowLeft:'←',ArrowRight:'→',Enter:'确认',Space:'空格',Backspace:'退格'};
+  if(m[tok]) return m[tok];
+  if(tok && tok.indexOf('code:')===0) return '码'+tok.slice(5);
+  return tok;
+}
+/* 开局提示：按当前键位配置生成，改了配置提示也跟着变 */
+function hintText(){
+  function k(id){ var ks=keymap[id]||[]; return ks.length?ks.map(cfgLabel).join('/'):'—'; }
+  return '方向 '+k('up')+k('left')+k('down')+k('right')+'　A '+k('a')+'　B '+k('b')+'　START '+k('start')+'　SELECT '+k('select');
+}
+function buildCfg(){
+  var g=$('cfgrid');
+  g.replaceChildren();
+  for(var i=0;i<ACTIONS.length;i++){
+    (function(a,idx){
+      var d=document.createElement('div');
+      d.className='cfgcell'; d.id='cfgcell'+idx;
+      d.innerHTML='<div class="nm"></div><div class="kv"></div><button class="clr" type="button">×</button>';
+      d.querySelector('.nm').textContent=a.name;
+      bindTap(d,function(ev){
+        if(ev && ev.target && ev.target.classList && ev.target.classList.contains('clr')){
+          keymap[a.id]=[]; saveKeymap(); refreshCfg(); applyKeymap();
+          $('cfgtip').textContent=a.name+' 已清空'; return;
+        }
+        cfgSel=idx; cfgListen=true; refreshCfg();
+        $('cfgtip').textContent='现在按一个键，绑到 '+a.name;
+      });
+      g.appendChild(d);
+    })(ACTIONS[i],i);
+  }
+  refreshCfg();
+}
+function refreshCfg(){
+  for(var i=0;i<ACTIONS.length;i++){
+    var d=$('cfgcell'+i); if(!d) continue;
+    var ks=keymap[ACTIONS[i].id]||[];
+    d.querySelector('.kv').textContent=ks.length?ks.map(cfgLabel).join(' · '):'未设置';
+    d.className='cfgcell'+(i===cfgSel?' sel':'')+(cfgListen&&i===cfgSel?' listen':'');
+  }
+}
+function assignKey(tok){
+  var a=ACTIONS[cfgSel]; if(!a) return;
+  var ks=(keymap[a.id]||[]).slice();
+  if(ks.indexOf(tok)<0) ks.push(tok);
+  keymap[a.id]=ks; saveKeymap(); applyKeymap();
+  cfgListen=false; refreshCfg();
+  $('cfgtip').textContent=a.name+' = '+ks.map(cfgLabel).join(' · ');
+}
+function cfgKey(kind,key,repeat,code){
+  if(kind==='power') return false;
+  if(kind==='back'||kind==='menu'){ closeCfg(); return true; }
+  if(cfgListen && kind!=='up' && kind!=='down' && kind!=='left' && kind!=='right' && kind!=='ok'){
+    var tok=key||('code:'+(code||0));
+    if(BACK_TOKENS.indexOf(tok)>=0){ $('cfgtip').textContent='返回键保留用于退出游戏，不能绑定'; return true; }
+    assignKey(tok); return true;
+  }
+  if(kind==='ok'){ cfgListen=!cfgListen; refreshCfg(); $('cfgtip').textContent=cfgListen?'现在按一个键':'选一项，再按一个键'; return true; }
+  if(kind==='up'){ cfgSel=Math.max(0,cfgSel-2); refreshCfg(); return true; }
+  if(kind==='down'){ cfgSel=Math.min(ACTIONS.length-1,cfgSel+2); refreshCfg(); return true; }
+  if(kind==='left'){ if(cfgSel%2) cfgSel--; refreshCfg(); return true; }
+  if(kind==='right'){ if(cfgSel%2===0) cfgSel++; refreshCfg(); return true; }
+  return true;
+}
+function openCfg(){ cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open'); $('cfgtip').textContent='选一项，再按一个键'; }
+function closeCfg(){ cfgOpen=false; cfgListen=false; $('cfg').classList.remove('open'); }
+bindTap($('bcfg'),function(){ openCfg(); });
+bindTap($('cfgclose'),function(){ closeCfg(); });
+bindTap($('cfgdone'),function(){ closeCfg(); });
+bindTap($('cfgdef'),function(){
+  for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
+  saveKeymap(); applyKeymap(); refreshCfg(); $('cfgtip').textContent='已恢复默认';
+});
+
+/* 画面模式：
+   wide  = 左右铺满、上下保持同一缩放比（不拉伸，像素不变形）——默认
+   full  = 高度也铺满（纵向拉伸，不设上限） */
+var fitMode='wide';
+try{
+  var fp=new URLSearchParams(location.search).get('fit');
+  if(fp==='full'||fp==='wide') fitMode=fp;
+  else{ var fm=localStorage.getItem('e5fit'); if(fm==='full'||fm==='wide') fitMode=fm; }
+}catch(e){}
+function applyFitMode(){
+  try{ localStorage.setItem('e5fit',fitMode); }catch(e){}
+  document.body.classList.toggle('fitfull',fitMode==='full');
+  var b=$('bview');
+  if(b) b.textContent=(fitMode==='wide'?'画面:宽铺':'画面:全拉');
+}
+bindTap($('bview'),function(){
+  fitMode=(fitMode==='wide'?'full':'wide');
+  applyFitMode(); fit();
+});
+
+/* 同一源：可以给宿主页面注入样式。游戏期间把宿主自己的工具栏和底部主菜单藏掉，
+   把整块竖向空间让给画面；退出时立刻恢复。宿主不需要改代码，也不改全局配置。 */
+var hostClass='e5-game-full', hostStyleInjected=false;
+/* 焦点丢失（切到通知/来电）时把所有按下的键松开，避免"一直按住" */
+window.addEventListener('blur',function(){ releaseAll(); },true);
+/* 插件页被关掉/刷新时，务必把宿主工具栏和底部主菜单放回去 */
+window.addEventListener('pagehide',function(){ hostChrome(false); },true);
+
+function hostChrome(on){
+  try{
+    var d=window.parent.document;
+    if(!hostStyleInjected){
+      var st=d.createElement('style');
+      st.id='e5-game-chrome';
+      st.textContent='body.'+hostClass+' #mobile-toolbar,body.'+hostClass+' #mobile-nav{display:none!important}'+
+        'body.'+hostClass+' #app-frame{top:var(--status-h);bottom:0;height:calc(100% - var(--status-h))!important}';
+      d.head.appendChild(st);
+      hostStyleInjected=true;
+    }
+    d.body.classList.toggle(hostClass,!!on);
+  }catch(e){}
+}
+
+function fit(){
+  var g=current;
+  if(!g||!g.w||!g.h) return;
+  var stage=$('stage').getBoundingClientRect();
+  var availW=Math.floor(stage.width), availH=Math.floor(stage.height-58);   /* 顶部条 18 + 操作条 40 */
+  if(!availW||!availH) return;
+  var cw,ch,note;
+  if(fitMode==='full'){
+    /* 全拉：可用区整个铺满，纵向拉伸不设上限 */
+    var kx=availW/g.w, h0=g.h*kx;
+    if(h0>availH){ var k2=availH/g.h; cw=Math.floor(g.w*k2); ch=Math.floor(g.h*k2); note='等比 '+k2.toFixed(2)+'×'; }
+    else{ var sy=availH/h0; cw=availW; ch=Math.floor(h0*sy); note='拉伸 '+kx.toFixed(2)+'×'+sy.toFixed(2)+'×'; }
+  }else{
+    /* 宽铺（默认）：左右铺满，上下用同一个缩放比（不拉伸），高度不够就等比缩回去 */
+    var kx2=availW/g.w, h1=g.h*kx2;
+    if(h1>availH){ var k3=availH/g.h; cw=Math.floor(g.w*k3); ch=Math.floor(g.h*k3); note=k3.toFixed(2)+'×'; }
+    else{ cw=availW; ch=Math.floor(h1); note=kx2.toFixed(2)+'×'; }
+  }
+  if(cw<1||ch<1) return;
+  $('ejs_game').style.width=cw+'px';
+  $('ejs_game').style.height=ch+'px';
+  /* 画布本体跟着容器铺满 */
+  try{
+    var c=document.querySelector('#ejs_game canvas');
+    if(c){ c.style.width='100%'; c.style.height='100%'; }
+  }catch(e){}
+  $('tres').textContent=g.w+'×'+g.h+' · '+note;
+}
+
+var lastFrame=null, lastAt=0;
+setInterval(function(){
+  if(running){
+    fit();
+    applyKeymap();
+    try{
+      var gf=gm();
+      if(gf&&typeof gf.getFrameNum==='function'){
+        var n=gf.getFrameNum(), now=Date.now();
+        if(lastFrame===null){ lastFrame=n; lastAt=now; }
+        else if(now-lastAt>=1000){ window.__fps=(n-lastFrame)*1000/(now-lastAt); lastFrame=n; lastAt=now; }
+      }
+    }catch(e){}
+    $('tfps').innerHTML='<b>'+(window.__fps?window.__fps.toFixed(1):'--')+'</b> FPS';
+    /* 加载阶段把进度显示在顶部条的分辨率位置 */
+    if(phase!=='running') $('tres').textContent=$('status').textContent;
+    hostChrome(true);   /* 宿主可能因来电等重排过 body，每秒补一次 */
+    if(phase!=='running'&&window.__fps>0){ phase='running'; marks.firstFrame=Date.now()-t0;
+      $('status').textContent='运行中 · '+current.sys+' '+current.n; focusCanvas();
+    }
+    else if(phase!=='running'&&Date.now()-t0>15000){
+      phase='stalled';
+      var s2=snapshot();
+      $('status').textContent='没有开始出帧 · 页面'+(s2.hidden?'不可见':'可见')+' · 画布'+(s2.canvas||'?')+' · 帧'+(s2.frame===undefined?'?':s2.frame);
+    }
+  }
+  post();
+},1000);
+
+function statTag(){ try{ var qp=new URLSearchParams(location.search); var t=qp.get('tag')||qp.get('t'); return t||'ui'; }catch(e){ return 'ui'; } }
+function post(){
+  try{
+    if(typeof e5!=='undefined'&&e5.api){
+      /* 后端 read_body 对超过 4096 字节的 body 直接丢弃（整个变成 {}），
+         所以这里先量体积，超了就砍日志再发。 */
+      var body={tag:statTag(), phase:phase, core:window.EJS_core||'', fps:window.__fps||null,
+        marks:marks, logs:logs.slice(-6).map(function(x){ return x.slice(0,120); }), err:lastErr.slice(0,120),
+        t:new Date().toISOString(), snap:snapshot()};
+      var raw=JSON.stringify(body);
+      if(raw.length>3600){
+        body.logs=[]; body.err=body.err.slice(0,60);
+        body.snap.keyLog=String(body.snap.keyLog||'').slice(0,600);
+        raw=JSON.stringify(body);
+      }
+      window.__bodyLen=raw.length;
+      e5.api('/stat',{body:body}).catch(function(){});
+    }
+  }catch(e){}
+}
+function fsList(){
+  try{ var g=gm(); if(!g||!g.FS) return ''; var r=g.FS.readdir('/'); return (r||[]).join(','); }catch(e){ return 'ERR '+e; }
+}
+function snapshot(){
+  var s={hidden:document.hidden, vis:document.visibilityState, innerW:window.innerWidth, innerH:window.innerHeight};
+  try{ var c=document.querySelector('#ejs_game canvas'); s.canvas=c?(c.width+'x'+c.height+' css:'+c.style.width+'x'+c.style.height):'none';
+       var b=$('ejs_game').getBoundingClientRect(); s.box=Math.round(b.width)+'x'+Math.round(b.height);
+       if(c){ var r=c.getBoundingClientRect(); s.cbox=Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height); } }catch(e){}
+  try{ var em=window.EJS_emulator;
+    if(em){ s.started=!!em.started; s.paused=!!em.paused; s.failedToStart=!!em.failedToStart;
+      var g=em.gameManager; s.hasGameManager=!!g;
+      if(g){ s.fn=g.functions?Object.keys(g.functions).length:0;
+        try{ s.frame=g.functions.getFrameNum(); }catch(e){}
+        try{ s.states=!!g.functions.supportsStates(); }catch(e){} } }
+  }catch(e){ s.emErr=String(e); }
+  s.hasKeymap=!!window.__keymap; s.focused=window.__focused===true;
+  s.active=document.activeElement?(document.activeElement.id||document.activeElement.tagName):'';
+  s.sel=sel; s.items=cells.length; s.first=window.__first||0; s.keyCount=keyCount; s.keyLog=keyLog.join(','); s.keyTest=window.__keytest||''; s.simCalls=simCalls; s.simErr=window.__simErr||''; s.lastBtn=(window.__lastBtn===undefined?null:window.__lastBtn); s.lastVal=(window.__lastVal===undefined?null:window.__lastVal); s.lastSave=lastSave; s.backTaken=(window.__backTaken===undefined?null:window.__backTaken);
+  s.scrollX=window.scrollX; s.scrollY=window.scrollY;
+  s.fitMode=fitMode; s.keymap=JSON.stringify(keymap); s.cfgOpen=cfgOpen;
+  try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
+  return s;
+}
+
+['log','warn','error'].forEach(function(k){
+  var orig=console[k];
+  console[k]=function(){
+    var a=Array.prototype.slice.call(arguments).map(function(x){ try{ return typeof x==='object'?JSON.stringify(x):String(x); }catch(e){ return String(x); } }).join(' ');
+    logs.push(k+': '+a.slice(0,240)); if(logs.length>20) logs.shift();
+    if(k==='error') lastErr=a.slice(0,180);
+    try{ if(typeof orig==='function') orig.apply(console,arguments); }catch(e){}
+  };
+});
+window.addEventListener('error',function(e){ logs.push('onerror: '+(e.message||'')); lastErr=e.message||''; });
+window.addEventListener('unhandledrejection',function(e){ logs.push('rejection: '+String(e.reason&&e.reason.message||e.reason)); lastErr=String(e.reason&&e.reason.message||e.reason); });
+
+/* 输入链路统计 + 自测：
+   - 一直包住 gameManager.simulateInput：真按键盘时计数会涨（说明事件→运行库→核心这条路是通的）
+   - ?keytest=ArrowRight 额外造一个按键事件做无人值守的验证 */
+(function(){
+  try{
+    var g=gm();
+    if(g&&g.simulateInput&&!g.__counted){
+      var orig=g.simulateInput.bind(g);
+      g.simulateInput=function(a,b,c){ simCalls++; window.__lastBtn=b; if(c) window.__lastVal=c; return orig(a,b,c); };
+      g.__counted=true;
+    }
+    var kt=new URLSearchParams(location.search).get('keytest');
+    if(!kt) return;
+    if(kt==='menuback'){
+      setTimeout(function(){
+        window.dispatchEvent(new KeyboardEvent('keydown',{key:'BrowserBack',bubbles:true,cancelable:true}));
+        setTimeout(function(){
+          window.dispatchEvent(new KeyboardEvent('keyup',{key:'BrowserBack',bubbles:true,cancelable:true}));
+          window.__keytest='running='+running+' backTaken='+String(window.__backTaken);
+        },300);
+      },2500);
+      return;
+    }
+    if(kt==='backrepeat'){
+      /* 系统长按会自动重复发 keydown：这些重复不能把 1.2 秒的退出计时器往后推，
+         否则长按返回键永远退不出去。检查点放在 1.6 秒：应已退出。 */
+      var ty3=0, iv3=setInterval(function(){
+        if(!(window.__fps>0)){ if(++ty3>60){ clearInterval(iv3); window.__keytest='no-frames'; } return; }
+        clearInterval(iv3);
+        var t0=Date.now();
+        window.dispatchEvent(new KeyboardEvent('keydown',{key:'BrowserBack',bubbles:true,cancelable:true}));
+        setTimeout(function(){
+          window.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}));
+        },120);
+        [500,800,1100,1400,1700].forEach(function(ms){
+          setTimeout(function(){
+            window.dispatchEvent(new KeyboardEvent('keydown',{key:'BrowserBack',repeat:true,bubbles:true,cancelable:true}));
+          },ms);
+        });
+        setTimeout(function(){
+          window.__keytest=(running?'still-running':'left')+' t+'+(Date.now()-t0)+'ms log='+keyLog.slice(-6).join(',');
+        },1600);
+      },1000);
+      return;
+    }
+    if(kt==='backdouble'){
+      /* 兜底场景：同一次按压报了两个"同样身份"的事件（取不到 keyCode 的环境），
+         期望只算一次按压 → 核心输入 2 次（按 + 放），且留在游戏里。 */
+      var ty5=0, iv5=setInterval(function(){
+        if(!(window.__fps>0)){ if(++ty5>60){ clearInterval(iv5); window.__keytest='no-frames'; } return; }
+        clearInterval(iv5);
+        var t0=Date.now();
+        window.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}));
+        setTimeout(function(){
+          window.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true}));
+        },30);
+        setTimeout(function(){
+          window.dispatchEvent(new KeyboardEvent('keyup',{key:'Backspace',bubbles:true,cancelable:true}));
+        },220);
+        setTimeout(function(){
+          window.__keytest=(running?'still-running':'left')+' sim='+simCalls+' t+'+(Date.now()-t0)+'ms log='+keyLog.slice(-3).join(',');
+        },500);
+      },1000);
+      return;
+    }
+    if(kt==='backfast'){
+      /* 连按测试：每 110ms 一次（格斗/射击的出拳节奏），每次按压都带硬件孪生事件。
+         期望 4 次按压全部生效 → 核心输入 8 次（4 按 + 4 放），且留在游戏里。 */
+      var ty4=0, iv4=setInterval(function(){
+        if(!(window.__fps>0)){ if(++ty4>60){ clearInterval(iv4); window.__keytest='no-frames'; } return; }
+        clearInterval(iv4);
+        var t0=Date.now();
+        for(var i=0;i<4;i++){
+          (function(i){
+            var base=i*110;
+            setTimeout(function(){ window.dispatchEvent(new KeyboardEvent('keydown',{key:'BrowserBack',bubbles:true,cancelable:true})); },base);
+            setTimeout(function(){ window.dispatchEvent(new KeyboardEvent('keydown',{key:'Backspace',bubbles:true,cancelable:true})); },base+20);
+            setTimeout(function(){ window.dispatchEvent(new KeyboardEvent('keyup',{key:'BrowserBack',bubbles:true,cancelable:true})); },base+70);
+            setTimeout(function(){ window.dispatchEvent(new KeyboardEvent('keyup',{key:'Backspace',bubbles:true,cancelable:true})); },base+90);
+          })(i);
+        }
+        setTimeout(function(){
+          window.__keytest=(running?'still-running':'left')+' sim='+simCalls+' t+'+(Date.now()-t0)+'ms log='+keyLog.slice(-4).join(',');
+        },800);
+      },1000);
+      return;
+    }
+    if(kt==='backpair'||kt==='backpair2'||kt==='backhold'){
+      /* backpair：硬件返回键一次按压的特征（BrowserBack + Backspace 两个按下，<150ms）→ 期望仍留在游戏里
+         backpair2：350ms 后再来一次独立按压 → 期望仍留在游戏里（连按 B 不误退）
+         backhold：按下后不松 → 期望长按 1.2 秒退出 */
+      var ty2=0, iv2=setInterval(function(){
+        if(!(window.__fps>0)){ if(++ty2>60){ clearInterval(iv2); window.__keytest='no-frames'; } return; }
+        clearInterval(iv2);
+        var t0=Date.now();
+        function kkd(k){ window.dispatchEvent(new KeyboardEvent('keydown',{key:k,bubbles:true,cancelable:true})); }
+        function kku(k){ window.dispatchEvent(new KeyboardEvent('keyup',{key:k,bubbles:true,cancelable:true})); }
+        kkd('BrowserBack');
+        setTimeout(function(){ kkd('Backspace'); },120);
+        if(kt!=='backhold'){
+          setTimeout(function(){ window.__mid1=running; kku('BrowserBack'); },220);
+          setTimeout(function(){ kku('Backspace'); },300);
+        }
+        if(kt==='backpair2'){
+          setTimeout(function(){ kkd('BrowserBack'); },420);
+          setTimeout(function(){ kkd('Backspace'); },540);
+          setTimeout(function(){ kku('BrowserBack'); },640);
+          setTimeout(function(){ kku('Backspace'); },720);
+        }
+        setTimeout(function(){
+          var mid=window.__mid1; window.__mid1=undefined;
+          window.__keytest=(running?'still-running':'left')+' mid220:'+(mid?'on':'off')
+            +' t+'+(Date.now()-t0)+'ms sim='+simCalls
+            +' led='+String(window.__lastBtn===0?window.__lastVal:'?')
+            +' log='+keyLog.slice(-5).join(',');
+        }, kt==='backhold'?1500:1100);
+      },1000);
+      return;
+    }
+    setTimeout(function(){
+      var g2=gm();
+      if(g2&&g2.simulateInput&&!g2.__counted){
+        var o2=g2.simulateInput.bind(g2);
+        g2.simulateInput=function(a,b,c){ simCalls++; window.__lastBtn=b; return o2(a,b,c); };
+        g2.__counted=true;
+      }
+    },1500);
+    /* 等画布真的出现（核心加载完）再往画布上派发按键，最多试 8 次 */
+    var tries=0;
+    var code=kt==='ArrowRight'?39:kt==='ArrowLeft'?37:kt==='Enter'?13:kt==='Backspace'?8:38;
+    var iv=setInterval(function(){
+      /* 等核心真的开始出帧（首帧可能要十几秒） */
+      if(!(window.__fps>0)){
+        if(++tries>60){ clearInterval(iv); window.__keytest='no-frames'; }
+        return;
+      }
+      var before=simCalls;
+      window.dispatchEvent(new KeyboardEvent('keydown',{key:kt,code:kt,keyCode:code,bubbles:true,cancelable:true}));
+      setTimeout(function(){
+        window.dispatchEvent(new KeyboardEvent('keyup',{key:kt,code:kt,keyCode:code,bubbles:true,cancelable:true}));
+      },120);
+      setTimeout(function(){
+        if(simCalls>before){ clearInterval(iv); window.__keytest='ok btn='+window.__lastBtn+' calls='+simCalls; }
+        else if(++tries>60){ clearInterval(iv); window.__keytest='no-response calls='+simCalls; }
+      },400);
+    },1500);
+  }catch(e){}
+})();
+
+try{
+  if((new URLSearchParams(location.search).get('preview')||'')==='1'){
+    document.body.style.width='320px'; document.body.style.height='356px';
+    document.body.style.minHeight='0'; document.body.style.overflow='hidden';
+    document.body.style.border='1px solid #33445c';
+  }
+}catch(e){}
+
+applyFitMode();
+drawMenu();
+try{
+  var qp=new URLSearchParams(location.search).get('auto');
+  if(qp!==null&&qp!==''){ var ai=parseInt(qp,10); if(flatList[ai]) setTimeout(function(){ start(ai); },300); }
+}catch(e){}
+</script>
+</body></html>

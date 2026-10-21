@@ -1,0 +1,15 @@
+{
+  "id": "nikki-control",
+  "api_version": 2,
+  "version": "1.1.1",
+  "name": {
+    "zh": "Nikki 代理",
+    "en": "Nikki"
+  },
+  "description": {
+    "zh": "状态、订阅和节点",
+    "en": "Status and nodes"
+  },
+  "entry": "index.html",
+  "order": 25
+}

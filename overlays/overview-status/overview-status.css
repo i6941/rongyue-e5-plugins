@@ -1,0 +1,4 @@
+#e5-link-summary { padding:6px 10px; flex-shrink:0; }
+.e5-summary-row { display:flex; align-items:center; gap:8px; min-height:23px; font-size:calc(12px * var(--ui-scale, 1)); }
+.e5-summary-row .label { width:66px; }
+.e5-summary-value { flex:1; min-width:0; text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }

@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>保号 · 推送</title>
+<style>
+*{box-sizing:border-box}html{scroll-padding-top:70px;scroll-padding-bottom:30px}
+body{margin:0;background:#0b111b;color:#edf3fc;font:13px "Noto Sans CJK SC",sans-serif}
+header{position:sticky;top:0;background:#0b111b;padding:7px 10px;border-bottom:1px solid #29354a;z-index:2}
+h1{font-size:17px;margin:0 0 3px}#status{font-size:12px;color:#a8bad0;white-space:pre-wrap}
+main{padding:8px 8px 38px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:6px 8px;margin-bottom:4px;background:#141d2c;border-radius:6px;border-left:3px solid #29354a}
+.row .k{color:#a8bad0;flex:0 0 44%}.row .v{text-align:right;overflow-wrap:anywhere;flex:1}
+.ok{border-left-color:#4ad07a}.ok .v{color:#8ff0b0}
+.bad{border-left-color:#e3596b}.bad .v{color:#ffb3bd}
+.warn{border-left-color:#e0a93f}.warn .v{color:#f4cb82}
+.na{border-left-color:#4a5568}.na .v{color:#a8bad0}
+h2{font-size:13px;color:#65bdff;margin:10px 0 5px;font-weight:600}
+button{display:block;width:100%;margin:0 0 6px;padding:9px 8px;background:#192438;color:inherit;border:1px solid transparent;border-radius:7px;font:inherit;text-align:left;overflow-wrap:anywhere}
+button:focus{outline:2px solid #65bdff;background:#203b59}
+button:disabled{opacity:.45}
+button small{display:block;color:#a8bad0;font-size:11px;margin-top:3px}
+.note{color:#a8bad0;font-size:12px;line-height:1.45;margin:4px 0}
+#message{color:#f4cb82;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+#field{background:#05080d;border:1px solid #29354a;border-radius:6px;padding:8px;font-size:15px;margin-bottom:6px;min-height:34px;overflow-wrap:anywhere}
+#list.keyboard{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}#list.keyboard button{margin:0;text-align:center;padding:9px 0}
+footer{position:fixed;bottom:0;width:100%;padding:5px 8px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:11px}
+</style></head><body>
+<header><h1 id="title">保号 · 推送</h1><div id="status">读取中…</div></header>
+<main>
+  <div id="message" role="status" aria-live="polite"></div>
+  <div id="list"></div>
+</main>
+<footer id="help">↑↓ 选择　确认 执行　返回 上一级</footer>
+<script src="/sdk/e5.js"></script>
+<script>
+'use strict';
+const $=id=>document.getElementById(id);
+let page='home', focus=0, busy=false, state=null, editField='', editValue='';
+const alphabets=['0123456789','abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+let keyboardMode=0;
+
+function enc(v){return encodeURIComponent(`${v??''}`);}
+function qs(o){return Object.keys(o).map(k=>enc(k)+'='+enc(o[k])).join('&');}
+async function api(path){const r=await e5.api(path);if(r?.ok!==true)throw new Error(r?.error||'操作失败');return r;}
+const items=()=>[...$('list').querySelectorAll('button:not(:disabled)')];
+function note(t){$('message').textContent=t||'';}
+function move(i){const a=items();if(!a.length)return;focus=(i+a.length)%a.length;a[focus].focus({preventScroll:true});a[focus].scrollIntoView({block:'nearest'});}
+function button(label,detail,fn,disabled){const b=document.createElement('button');b.type='button';b.disabled=!!disabled;b.textContent=label;
+  if(detail){const s=document.createElement('small');s.textContent=detail;b.append(s);}b.onclick=fn;b.onfocus=()=>{focus=items().indexOf(b);};$('list').appendChild(b);}
+function row(k,v,cls){const d=document.createElement('div');d.className='row '+(cls||'');
+  const a=document.createElement('div');a.className='k';a.textContent=k;const b=document.createElement('div');b.className='v';b.textContent=v;
+  d.append(a,b);$('list').appendChild(d);}
+function h2(t){const d=document.createElement('h2');d.textContent=t;$('list').appendChild(d);}
+
+function summary(){
+  if(!state)return '读取中…';
+  const c=state.cron.installed?'已启用':'未启用';
+  const md=state.sim.modem||{};
+  return 'SIM '+(md.operator||'未知')+' · 保号计划 '+c+' · 推送 '+(state.forward.enabled?'开':'关');
+}
+
+function draw(){
+  $('title').textContent=page==='home'?'保号 · 推送':page==='keep'?'保号设置':page==='push'?'推送设置':'输入';
+  $('status').textContent=summary();
+  $('list').replaceChildren();
+  if(page==='home'){
+    const s=state?.sim||{}, md=s.modem||{};
+    row('当前卡','卡 '+(Number(s.active_card??0)+1)+' · '+(md.operator||'未知运营商'),md.operator?'ok':'warn');
+    row('调制解调器',(md.state||'未知')+' · 电源 '+(md.power||'?'),md.present?'ok':'bad');
+    row('SIM 在位',md.sim?'是':'否',md.sim?'ok':'bad');
+    row('未读短信',String(s.unread??0),s.unread?'warn':'na');
+    const c1=s.cards?.[0],c2=s.cards?.[1];
+    row('卡 1',c1?(c1.operator||'无卡'):'未知',c1&&c1.operator?'ok':'na');
+    row('卡 2',c2?(c2.operator||'无卡'):'未知',c2&&c2.operator?'ok':'na');
+    const k=state?.keepalive||{};
+    row('保号号码',k.number||'未设置',k.number?'ok':'warn');
+    row('保号间隔',k.days+' 天',k.enabled?'ok':'na');
+    row('计划任务',state?.cron?.installed?'已装入 crontab':'未装',state?.cron?.installed?'ok':'na');
+    row('上次发送',state?.result?.last_at?new Date(Number(state.result.last_at)*1000).toLocaleString():'从未',state?.result?.last_at?'ok':'na');
+    row('PushPlus',state?.token?.present?('已设置 ····'+state.token.tail):'未设置',state?.token?.present?'ok':'warn');
+    row('转发状态',state?.forward?.enabled?('开 · '+(state.forward.url||'')):'关',state?.forward?.enabled?'ok':'na');
+    h2('LuCI 里已有的（这里不重复）');
+    const n=document.createElement('div');n.className='note';
+    n.textContent='短信收发、号码转发、APN、SIM 管理都在 LuCI 的「调制解调器」里，本应用只管保号和推送。';
+    $('list').appendChild(n);
+    button('保号设置','目标号码、内容、间隔、计划任务',()=>go('keep'));
+    button('推送设置','PushPlus 与转发开关',()=>go('push'));
+    button('刷新','重新读取状态',()=>refresh(true));
+  }else if(page==='keep'){
+    const k=state?.keepalive||{};
+    row('目标号码',k.number||'未设置',k.number?'ok':'warn');
+    row('短信内容',k.text||'keepalive','na');
+    row('间隔（天）',String(k.days),'na');
+    row('用哪张卡','卡 '+(Number(k.card)+1),'na');
+    row('计划任务',state?.cron?.installed?'已装入 crontab':'未装',state?.cron?.installed?'ok':'warn');
+    button('编辑目标号码','点开后用键盘输入','()=>edit(\'number\')');
+    button('编辑短信内容','默认 keepalive','()=>edit(\'text\')');
+    button('编辑间隔天数','默认 30','()=>edit(\'days\')');
+    button('切换使用的卡','卡 1 / 卡 2',()=>saveKeepalive({card:(Number(k.card)+1)%2}));
+    button('立即发送一次保号短信','需要已插卡并有信号','()=>sendNow()',busy);
+    button(state?.cron?.installed?'停用计划任务':'启用计划任务','写入 crontab，每天 9 点检查一次间隔','()=>toggleCron()',busy);
+    button('保存设置','号码、内容、间隔','()=>saveKeepalive()');
+    button('返回','回到首页',()=>go('home'));
+  }else if(page==='push'){
+    row('PushPlus token',state?.token?.present?('····'+state.token.tail):'未设置',state?.token?.present?'ok':'warn');
+    row('转发开关',state?.forward?.enabled?'开':'关',state?.forward?.enabled?'ok':'na');
+    row('转发目标',state?.forward?.url||'空',state?.forward?.url?'ok':'na');
+    row('转发方式',state?.forward?.method+' · '+(state?.forward?.content_type||''),'na');
+    const n=document.createElement('div');n.className='note';
+    n.textContent = `token 不经网页传输：请在设备的网页终端(ttyd)或 SSH 里写入 /etc/e5-keepalive/pushplus.token（权限 600）。命令：install -d -m 700 /etc/e5-keepalive && printf %s '你的token' > /etc/e5-keepalive/pushplus.token && chmod 600 /etc/e5-keepalive/pushplus.token`;
+    $('list').appendChild(n);
+    button('保存 token 并开启转发','用设备上已存的 token 开启 pushplus 转发','()=>enablePush()',busy);
+    button('关闭转发','只关转发，token 保留','()=>offPush()',busy);
+    button('测试推送','直接向 pushplus 发一条','()=>testPush()',busy);
+    button('测试转发','造一条假短信走转发链路','()=>testForward()',busy);
+    button('查看转发日志','最近的转发记录','()=>showLog()');
+    button('清除 token','删掉设备上的 token 文件','()=>clearToken()',busy);
+    button('返回','回到首页',()=>go('home'));
+  }else if(page==='kb'){
+    const f=document.createElement('div');f.id='field';f.textContent=editValue||'（空）';$('list').appendChild(f);
+    const a=alphabets[keyboardMode];
+    $('list').className='keyboard';
+    for(const ch of a)button(ch,'',()=>append(ch));
+    button('删除','',()=>erase());
+    button('切换字符集','',()=>{keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();});
+    button('保存','',()=>commitEdit());
+  }
+  if(items().length)items()[Math.min(focus,items().length-1)].focus();
+}
+function go(p){page=p;focus=0;note('');draw();}
+function edit(field){editField=field;editValue=(state?.keepalive?.[field])||'';keyboardMode=0;go('kb');}
+function append(ch){editValue+=ch;draw();}
+function erase(){editValue=editValue.slice(0,-1);draw();}
+async function commitEdit(){
+  try{ await api('/keepalive?'+qs({[editField]:editValue})); state=await api('/state'); note('已保存'); }
+  catch(e){note(e.message);} go('home');
+}
+async function saveKeepalive(patch){
+  busy=true;draw();
+  try{ const k=state.keepalive||{}; await api('/keepalive?'+qs({...k,...(patch||{})})); state=await api('/state'); note('已保存'); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function sendNow(){
+  busy=true;draw();
+  try{ const r=await api('/keepalive/send'); note('发送结果：'+(r.sent?JSON.stringify(r.sent):'无返回')); state=await api('/state'); }
+  catch(e){note('发送失败：'+e.message);} finally{busy=false;draw();}
+}
+async function toggleCron(){
+  busy=true;draw();
+  try{ const on=!state.cron.installed; await api('/cron?enabled='+(on?1:0)); state=await api('/state'); note(on?'计划任务已启用':'计划任务已停用'); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function enablePush(){
+  busy=true;draw();
+  try{ await api('/pushplus/enable'); state=await api('/state'); note('转发已指向 PushPlus'); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function offPush(){
+  busy=true;draw();
+  try{ await api('/forward/off'); state=await api('/state'); note('转发已关闭'); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function testPush(){
+  busy=true;draw();
+  try{ const r=await api('/pushplus/test'); note('推送返回：'+JSON.stringify(r.response).slice(0,220)); }
+  catch(e){note('推送失败：'+e.message);} finally{busy=false;draw();}
+}
+async function testForward(){
+  busy=true;draw();
+  try{ const r=await api('/forward/test'); note('转发测试：'+(r.output||'(无输出)').slice(0,220)); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function showLog(){
+  try{ const r=await api('/forward/log'); note('最近转发：\n'+(r.log||'(空)').slice(-600)); }
+  catch(e){note(e.message);}
+}
+async function clearToken(){
+  busy=true;draw();
+  try{ await api('/token?clear=1'); state=await api('/state'); note('token 已清除'); }
+  catch(e){note(e.message);} finally{busy=false;draw();}
+}
+async function refresh(explicit){
+  try{ state=await api('/state'); if(explicit)note('已刷新'); }catch(e){note('读取失败：'+e.message);} draw();
+}
+e5.onKey(k=>{
+  if(page==='kb'){
+    if(k.kind==='digit'){if(k.key==='#')erase();else if(k.key==='*'){keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();}else append(k.key);return true;}
+    if(k.kind==='other'&&k.key.length===1&&/^[ -~]$/.test(k.key)){append(k.key);return true;}
+    if(['up','down','left','right'].includes(k.kind)){move(focus+({up:-6,down:6,left:-1,right:1}[k.kind]));return true;}
+  }else if(k.kind==='up'||k.kind==='down'){move(focus+(k.kind==='up'?-1:1));return true;}
+  if(k.kind==='ok'||(page!=='kb'&&k.kind==='right')){const b=items()[focus];if(b)e5.press(b);return true;}
+  if(k.kind==='back'||k.kind==='left'){ if(page==='home')return false; go('home'); return true;} return false;
+});
+draw();refresh();
+</script></body></html>

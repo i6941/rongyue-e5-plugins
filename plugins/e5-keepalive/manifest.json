@@ -1,0 +1,15 @@
+{
+  "id": "e5-keepalive",
+  "api_version": 2,
+  "version": "1.0.0",
+  "name": {
+    "zh": "保号 · 推送",
+    "en": "Keep-alive and push"
+  },
+  "description": {
+    "zh": "giffgaff 保号与 PushPlus 推送",
+    "en": "giffgaff keep-alive and PushPlus"
+  },
+  "entry": "index.html",
+  "order": 50
+}

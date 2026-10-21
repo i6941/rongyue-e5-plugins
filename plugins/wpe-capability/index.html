@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>能力探测</title>
+<style>
+*{box-sizing:border-box}html{scroll-padding-top:70px;scroll-padding-bottom:30px}
+body{margin:0;background:#0b111b;color:#edf3fc;font:13px "Noto Sans CJK SC",sans-serif}
+header{position:sticky;top:0;background:#0b111b;padding:7px 10px;border-bottom:1px solid #29354a;z-index:1}
+h1{font-size:17px;margin:0 0 3px}#status{font-size:12px;color:#a8bad0}
+main{padding:8px 8px 34px}
+.row{display:flex;justify-content:space-between;gap:8px;padding:6px 8px;margin-bottom:4px;background:#141d2c;border-radius:6px;border-left:3px solid #29354a}
+.row .k{color:#a8bad0;flex:0 0 42%}.row .v{text-align:right;overflow-wrap:anywhere;flex:1}
+.ok{border-left-color:#4ad07a}.ok .v{color:#8ff0b0}
+.bad{border-left-color:#e3596b}.bad .v{color:#ffb3bd}
+.warn{border-left-color:#e0a93f}.warn .v{color:#f4cb82}
+.na{border-left-color:#4a5568}.na .v{color:#a8bad0}
+h2{font-size:13px;color:#65bdff;margin:10px 0 5px;font-weight:600}
+button{display:block;width:100%;padding:9px;background:#192438;color:inherit;border:1px solid transparent;border-radius:7px;font:inherit;text-align:center}
+button:focus{outline:2px solid #65bdff;background:#203b59}
+.note{color:#a8bad0;font-size:12px;line-height:1.45;margin:4px 0}
+pre{background:#05080d;border:1px solid #29354a;border-radius:6px;padding:6px;font-size:11px;overflow:auto;max-height:26vh;white-space:pre-wrap;overflow-wrap:anywhere}
+footer{position:fixed;bottom:0;width:100%;padding:5px 8px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:11px}
+</style></head><body>
+<header><h1>能力探测</h1><div id="status">页面加载后自动运行…</div></header>
+<main>
+  <div id="rows"></div>
+  <button id="again" type="button">重新运行</button>
+  <h2>按键记录（不判定 blocking / ghosting）</h2>
+  <div class="note">只记录浏览器<strong>收到</strong>的按键；判断屏蔽（blocking）或鬼键（ghosting）需要实机内核层事件 + 实体同时按压。</div>
+  <div id="keys"></div>
+  <h2>原始 JSON</h2>
+  <pre id="json">等待运行…</pre>
+</main>
+<footer>确认键：重新运行　本页不播放声音、不联网</footer>
+<script src="/sdk/e5.js"></script>
+<script>
+'use strict';
+var $=function(id){return document.getElementById(id)};
+var MICRO_NOTE='纯 wasm 整数循环微基准：不是模拟器帧率，也不等于通用 CPU 余量。';
+
+function buildModule(){
+  var b=[];
+  var p=function(){for(var i=0;i<arguments.length;i++)b.push(arguments[i])};
+  p(0x00,0x61,0x73,0x6d,0x01,0x00,0x00,0x00);
+  p(0x01,0x06,0x01,0x60,0x01,0x7f,0x01,0x7f);
+  p(0x03,0x02,0x01,0x00);
+  p(0x07,0x07,0x01,0x03,0x72,0x75,0x6e,0x00,0x00);
+  var body=[0x01,0x01,0x7f,0x41,0x00,0x21,0x01,0x02,0x40,0x03,0x40,
+    0x20,0x01,0x41,0x01,0x6a,0x21,0x01,0x20,0x00,0x20,0x01,0x48,0x0d,0x01,0x0c,0x00,
+    0x0b,0x0b,0x20,0x01,0x0b];
+  p(0x0a,0x01+body.length+1,0x01,body.length);
+  for(var i=0;i<body.length;i++)b.push(body[i]);
+  return new Uint8Array(b);
+}
+
+function nowMs(){
+  if(window.performance&&typeof performance.now==='function')return performance.now();
+  return Date.now();
+}
+function median(a){
+  if(!a.length)return null;
+  var s=a.slice().sort(function(x,y){return x-y}),m=Math.floor(s.length/2);
+  return s.length%2?s[m]:(s[m-1]+s[m])/2;
+}
+function probeGL(type){
+  var c=document.createElement('canvas');c.width=320;c.height=480;
+  var gl=null;
+  try{gl=c.getContext(type,{failIfMajorPerformanceCaveat:false})}catch(e){gl=null}
+  if(!gl)return {ok:false};
+  var o={ok:true,ctx:gl};
+  try{o.version=gl.getParameter(gl.VERSION)}catch(e){}
+  try{o.sl=gl.getParameter(gl.SHADING_LANGUAGE_VERSION)}catch(e){}
+  try{o.renderer=gl.getParameter(gl.RENDERER)}catch(e){}
+  try{o.vendor=gl.getParameter(gl.VENDOR)}catch(e){}
+  try{o.maxTex=gl.getParameter(gl.MAX_TEXTURE_SIZE)}catch(e){}
+  return o;
+}
+function releaseGL(o){
+  if(!o||!o.ok||!o.ctx)return;
+  try{var e=o.ctx.getExtension('WEBGL_lose_context');if(e&&e.loseContext)e.loseContext()}catch(x){}
+}
+function probeAudio(timeoutMs){
+  return new Promise(function(resolve){
+    var R={api:false,state:null,stateAfterResume:null,resumeOutcome:null,
+      sampleRate:null,baseLatency:null,outputLatency:null,closed:false};
+    var AC=window.AudioContext||window.webkitAudioContext;
+    R.api=!!AC;
+    if(!AC){resolve(R);return}
+    var ac=null;
+    try{
+      ac=new AC();
+      R.state=ac.state;R.sampleRate=ac.sampleRate;
+      R.baseLatency=(typeof ac.baseLatency!=='undefined')?ac.baseLatency:null;
+      R.outputLatency=(typeof ac.outputLatency!=='undefined')?ac.outputLatency:null;
+      if(typeof ac.resume==='function'){
+        var timer=null;
+        var resume=Promise.resolve(ac.resume()).then(function(){return 'resolved'},function(){return 'rejected'});
+        var timeout=new Promise(function(r){timer=setTimeout(function(){r('timeout')},timeoutMs)});
+        Promise.race([resume,timeout]).then(function(outcome){
+          if(timer){clearTimeout(timer)}
+          R.resumeOutcome=(outcome==='resolved'&&ac.state==='suspended')?'resolved-but-suspended':outcome;
+          R.stateAfterResume=ac.state;
+          try{ac.close();R.closed=true}catch(e){}
+          resolve(R);
+        });
+      }else{
+        R.resumeOutcome='no-resume-api';R.stateAfterResume=ac.state;
+        try{ac.close();R.closed=true}catch(e){}
+        resolve(R);
+      }
+    }catch(e){R.error=String(e);try{if(ac)ac.close()}catch(x){};resolve(R)}
+  });
+}
+
+var ITERS=20000000,ROUNDS=3;
+
+function run(){
+  var btn=$('again');btn.disabled=true;
+  $('status').textContent='运行中…';
+  var R={ts:new Date().toISOString(),ua:navigator.userAgent,hardwareConcurrency:navigator.hardwareConcurrency,
+    devicePixelRatio:window.devicePixelRatio,screen:[screen.width,screen.height]};
+  var hasWasm=(typeof WebAssembly==='object'||typeof WebAssembly==='function')&&!!WebAssembly;
+  R.webassembly=hasWasm;R.wasmStreamingApi=null;R.wasmBytesPath=null;R.microbenchmark=null;
+  var chain=Promise.resolve();
+  if(hasWasm){
+    R.wasmStreamingApi=(typeof WebAssembly.instantiateStreaming==='function');
+    chain=chain.then(function(){
+      var mod=buildModule();R.wasmModuleBytes=mod.length;
+      var t0=nowMs();
+      return WebAssembly.instantiate(mod,{}).then(function(res){
+        R.wasmInstantiateMs=+(nowMs()-t0).toFixed(2);R.wasmBytesPath=true;
+        var fn=res.instance.exports.run,samples=[],i;
+        for(i=0;i<ROUNDS;i++){var a=nowMs(),v=fn(ITERS),b=nowMs();samples.push({ms:b-a,result:v})}
+        var results=samples.map(function(s){return s.result});
+        var med=median(samples.map(function(s){return s.ms}));
+        R.microbenchmark={kind:'wasm-int-loop',iterations:ITERS,rounds:ROUNDS,
+          expectedResult:ITERS+1,results:results,
+          resultMatchesExpected:results.every(function(v){return v===ITERS+1}),
+          medianMs:med,itersPerSec:med>0?Math.round(ITERS/(med/1000)):null,note:MICRO_NOTE};
+      });
+    }).catch(function(e){R.wasmBytesPath=false;R.wasmError=String(e)});
+  }else{R.wasmSkipped='该环境没有 WebAssembly'}
+
+  R.webgl={webgl2:false,webgl1:false,webgl2Version:null,webgl1Version:null,
+    renderer2:null,renderer1:null,hardwareAccelerationProven:false};
+  chain=chain.then(function(){
+    var g2=null,g1=null,g1e=null;
+    try{
+      g2=probeGL('webgl2');g1=probeGL('webgl');g1e=g1.ok?g1:probeGL('experimental-webgl');
+      if(g2.ok){R.webgl.webgl2=true;R.webgl.webgl2Version=g2.version;R.webgl.renderer2=g2.renderer}
+      var one=g1.ok?g1:g1e;
+      if(one&&one.ok){R.webgl.webgl1=true;R.webgl.webgl1Version=one.version;R.webgl.renderer1=one.renderer}
+    }catch(e){R.webgl.error=String(e)}
+    finally{releaseGL(g2);releaseGL(g1);releaseGL(g1e)}
+  });
+
+  chain=chain.then(function(){return probeAudio(2000)}).then(function(a){R.audio=a});
+
+  chain=chain.then(function(){
+    R.features={canvas2d:false,requestAnimationFrame:typeof requestAnimationFrame==='function',
+      workers:typeof Worker==='function',sharedArrayBuffer:typeof SharedArrayBuffer!=='undefined',
+      crossOriginIsolated:(typeof crossOriginIsolated!=='undefined')?crossOriginIsolated:null};
+    try{R.features.canvas2d=!!document.createElement('canvas').getContext('2d')}catch(e){}
+    R.coreRequirements={note:'不设"必须 WebGL2"：WebGL1-only 的核心同样可用；具体按选定核心与前端变体核对',
+      canvas2d:R.features.canvas2d,webgl1:R.webgl.webgl1,webgl2:R.webgl.webgl2};
+    R.gaps=['本页不检测键盘矩阵的 blocking / ghosting',
+      'renderer 字符串不证明硬件加速生效，也不证明帧真的显示出来',
+      '静音 AudioContext 不证明有可听输出或可用音频路由',MICRO_NOTE];
+    render(R);
+    try{console.log('WPE_PROBE_JSON '+JSON.stringify(R))}catch(e){}
+    try{if(typeof e5!=='undefined'&&e5.api){e5.api('/save',{body:R}).catch(function(){})}}catch(e){}
+  }).catch(function(e){
+    $('status').textContent='出错：'+e;$('json').textContent='ERROR '+e;
+  }).then(function(){btn.disabled=false});
+}
+
+function row(k,v,cls){
+  var d=document.createElement('div');d.className='row '+(cls||'');
+  var a=document.createElement('div');a.className='k';a.textContent=k;
+  var b=document.createElement('div');b.className='v';b.textContent=v;
+  d.appendChild(a);d.appendChild(b);$('rows').appendChild(d);
+}
+function render(R){
+  $('rows').replaceChildren();
+  var g=R.webgl||{};
+  row('系统',R.ua.replace(/^Mozilla\/5\.0 /,'').slice(0,46),'na');
+  row('逻辑核 / DPR',String(R.hardwareConcurrency)+' / '+String(R.devicePixelRatio),'na');
+  row('屏幕',(R.screen||[]).join('×'),'na');
+  row('WebAssembly',R.webassembly?'可用':'不可用',R.webassembly?'ok':'bad');
+  if(R.webassembly){
+    row('instantiate(bytes)',R.wasmBytesPath?'成功 '+R.wasmModuleBytes+' B / '+R.wasmInstantiateMs+' ms':'失败',''+ (R.wasmBytesPath?'ok':'bad'));
+    var m=R.microbenchmark;
+    if(m){
+      row('wasm 微基准',m.itersPerSec?m.itersPerSec.toLocaleString()+' 次/秒':'耗时为 0，不可靠',
+        m.resultMatchesExpected?'ok':'bad');
+      row('循环返回',m.results.join('/')+'（期望 '+m.expectedResult+'）',m.resultMatchesExpected?'ok':'bad');
+      row('中位耗时',m.medianMs+' ms × '+m.rounds+' 轮','na');
+    }
+  }else row('WASM','已跳过','na');
+  row('WebGL2',g.webgl2?(g.webgl2Version||'可用'):'不可用',g.webgl2?'ok':'bad');
+  row('WebGL1',g.webgl1?(g.webgl1Version||'可用'):'不可用',g.webgl1?'ok':'bad');
+  row('renderer 自报',String(g.renderer2||g.renderer1||'-').slice(0,40),'warn');
+  row('硬件加速已证实','否（需实帧验证）','warn');
+  var a=R.audio||{};
+  row('WebAudio',a.api?'可用':'不可用',a.api?'ok':'bad');
+  row('resume 结果',String(a.resumeOutcome)+'（'+String(a.state)+'→'+String(a.stateAfterResume)+'）',
+    a.resumeOutcome==='resolved'?'ok':'warn');
+  row('采样率 / 延迟',String(a.sampleRate)+' / '+String(a.baseLatency),'na');
+  row('音频路由已证实','否（未播放声音）','warn');
+  $('json').textContent=JSON.stringify(R,null,1);
+  $('status').textContent='完成 · '+new Date().toLocaleTimeString();
+}
+
+/* 按键记录：只显示浏览器收到的事件 */
+var keyCount=0;
+function onKey(e){
+  if(e.type!=='keydown')return;
+  keyCount++;
+  var d=document.createElement('div');d.className='row na';
+  d.textContent=e.code+'  '+(e.repeat?'repeat':'first');
+  $('keys').appendChild(d);
+  while($('keys').children.length>8)$('keys').removeChild($('keys').firstChild);
+}
+
+document.addEventListener('keydown',function(e){
+  if(e.code==='Enter'||e.code==='NumpadEnter'){var b=$('again');if(b&&!b.disabled){e.preventDefault();run()}}
+  onKey(e);
+},true);
+$('again').addEventListener('click',function(){run()});
+run();
+</script>
+</body></html>

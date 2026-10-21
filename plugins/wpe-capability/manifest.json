@@ -1,0 +1,15 @@
+{
+  "id": "wpe-capability",
+  "api_version": 2,
+  "version": "1.0.0",
+  "name": {
+    "zh": "能力探测",
+    "en": "Capability probe"
+  },
+  "description": {
+    "zh": "WASM / WebGL / 音频实测",
+    "en": "WASM, WebGL and audio"
+  },
+  "entry": "index.html",
+  "order": 40
+}

@@ -1,0 +1,43 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+*.so
+
+# Credentials and device-private material — never commit these
+.secrets/
+*.pem
+*.key
+id_*
+
+# Device backups and firmware images (hundreds of MB, and they contain unique
+# device data such as NV/calibration partitions)
+*.bin
+*.img
+*.raw
+*.zip
+*.7z
+*.rar
+*.tgz
+*.tar.gz
+!roms/**/*.gba
+!roms/**/*.gb
+!roms/**/*.nes
+
+# Log files can contain SSIDs, IPs and tokens
+*.log
+
+# Local scratch
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+tmp/
+*.tmp
+
+# Local notes that reference private infrastructure
+.notes/
+notes/
+
+# Project-internal workflow helpers (not part of the public plugin repo)
+tools/append-handoff.py
+tools/grep-context.py

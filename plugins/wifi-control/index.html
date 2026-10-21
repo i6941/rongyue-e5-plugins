@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Wi-Fi 管理</title>
+<style>
+*{box-sizing:border-box}html{scroll-padding-top:78px;scroll-padding-bottom:32px}
+body{margin:0;background:#0b111b;color:#edf3fc;font:14px "Noto Sans CJK SC",sans-serif}
+header{position:sticky;top:0;background:#0b111b;padding:8px 10px;border-bottom:1px solid #29354a;z-index:1}
+h1{font-size:18px;margin:0 0 3px}#status{font-size:12px;color:#a8bad0;overflow-wrap:anywhere}
+main{padding:8px 8px 38px}button{display:block;width:100%;margin:0 0 6px;padding:8px;background:#192438;color:inherit;border:1px solid transparent;border-radius:7px;text-align:left;font:inherit;overflow-wrap:anywhere}
+button:focus{outline:2px solid #65bdff;background:#203b59}button:disabled{opacity:.45}small{display:block;color:#a8bad0;font-size:12px;margin-top:3px}
+.field{padding:6px 8px;margin-bottom:4px;color:#a8bad0;overflow-wrap:anywhere}
+#message{color:#f4cb82;margin-bottom:8px;white-space:pre-wrap;overflow-wrap:anywhere}
+footer{position:fixed;bottom:0;width:100%;padding:5px 8px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:11px}
+#list.keyboard{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}#list.keyboard button{margin:0;text-align:center;padding:9px 0}
+</style></head><body>
+<header><h1 id="title">Wi-Fi 管理</h1><div id="status">正在读取…</div></header>
+<main><div id="message" role="status" aria-live="polite"></div><div id="list"></div></main>
+<footer id="help">↑↓ 选择　确认 执行　返回 上一级</footer>
+<script src="/sdk/e5.js"></script><script>
+'use strict';
+const $=id=>document.getElementById(id);
+let page='home', state=null, networks=[], form=null, chosen=null, focus=0, busy=false, polling=false;
+let confirmation=null, lastJob='', wasWorking=false, editField='', editValue='', keyboardMode=0;
+const actions={connect:'连接网络',hotspot:'开启热点',forget:'忘记网络',restore:'恢复上次配置'};
+const alphabets=['abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ','0123456789'," !\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~"];
+async function api(path,body){const r=await e5.api(path,body===undefined?undefined:{body});if(r?.ok!==true)throw new Error(r?.error||'操作失败');return r;}
+const working=()=>['queued','running'].includes(state?.job?.phase);
+const items=()=>[...$('list').querySelectorAll('button:not(:disabled)')];
+function note(text){$('message').textContent=text||'';}
+function move(index){const a=items();if(!a.length)return;focus=(index+a.length)%a.length;a[focus].focus({preventScroll:true});a[focus].scrollIntoView({block:'nearest'});}
+function button(label,detail,fn,disabled=false){const b=document.createElement('button');b.type='button';b.disabled=disabled;b.textContent=label;
+if(detail){const s=document.createElement('small');s.textContent=detail;b.append(s);}b.onclick=fn;b.onfocus=()=>{focus=items().indexOf(b);};$('list').append(b);}
+function field(text){const row=document.createElement('div');row.className='field';row.textContent=text;$('list').append(row);}
+function summary(){
+ if(!state)return '正在读取…';
+ if(working())return actions[state.job.action]+'中，请稍候';
+ if(state.mode==='hotspot')return '热点模式 · '+state.hotspotSsid;
+ if(state.connected)return state.ssid+' · '+state.ip+(state.signal!=null?' · '+state.signal+' dBm':'');
+ return state.mode==='station'?'Wi-Fi 上联未连接':'无线已停用';
+}
+function go(next){page=next;focus=0;note('');draw();}
+function ask(action,payload){confirmation={action,payload};go('confirm');}
+function openForm(network,saved=false){form={ssid:network?.ssid||'',band:network?.band||'5g',encryption:network?.encryption||'psk2',password:'',useSaved:saved,scanned:!!network};go('form');}
+function draw(){
+ $('title').textContent=page==='keyboard'?(editField==='password'?'输入密码':'输入 Wi-Fi 名称'):page==='scan'?'扫描结果':page==='saved'?'已保存网络':page==='form'?'连接设置':page==='confirm'?'确认操作':'Wi-Fi 管理';
+ $('status').textContent=summary();$('list').replaceChildren();$('list').className=page==='keyboard'?'keyboard':'';
+ $('help').textContent=page==='keyboard'?'方向键选字符　确认输入　#删除　*切换':'↑↓ 选择　确认 执行　返回 上一级';
+ const blocked=busy||working();
+ if(page==='home'){
+  button('已保存网络','选择网络，无需再次输入密码',()=>go('saved'),blocked||!state);
+  button('扫描附近 Wi-Fi','扫描不保证列出所有频段或隐藏网络',scan,blocked);
+  button('手动添加网络','可输入名称并选择2.4/5GHz',()=>openForm(),blocked);
+  button('开启热点','将断开 Wi-Fi 上联；无SIM时无法上网',()=>ask('hotspot',{}),blocked);
+  button('恢复上次配置','连接失败或误操作时使用',()=>ask('restore',{}),blocked||!state?.canRestore);
+  button('刷新状态','USB管理始终保留',()=>refresh(true),busy);
+ }else if(page==='saved'){
+  for(const p of state.profiles)button(p.ssid,(state.connected&&state.ssid===p.ssid?'已连接 · ':'')+(p.band==='2g'?'2.4GHz':'5GHz'),()=>{chosen=p;go('savedActions');},blocked);
+ }else if(page==='savedActions'){
+  button('连接 '+chosen.ssid,'使用已保存的密码',()=>ask('connect',{ssid:chosen.ssid,useSaved:true}),blocked);
+  button('忘记该网络',state.configuredSsid===chosen.ssid?'断开当前上联并开启热点':'删除本机保存的该网络',()=>ask('forget',{ssid:chosen.ssid}),blocked);
+ }else if(page==='scan'){
+  for(const n of networks)button(n.ssid,(n.band==='2g'?'2.4GHz':'5GHz')+' · '+n.signal+' dBm · '+(n.encryption==='none'?'开放网络':n.encryption==='sae'?'WPA3':'WPA2'),()=>openForm(n,state.profiles.some(p=>p.ssid===n.ssid)),blocked||!n.supported);
+  button('手动添加','扫描不到时输入名称',()=>openForm(),blocked);
+ }else if(page==='form'){
+  if(form.scanned){
+   field('名称：'+form.ssid);
+   field('频段：'+(form.band==='2g'?'2.4GHz':'5GHz')+' · 认证：'+({psk2:'WPA2',sae:'WPA3',none:'开放网络'}[form.encryption]));
+  }else button('名称：'+(form.ssid||'未填写'),'确认可编辑',()=>edit('ssid'),blocked);
+  button('密码：'+(form.useSaved?'使用已保存':form.password?'已填写 '+form.password.length+' 字符':'未填写'),'确认打开方向键字符盘',()=>{form.useSaved=false;edit('password');},blocked||form.encryption==='none');
+  if(!form.scanned){
+  button('频段：'+(form.band==='2g'?'2.4GHz':'5GHz'),'确认切换',()=>{form.band=form.band==='2g'?'5g':'2g';draw();},blocked);
+  button('认证：'+({psk2:'WPA2',sae:'WPA3',none:'开放网络'}[form.encryption]),'确认切换',()=>{const a=['psk2','sae','none'];form.encryption=a[(a.indexOf(form.encryption)+1)%a.length];draw();},blocked);
+  }
+  button('连接此网络','失败后自动恢复原配置',()=>ask('connect',{...form}),blocked);
+ }else if(page==='confirm'){
+  button('取消','返回，不执行操作',back);
+  const warning=confirmation.action==='hotspot'?'将断开 Wi-Fi 上联；无SIM时热点不能上网':confirmation.action==='connect'?(confirmation.payload.encryption==='none'?'开放网络未加密；连接失败自动回滚':'连接失败自动回滚，USB管理保持可用'):confirmation.action==='restore'?'恢复上一次保存的无线/网络配置':'删除已保存网络；当前网络会断开';
+  button('确认'+actions[confirmation.action],warning,runJob,blocked);
+ }else if(page==='keyboard'){
+  note(editField==='password'?'密码：'+'*'.repeat(editValue.length):'名称：'+editValue);
+  for(const c of alphabets[keyboardMode])button(c===' '?'空格':c,'',()=>append(c));
+  button('删除','',erase);button('切换','',()=>{keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();});button('完成','',finishInput);
+ }
+ if(!items().length)note(working()?'网络操作进行中，可按返回':'没有可选网络');else move(focus);
+}
+function back(){
+ if(page==='keyboard'){finishInput();return;}
+ if(page==='form')form=null;
+ if(page==='home'){e5.exit();return;}
+ if(page==='savedActions')go('saved');else go('home');
+}
+function edit(field){editField=field;editValue=form[field]||'';keyboardMode=0;go('keyboard');}
+function append(c){const max=editField==='password'?64:32;if(editValue.length<max){editValue+=c;draw();}}
+function erase(){editValue=editValue.slice(0,-1);draw();}
+function finishInput(){form[editField]=editValue;editValue='';go('form');}
+async function refresh(explicit=false){
+ if(polling)return;polling=true;
+ try{
+  const previous=JSON.stringify([state?.mode,state?.connected,working()]);state=await api('/status');const job=state.job;
+  if(job&&['done','failed'].includes(job.phase)&&lastJob!==job.id){lastJob=job.id;note(job.phase==='done'?(actions[job.action]||'操作')+'完成':job.error);if(wasWorking){page='home';focus=0;}}
+  else if(working())note(actions[job.action]+'中…');else if(explicit)note('状态已刷新');
+  const changed=previous!==JSON.stringify([state.mode,state.connected,working()]);wasWorking=working();e5.keepAwake(working());$('status').textContent=summary();
+  if(changed||explicit)draw();
+ }catch(e){note('读取失败：'+e.message);}finally{polling=false;}
+}
+async function scan(){if(busy||working())return;busy=true;note('正在扫描…');draw();try{networks=(await api('/scan')).networks;page='scan';focus=0;note('');}catch(e){note(e.message);}finally{busy=false;draw();}}
+async function runJob(){
+ if(busy||working())return;busy=true;draw();
+ try{const r=await api('/'+confirmation.action,confirmation.payload);state={...state,job:r.job};wasWorking=true;page='home';focus=0;form=null;note(actions[confirmation.action]+'中…');}
+ catch(e){note(e.message);}finally{busy=false;draw();await refresh();}
+}
+e5.onKey(k=>{
+ if(page==='keyboard'){
+  if(k.kind==='digit'){if(k.key==='#')erase();else if(k.key==='*'){keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();}else append(k.key);return true;}
+  if(k.kind==='other'&&k.key.length===1&&/^[ -~]$/.test(k.key)){append(k.key);return true;}
+  if(['up','down','left','right'].includes(k.kind)){move(focus+({up:-6,down:6,left:-1,right:1}[k.kind]));return true;}
+ }else if(k.kind==='up'||k.kind==='down'){move(focus+(k.kind==='up'?-1:1));return true;}
+ if(k.kind==='ok'||page!=='keyboard'&&k.kind==='right'){const b=items()[focus];if(b)e5.press(b);return true;}
+ if(k.kind==='back'||k.kind==='left'){back();return true;}return false;
+});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+window.addEventListener('pagehide',()=>{clearInterval(timer);editValue='';form=null;e5.keepAwake(false);});
+draw();refresh();const timer=setInterval(()=>{if(!document.hidden)refresh();},2000);
+</script></body></html>

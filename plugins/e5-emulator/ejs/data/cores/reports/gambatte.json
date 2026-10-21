@@ -1,0 +1,8 @@
+{
+  "core": "gambatte",
+  "buildStart": "2025-06-14T18:09:21+00:00",
+  "buildEnd": "2025-06-14T18:10:32+00:00",
+  "options": {
+    "defaultWebGL2": true
+  }
+}

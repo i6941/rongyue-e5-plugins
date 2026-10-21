@@ -1,0 +1,15 @@
+{
+  "id": "wifi-control",
+  "api_version": 2,
+  "version": "1.0.1",
+  "name": {
+    "zh": "Wi-Fi 管理",
+    "en": "Wi-Fi"
+  },
+  "description": {
+    "zh": "连接、热点与恢复",
+    "en": "Connect and hotspot"
+  },
+  "entry": "index.html",
+  "order": 20
+}

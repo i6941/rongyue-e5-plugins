@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Nikki 代理</title>
+<style>
+* { box-sizing:border-box; }
+html { scroll-padding-top:68px; scroll-padding-bottom:32px; }
+body { margin:0; background:#0b111b; color:#edf3fc; font:14px "Noto Sans CJK SC",sans-serif; }
+header { position:sticky; top:0; padding:8px 10px; background:#0b111b; border-bottom:1px solid #29354a; z-index:1; }
+h1 { font-size:18px; margin:0 0 3px; }
+#status { color:#94a6be; font-size:12px; }
+main { padding:8px 8px 38px; }
+#dashboard { padding:8px; background:#121e2f; border:1px solid #293b54; border-radius:7px; margin-bottom:8px; }
+#dashboard[hidden] { display:none; }
+#dashboard:focus { outline:2px solid #65bdff; background:#203b59; }
+#dashboard div { margin:3px 0; overflow-wrap:anywhere; font-size:12px; }
+#dashboard .label { color:#9fb2cd; }
+button { display:block; width:100%; margin:0 0 6px; padding:8px; border:1px solid transparent; border-radius:7px;
+  background:#192438; color:inherit; text-align:left; font:inherit; overflow-wrap:anywhere; }
+button:focus { outline:2px solid #65bdff; outline-offset:0; background:#203b59; }
+button:disabled { opacity:.45; }
+small { display:block; color:#a8bad0; font-size:12px; margin-top:3px; }
+.chosen { border-color:#429d77; }
+.hint { color:#a8bad0; padding:8px 2px; }
+footer { position:fixed; bottom:0; padding:5px 8px; background:#0b111b; width:100%; border-top:1px solid #29354a; font-size:11px; color:#a8bad0; }
+#message { margin:0 0 8px; color:#f4cb82; white-space:pre-wrap; overflow-wrap:anywhere; }
+</style>
+</head>
+<body>
+<header><h1 id="title">Nikki 代理</h1><div id="status">正在读取状态…</div></header>
+<main>
+<button id="dashboard" type="button" aria-label="状态总览，确认刷新">
+<div><span class="label">上联 </span><span id="net">正在读取…</span></div>
+<div id="address"></div><div id="speed"></div>
+<div><span class="label">默认代理 </span><span id="node">正在读取…</span></div>
+<div id="latency"></div>
+</button>
+<div id="message" role="status" aria-live="polite"></div><div id="list"></div>
+</main>
+<footer>↑↓ 选择　确认 执行　返回 上一级</footer>
+<script src="/sdk/e5.js"></script>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+let screen = 'home', state = null, data = [], groupName = '', focused = 0;
+let busy = false, polling = false, lastJob = '', wasWorking = false, confirmation = null;
+const names = {start:'启动服务', stop:'停止服务', restart:'重启服务', update:'更新订阅'};
+// Display-only cleanup: preserve original names for every API operation.
+function displayName(value) { return String(value || '').replace(/^[^\p{L}\p{N}\[]+/u,''); }
+async function pluginApi(path, options) {
+  const result=await e5.api(path,options);
+  // Some E5 uhttpd builds preserve the JSON status but send HTTP 200.
+  if (result?.ok!==true) throw new Error(result?.error || '操作未成功');
+  return result;
+}
+function working() { return ['queued','running'].includes(state?.job?.phase); }
+function rate(bytes) {
+  if (bytes==null) return '--';
+  return bytes>=1048576?(bytes/1048576).toFixed(1)+' MiB/s':(bytes/1024).toFixed(1)+' KiB/s';
+}
+function dashboard() {
+  $('dashboard').hidden=screen!=='home';
+  if (!state) return;
+  const n=state.network || {}, p=state.proxy;
+  $('net').textContent=n.kind+(n.ssid?' · '+n.ssid:'');
+  $('address').textContent=(n.ip?'IP '+n.ip:'无默认路由')+(n.signal!=null?' · '+n.signal+' dBm':'');
+  $('speed').textContent='上联速率：下载 '+rate(n.rates?.rx)+' / 上传 '+rate(n.rates?.tx);
+  $('node').textContent=p?p.chain.slice(1).map(displayName).join(' → '):(state.running?'暂不可读':'已停止');
+  $('latency').textContent=p?.delay>0?'节点最近探测：'+p.delay+' ms':'节点最近探测：暂无结果';
+}
+function message(text) { $('message').textContent = text || ''; }
+function buttons() { return [...(screen==='home'?[$('dashboard')]:[]), ...$('list').querySelectorAll('button:not(:disabled)')]; }
+function focusAt(index) {
+  const items = buttons();
+  if (!items.length) return;
+  focused = (index + items.length) % items.length;
+  items[focused].focus({preventScroll:true});
+  items[focused].scrollIntoView({block:'nearest'});
+}
+function button(label, detail, fn, disabled=false, chosen=false) {
+  const b = document.createElement('button');
+  b.type='button'; b.disabled=disabled; b.classList.toggle('chosen',chosen);
+  const text=document.createElement('span'); text.textContent=label; b.append(text);
+  if (detail) { const s=document.createElement('small'); s.textContent=detail; b.append(s); }
+  b.onclick=fn;
+  b.onfocus=()=>{ focused=buttons().indexOf(b); };
+  $('list').append(b);
+}
+function draw() {
+  $('list').replaceChildren();
+  dashboard();
+  $('title').textContent = screen==='home' ? 'Nikki 代理' : screen==='groups' ? '选择节点组' : screen==='confirm' ? '确认操作' : displayName(groupName);
+  const text = state ? (state.running ? (state.apiReady ? '运行中' : '运行中 · API未就绪') : '已停止') : '正在读取状态…';
+  $('status').textContent=text+(state?.version?' · '+state.version:'')+(working()?' · 操作中':'');
+  const blocked=busy || working();
+  if (screen==='home') {
+    button('节点选择','查看各组并切换节点',openGroups,blocked || !state?.apiReady);
+    button(state?.running?'停止服务':'启动服务',state?.running?'停止代理并保持停用':'启动代理并设为开机启用',()=>confirmAction(state?.running?'stop':'start'),blocked || !state);
+    button('重启服务','重新加载当前配置',()=>confirmAction('restart'),blocked || !state?.running);
+    button('更新订阅','保留旧缓存；成功后应用新配置',()=>confirmAction('update'),blocked || !state);
+    button('刷新状态','',()=>refresh(true),busy);
+  } else if (screen==='groups') {
+    for (const g of data) button(displayName(g.name),'当前：'+displayName(g.now),()=>{groupName=g.name; screen='choices'; focused=0; draw();},blocked);
+  } else if (screen==='choices') {
+    const g=data.find(x=>x.name===groupName);
+    if (!g) { screen='groups'; draw(); return; }
+    for (const n of g.choices) {
+      const current=n.name===g.now;
+      button((current?'[当前] ':'')+displayName(n.name),(n.type || '')+(n.delay>0?' · '+n.delay+' ms':''),()=>selectNode(g.name,n.name),blocked,current);
+    }
+  } else if (screen==='confirm') {
+    button('取消','返回，不执行操作',back,false);
+    button('确认'+names[confirmation],confirmation==='stop'?'代理将停止，机身控制页仍可使用':'操作期间请稍候',()=>runJob(confirmation),blocked);
+  }
+  if (!buttons().length) {
+    const p=document.createElement('div'); p.className='hint'; p.textContent=working()?'后台处理中，可按返回':'暂无可选项'; $('list').append(p);
+  } else focusAt(focused);
+}
+function confirmAction(action) { confirmation=action; screen='confirm'; focused=0; message(''); draw(); }
+function back() {
+  if (screen==='choices') screen='groups';
+  else if (screen!=='home') screen='home';
+  else { e5.exit(); return; }
+  focused=0; message(''); draw();
+}
+async function refresh(explicit=false) {
+  if (polling) return;
+  polling=true;
+  try {
+    const previous=JSON.stringify([state?.running,state?.apiReady,state?.version,working()]);
+    state=await pluginApi('/status');
+    const job=state.job;
+    if (job && ['done','failed'].includes(job.phase) && lastJob!==job.id) {
+      lastJob=job.id;
+      message(job.phase==='done'?(names[job.action]||'操作')+'完成':job.error);
+      if (wasWorking && screen!=='home') { screen='home'; focused=0; }
+    } else if (working()) message((names[job.action]||'操作')+'中…');
+    else if (explicit) message('状态已刷新');
+    const changed=previous!==JSON.stringify([state.running,state.apiReady,state.version,working()]);
+    wasWorking=working();
+    e5.keepAwake(working());
+    dashboard();
+    if (changed || explicit) draw();
+  } catch (err) { message('读取失败：'+err.message+'；可按确认重试'); }
+  finally { polling=false; }
+}
+async function openGroups() {
+  if (busy || working()) return;
+  busy=true; message('正在读取节点…'); draw();
+  try { data=(await pluginApi('/groups')).groups; screen='groups'; focused=0; message(''); }
+  catch(err) { message(err.message); }
+  finally { busy=false; draw(); }
+}
+async function selectNode(group,node) {
+  if (busy || working()) return;
+  busy=true; message('切换中…'); draw();
+  try {
+    const result=await pluginApi('/select',{body:{group,node}});
+    data.find(g=>g.name===group).now=result.now;
+    message('已切换：'+displayName(result.now));
+  } catch(err) { message('切换失败：'+err.message); }
+  finally { busy=false; draw(); }
+}
+async function runJob(action) {
+  if (busy || working()) return;
+  busy=true; draw();
+  try {
+    const result=await pluginApi(action==='update'?'/update':'/service',{body:action==='update'?{}:{action}});
+    state={...state,job:result.job}; wasWorking=true;
+    screen='home'; focused=0; message(names[action]+'中…');
+  } catch(err) { message(err.message); }
+  finally { busy=false; draw(); await refresh(); }
+}
+$('dashboard').onfocus=()=>{focused=0;};
+$('dashboard').onclick=()=>refresh(true);
+e5.onKey(k=>{
+  if (k.kind==='up' || k.kind==='down') {focusAt(focused+(k.kind==='up'?-1:1)); return true;}
+  if (k.kind==='ok' || k.kind==='right') {const b=buttons()[focused]; if (b) e5.press(b); else if (!state) refresh(true); return true;}
+  if (k.kind==='back' || k.kind==='left') {back(); return true;}
+  return false;
+});
+document.addEventListener('visibilitychange',()=>{if (!document.hidden) refresh();});
+window.addEventListener('pagehide',()=>{clearInterval(timer); e5.keepAwake(false);});
+draw(); refresh();
+const timer=setInterval(()=>{if (!document.hidden) refresh();},2000);
+</script>
+</body>
+</html>
