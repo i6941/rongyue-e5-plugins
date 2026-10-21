@@ -52,6 +52,13 @@ body.ingame.fitfull #ejs_game{border-radius:0;box-shadow:none}
   padding:5px 6px;background:rgba(8,13,22,.85);border:1px solid #2b3a52;border-radius:6px;
   color:#cfe0f5;font-size:11px;line-height:16px;text-align:center}
 body.ingame #hint.show{display:block}
+/* 卡死后的恢复面板：模拟器主循环被打断时给出"一键重进"，存档会自动读回 */
+#stall{position:absolute;left:0;right:0;top:18px;bottom:40px;z-index:9;display:none;flex-direction:column;
+  align-items:center;justify-content:center;gap:12px;background:rgba(4,7,12,.93)}
+#stall.show{display:flex}
+#stall .stxt{font-size:16px;color:#ffd479}
+#stall .srow{display:flex;gap:10px}
+#stall button{height:42px;padding:0 14px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:8px}
 /* ---- 按键设置面板 ---- */
 #bcfg{position:absolute;right:6px;bottom:26px;z-index:9;height:30px;padding:0 12px;font:inherit;font-size:13px;
   color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:15px;
@@ -98,6 +105,9 @@ body.ingame main{top:0;bottom:0}
       <button id="bview" type="button">画面</button><button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
       <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
     <div id="hint"></div>
+    <div id="stall"><div class="stxt">画面卡住了</div><div class="srow">
+      <button id="sresume" type="button">重进（读回存档）</button>
+      <button id="slegacy" type="button">旧版核心重进</button></div></div>
   </div>
 </main>
 <footer id="foot">↑↓←→ 选游戏　数字 直达　确认 开始</footer>
@@ -172,6 +182,15 @@ window.addEventListener('error',function(e){
     if(e.error&&e.error.stack){ logs.push('estack '+String(e.error.stack).replace(/\s+/g,' ').slice(0,300)); if(logs.length>20) logs.shift(); }
   }catch(x){}
 },true);
+/* 关掉运行库的手柄轮询：它每 10ms 查一次 navigator.getGamepads，
+   在这台机器的 WebKit 上可能读到一个"幽灵手柄"，把核心不认的按钮号
+   （9、12~15）发进核心的输入回调，触发 wasm 陷阱、主循环停摆。
+   我们只用实体按键，不需要手柄 API。 */
+try{
+  navigator.getGamepads=function(){ return []; };
+  if(navigator.webkitGetGamepads) navigator.webkitGetGamepads=function(){ return []; };
+}catch(e){}
+
 var BASE='/plugins/e5-emulator/';
 
 /* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
@@ -281,6 +300,17 @@ function drawMenu(){
   sel=Math.max(0,Math.min(sel,cells.length-1));
   renumber();
   $('status').textContent='共 '+flatList.length+' 个游戏';
+  /* 上次是"卡死后重进"留下的标记：自动进同一个游戏（自动存档会读回进度） */
+  try{
+    var rn=localStorage.getItem('e5resume');
+    if(rn && !window.__resumed){
+      window.__resumed=1;
+      localStorage.removeItem('e5resume');
+      for(var ri=0;ri<flatList.length;ri++){
+        if(flatList[ri].n===rn){ (function(idx){ setTimeout(function(){ start(idx); },60); })(ri); break; }
+      }
+    }
+  }catch(e){}
 }
 function renumber(){
   var m=$('menu'), top=m.getBoundingClientRect().top;
@@ -305,6 +335,20 @@ function selectIdx(i){
   renumber();
 }
 $('menu').addEventListener('scroll',function(){ renumber(); },{passive:true});
+
+var stallShown=false;
+function showStall(){
+  if(stallShown) return; stallShown=true;
+  try{ $('stall').classList.add('show'); }catch(e){}
+  try{ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; }catch(e){}
+}
+/* 重进：重载插件页并自动进同一个游戏，自动存档会读回原来的进度 */
+function resumeGame(legacy){
+  try{ if(legacy) localStorage.setItem('e5legacy','1'); if(current) localStorage.setItem('e5resume',current.n); }catch(e){}
+  try{ location.reload(); }catch(e){}
+}
+bindTap($('sresume'),function(){ resumeGame(false); });
+bindTap($('slegacy'),function(){ resumeGame(true); });
 
 function applyKeymap(){
   try{
@@ -492,6 +536,9 @@ function autoLoad(){
 function start(i){
   clearTimeout(reloadTimer);   /* 别把刚开的游戏连同重载一起干掉 */
   var g=flatList[i]; if(!g) return;
+  try{ localStorage.setItem('e5resume',g.n); }catch(e){}
+  stallShown=false;
+  try{ $('stall').classList.remove('show'); }catch(e){}
   current=g; running=true; phase='loading'; logs=[]; lastErr=''; marks={}; t0=Date.now(); simCalls=0;
   autoLoaded=false; autoTick=0; lastSave='';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
@@ -547,6 +594,7 @@ function start(i){
 }
 function leave(){
   running=false; phase='menu';
+  try{ localStorage.removeItem('e5resume'); }catch(e){}   /* 主动退出就别再自动重进了 */
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(false); }catch(e){}
   try{ autoSave(); }catch(e){}
   /* 真正停掉上一个实例。运行库的 EmulatorJS 类根本没有 stop() 方法，
@@ -888,7 +936,7 @@ setInterval(function(){
       if(g2&&typeof g2.getFrameNum==='function'){
         var fn=g2.getFrameNum();
         if(window.__lastFrameNum===fn) stallTicks++; else { stallTicks=0; window.__lastFrameNum=fn; }
-        if(stallTicks>=5){ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; }
+        if(stallTicks>=5){ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; showStall(); }
       }
     }catch(e){}
     autoTick++;
