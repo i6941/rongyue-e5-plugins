@@ -393,6 +393,28 @@ function checkCoreCache(cb){
   }catch(e){ if(cb) cb('ex2 '+e); }
 }
 
+/* 卡死自动恢复：主循环被打断后，核心缓存很可能已经残缺。
+   倒计时结束就清缓存 + 重载 + 自动回到同一游戏（存档会读回）。
+   每个会话最多自动恢复一次，免得变成"加载→死→重载"的死循环。 */
+var stallCount=0, stallTimer=0, autoRecovering=false;
+function startStallRecovery(){
+  if(autoRecovering||stallTimer) return;
+  try{ stallCount=(parseInt(localStorage.getItem('e5stallcount')||'0',10)||0); }catch(e){}
+  if(stallCount>=1) return;          /* 已经自动恢复过一次了，改由人来决定 */
+  autoRecovering=true;
+  var left=6;
+  try{ $('stall').classList.add('show'); $('stall').querySelector('.stxt').textContent='画面卡住 '+left+'s 后自动重进'; }catch(e){}
+  stallTimer=setInterval(function(){
+    left--;
+    if(left<=0){
+      clearInterval(stallTimer); stallTimer=0;
+      try{ localStorage.setItem('e5stallcount',String(stallCount+1)); }catch(e){}
+      resumeGame(false);
+      return;
+    }
+    try{ $('stall').querySelector('.stxt').textContent='画面卡住 '+left+'s 后自动重进'; }catch(e){}
+  },1000);
+}
 function applyKeymap(){
   try{
     var em=window.EJS_emulator;
@@ -986,7 +1008,7 @@ setInterval(function(){
       if(g2&&typeof g2.getFrameNum==='function'){
         var fn=g2.getFrameNum();
         if(window.__lastFrameNum===fn) stallTicks++; else { stallTicks=0; window.__lastFrameNum=fn; }
-        if(stallTicks>=5){ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; showStall(); }
+        if(stallTicks>=5){ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; showStall(); startStallRecovery(); }
       }
     }catch(e){}
     autoTick++;
