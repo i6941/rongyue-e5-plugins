@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<title>预览：宿主框架 + 插件 iframe</title>
+<style>
+:root{--status-h:24px}
+body{margin:0;background:#0b111b;color:#dfe8f5;font:12px "Noto Sans CJK SC",sans-serif}
+#mobile-toolbar{position:absolute;top:0;left:0;right:0;height:var(--status-h);background:#1d2b3f;border-bottom:1px solid #2f4463;padding:0 6px;line-height:24px;z-index:5}
+#mobile-nav{position:absolute;bottom:0;left:0;right:0;height:40px;background:#1d2b3f;border-top:1px solid #2f4463;padding:0 6px;line-height:40px;z-index:5}
+#app-frame{position:absolute;top:var(--status-h);bottom:40px;left:0;right:0;width:100%;height:auto;border:0;background:#000}
+#probe{position:absolute;top:26px;right:4px;z-index:9;background:rgba(0,0,0,.7);padding:2px 6px;font-size:10px;color:#8ff0b0}
+</style></head><body>
+<!-- 这个页面只是用来验证"宿主菜单栏会不会自己回来"：
+     它照着宿主的结构放了 #mobile-toolbar / #mobile-nav / #app-frame，
+     插件页把自己的隐藏样式注入到这里。把 iframe 摘掉（模拟宿主销毁插件），
+     5 秒内菜单栏应该重新出现。 -->
+<div id="mobile-toolbar">状态栏</div>
+<div id="mobile-nav">主菜单</div>
+<iframe id="app-frame" src="/plugins/e5-emulator/index.html?auto=0"></iframe>
+<div id="probe">—</div>
+<script>
+  var probe = document.getElementById('probe');
+  setInterval(function () {
+    var t = document.getElementById('mobile-toolbar');
+    var n = document.getElementById('mobile-nav');
+    probe.textContent = 'game-full=' + document.body.classList.contains('e5-game-full') +
+      ' toolbar=' + (t ? getComputedStyle(t).display : 'gone') +
+      ' nav=' + (n ? getComputedStyle(n).display : 'gone');
+  }, 500);
+</script>
+</body></html>

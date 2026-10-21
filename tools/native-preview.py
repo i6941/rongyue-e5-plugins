@@ -182,6 +182,8 @@ class Handler(SimpleHTTPRequestHandler):
         clean = path.split("?", 1)[0].split("#", 1)[0]
         if clean.startswith("/plugins/"):
             return str(ROOT / clean.lstrip("/"))
+        if clean.startswith("/tools/"):
+            return str(ROOT / clean.lstrip("/"))
         if clean == "/sdk/e5.js":
             return str(ROOT / "tools" / "native-preview-stub-e5.js")
         return str(ROOT / "tools" / "native-preview-missing")

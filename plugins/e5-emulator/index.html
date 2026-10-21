@@ -1127,7 +1127,10 @@ bindTap($('bview'),function(){
 
 /* 同一源：可以给宿主页面注入样式。游戏期间把宿主自己的工具栏和底部主菜单藏掉，
    把整块竖向空间让给画面；退出时立刻恢复。宿主不需要改代码，也不改全局配置。 */
-var hostClass='e5-game-full', hostStyleInjected=false;
+var hostClass='e5-game-full', hostStyleInjected=false, hostWatchInjected=false;
+/* 插件页启动时先把标记清掉：上一次如果是被宿主直接销毁的（没走到 pagehide），
+   宿主菜单栏会一直藏着，用户就回不去了。 */
+function hostChromeReset(){ hostChrome(false); }
 /* 焦点丢失（切到通知/来电）时把所有按下的键松开，避免"一直按住" */
 window.addEventListener('blur',function(){ releaseAll(); },true);
 /* 插件页被关掉/刷新时，务必把宿主工具栏和底部主菜单放回去 */
@@ -1148,6 +1151,21 @@ function hostChrome(on){
       d.head.appendChild(st);
       hostStyleInjected=true;
     }
+    /* 宿主侧看门狗：插件每秒刷新一次心跳，超过 5 秒没有心跳就把隐藏撤掉。
+       这样即使插件页被浏览器直接销毁（没机会执行任何清理代码），
+       宿主的菜单栏也会自己回来，不会把用户关在"没有菜单"的界面里。 */
+    if(!hostWatchInjected){
+      try{
+        var sc=d.createElement('script');
+        sc.id='e5-game-watchdog';
+        sc.textContent='(function(){if(window.__e5ChromeWatch)return;window.__e5ChromeWatch=1;'+
+          'setInterval(function(){if(Date.now()-(window.__e5GamePing||0)>5000){'+
+          'try{document.body.classList.remove("'+hostClass+'");}catch(e){}}},1000);})();';
+        (d.head||d.documentElement).appendChild(sc);
+        hostWatchInjected=true;
+      }catch(e){}
+    }
+    if(on){ try{ window.parent.__e5GamePing=Date.now(); }catch(e){} }
     d.body.classList.toggle(hostClass,!!on);
   }catch(e){}
 }
@@ -1185,8 +1203,14 @@ function fit(){
   $('tres').textContent=g.w+'×'+g.h+' · '+note;
 }
 
-var lastFrame=null, lastAt=0;
+var lastFrame=null, lastAt=0, detachedTicks=0;
 setInterval(function(){
+  /* 宿主把插件框架摘掉后，页面本身还活着（innerWidth 变成 0，实测遇到过）：
+     两秒内没恢复就当作"被宿主关掉了"，把宿主菜单栏还回去、收掉原生进程。 */
+  if(running&&!window.innerWidth){
+    detachedTicks++;
+    if(detachedTicks>=2){ detachedTicks=0; try{ leave(); }catch(e){} }
+  }else detachedTicks=0;
   if(running&&nativeWanted(current)){ nativeTick(); post(); return; }
   if(running){
     fit();
@@ -1459,6 +1483,8 @@ try{
 
 applyFitMode();
 drawMenu();
+/* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
+try{ hostChromeReset(); }catch(e){}
 /* 启动时问一下后端原生二进制装了没有；没装就自动回落运行库，
    免得每次开游戏都弹“启动失败”。 */
 (function(){
