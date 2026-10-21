@@ -133,8 +133,13 @@ function bindTap(el,fn){
   var of=window.fetch;
   if(typeof of!=='function') return;
   window.fetch=function(u,o){
-    return of.apply(this,arguments).catch(function(err){
-      try{ logs.push('fetch失败 '+(typeof u==='string'?u:((u&&u.url)||'?'))+' :: '+err); if(logs.length>20) logs.shift(); }catch(e){}
+    var t0=Date.now();
+    var url=(typeof u==='string'?u:((u&&u.url)||'?'));
+    return of.apply(this,arguments).then(function(r){
+      try{ logs.push('fetch '+Math.round(Date.now()-t0)+'ms '+r.status+' '+url); if(logs.length>20) logs.shift(); }catch(e){}
+      return r;
+    }).catch(function(err){
+      try{ logs.push('fetch失败 '+Math.round(Date.now()-t0)+'ms '+url+' :: '+err); if(logs.length>20) logs.shift(); }catch(e){}
       throw err;
     });
   };
@@ -796,17 +801,16 @@ function fit(){
     else{ cw=availW; ch=Math.floor(h1); note=kx2.toFixed(2)+'×'; }
   }
   if(cw<1||ch<1) return;
-  /* 尺寸没变就别动 DOM：每帧改 canvas 的样式会触发重新布局，
-     在软件渲染的手机上这是白白的 CPU 开销 */
-  if(fitLastW===cw && fitLastH===ch) return;
-  fitLastW=cw; fitLastH=ch;
-  $('ejs_game').style.width=cw+'px';
-  $('ejs_game').style.height=ch+'px';
-  /* 画布本体跟着容器铺满 */
+  /* 画布样式每次都刷（两次属性写入，很便宜）；容器尺寸没变就不动，
+     避免每秒触发一次重新布局 */
   try{
     var c=document.querySelector('#ejs_game canvas');
     if(c){ c.style.width='100%'; c.style.height='100%'; }
   }catch(e){}
+  if(fitLastW===cw && fitLastH===ch) return;
+  fitLastW=cw; fitLastH=ch;
+  $('ejs_game').style.width=cw+'px';
+  $('ejs_game').style.height=ch+'px';
   $('tres').textContent=g.w+'×'+g.h+' · '+note;
 }
 

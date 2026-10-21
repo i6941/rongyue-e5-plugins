@@ -7,6 +7,7 @@
 注意：这是一个临时的调试通道，只在需要时启动；用完 Ctrl+C 结束。
 """
 import json
+import os
 import socket
 import socketserver
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
-HOST = "fe80::50:ff:fe00:e501%50"
+HOST = os.environ.get('E5_HOST', '192.168.9.1')
 REMOTE = ("127.0.0.1", 8088)
 LOCAL_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18088
 

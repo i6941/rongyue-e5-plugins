@@ -4,16 +4,18 @@ Run from this workspace; Ctrl+C closes the listener. Never exposes port8088
 on the E5's USB or Wi-Fi interface. Credentials stay in .secrets.
 """
 import json
+import os
 from pathlib import Path
 import select
 import socketserver
 import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
+HOST = os.environ.get('E5_HOST', '192.168.9.1')
 auth = json.loads((ROOT / '.secrets/openwrt-access.json').read_text())
 client = paramiko.SSHClient()
 client.load_host_keys(str(ROOT / '.secrets/openwrt-known-hosts'))
-client.connect('fe80::50:ff:fe00:e501%50', username='root',
+client.connect(HOST, username='root',
                password=auth['adminPassword'], look_for_keys=False,
                allow_agent=False, timeout=8)
 client.get_transport().set_keepalive(15)
