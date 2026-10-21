@@ -115,7 +115,7 @@ body.ingame main{top:0;bottom:0}
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
-  <div id="cfgfoot"><button id="cfgdef" type="button">恢复默认</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
+  <div id="cfgfoot"><button id="cfgdef" type="button">默认</button><button id="cfgnum" type="button">数字键</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
 <script>
@@ -293,8 +293,10 @@ function natDraw(buf){
   nat.frames++;
 }
 function natSendInput(){
+  /* 只遍历 ACTIONS 里真实存在的按钮号：libretro 的 B 是 0，
+     之前写成 "n>0" 就把射击键整个过滤掉了（6 按了没反应就是这个）。 */
   var mask=0;
-  for(var b in held){ if(held[b]===true){ var n=b|0; if(n>0&&n<16) mask|=(1<<n); } }
+  for(var i=0;i<ACTIONS.length;i++){ var n=ACTIONS[i].btn; if(held[n]===true) mask|=(1<<n); }
   nat.mask=mask;
   var ws=nat.ws;
   if(!ws||ws.readyState!==1) return;
@@ -612,7 +614,11 @@ var ACTIONS=[
 /* 默认键位：方向用物理方向键；A=确认键或3；B=6；START=#；SELECT=*。
    两个侧键（呼叫/返回）不参与游戏输入，返回键只保留"长按退出游戏"。 */
 var DEFAULT_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
-                  a:['Enter','3'],b:['6'],start:['#'],select:['*'],l:[],r:[]};
+                  a:['Enter','3'],b:['6','0'],start:['#'],select:['*'],l:[],r:[]};
+/* 数字键方案：2/4/6/8 当第二套方向键（和十字键并存），5 跳，0 射击。
+   这是老式按键手机跑模拟器的常见分工（numpad 当摇杆），适合十字键不顺手的人。 */
+var NUMPAD_KEYS={up:['ArrowUp','2'],down:['ArrowDown','8'],left:['ArrowLeft','4'],right:['ArrowRight','6'],
+                 a:['Enter','5'],b:['0'],start:['#'],select:['*'],l:[],r:[]};
 var keymap=loadKeymap();
 function loadKeymap(){
   var m=null;
@@ -679,10 +685,11 @@ function pressBtn(btn){
   held[btn]=true;
   sim(btn,1);
   /* 兜底松开：WebKit 偶尔会丢 keyup（焦点在画布/弹层之间切换时）。
-       这个定时器太短会毁掉"按住方向键"——450ms 后我们自己把键松了，
-       人物就停住，看起来像"不能同时按"。放到 3 秒，丢失的 keyup 最迟
-       3 秒自愈，而正常长按不受影响。 */
-  held['t'+btn]=setTimeout(function(){ releaseBtn(btn); },3000);
+       450ms 后自己把键松了，人物会停住，看起来像"不能同时按"。
+       原生路线走 WebSocket，丢 keyup 的概率低得多，但长按跑动很常见，
+       所以放宽到 15 秒；旧的运行库路线保持 3 秒。 */
+  var grace=(typeof nat!=='undefined'&&running&&nativeWanted(current))?15000:3000;
+  held['t'+btn]=setTimeout(function(){ releaseBtn(btn); },grace);
 }
 function releaseBtn(btn){
   if(!held[btn]) return;
@@ -1079,7 +1086,13 @@ bindTap($('cfgclose'),function(){ closeCfg(); });
 bindTap($('cfgdone'),function(){ closeCfg(); });
 bindTap($('cfgdef'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
-  saveKeymap(); applyKeymap(); refreshCfg(); $('cfgtip').textContent='已恢复默认';
+  saveKeymap(); applyKeymap(); refreshCfg(); $('cfgtip').textContent='已恢复默认（方向键 + 3 跳 + 6/0 射击）';
+});
+/* 一键切到数字键方案：两套方向都能用，不用自己一个个绑 */
+bindTap($('cfgnum'),function(){
+  for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(NUMPAD_KEYS[ACTIONS[i].id]||[]).slice();
+  saveKeymap(); applyKeymap(); refreshCfg();
+  $('cfgtip').textContent='数字键方案：2/4/6/8 方向，5 跳，0 射击（十字键照样能用）';
 });
 /* 核心版本切换（WebGL2 / 旧版）+ 清掉运行库缓存的核心文件 */
 function coreLabel(){ try{ return localStorage.getItem('e5legacy')==='1'?'旧版':'WebGL2'; }catch(e){ return 'WebGL2'; } }
