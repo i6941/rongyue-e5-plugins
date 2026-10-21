@@ -1,7 +1,7 @@
-"""Minimal cross-platform ``fcntl`` stand-in for running the device tests off-device.
+"""Make the test suite importable on non-Unix platforms.
 
-The plugin backends (``plugins/*/control.py``) run as root on the E5's
-OpenWrt and use ``fcntl.flock`` to serialise access to their run directories.
+The device backends (``plugins/*/control.py``) run as root on the E5's OpenWrt
+and use ``fcntl.flock`` to serialise access to their run directories.
 ``fcntl`` is Unix-only, so importing those modules fails outright on Windows
 and macOS.
 

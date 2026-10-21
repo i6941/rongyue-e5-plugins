@@ -2,17 +2,17 @@ import importlib.util
 import json
 import os
 from pathlib import Path
-import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+# --- fcntl stub (added by tools/patch-tests-fcntl.py) ---
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:  # the device backends use Unix-only fcntl; stub it so the suite runs anywhere
     import fcntl  # noqa: F401
 except ImportError:
     import _fcntl_stub
-    sys.modules['fcntl'] = _fcntl_stub
+    _sys.modules['fcntl'] = _fcntl_stub
 
 SOURCE = Path(__file__).resolve().parents[1] / 'plugins/nikki-control/control.py'
 spec = importlib.util.spec_from_file_location('nikki_control', SOURCE)

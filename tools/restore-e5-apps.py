@@ -6,11 +6,10 @@
   3. 保号设置与 token -> /etc/e5-infoscreen/keepalive
 
 用法：python tools/restore-e5-apps.py
-依赖：本机有 paramiko；设备可从 USB 链路地址 E5_HOST 访问。
+依赖：本机有 paramiko；设备可从 USB 链路地址 fe80::50:ff:fe00:e501%50 访问。
 """
 import io
 import json
-import os
 import tarfile
 from pathlib import Path
 
@@ -18,7 +17,7 @@ import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
 NOTES = ROOT / ".notes" / "game-port"
-HOST = os.environ.get('E5_HOST', '192.168.9.1')
+HOST = "fe80::50:ff:fe00:e501%50"
 ROM_SRC = NOTES / "roms"
 
 PKGS = [

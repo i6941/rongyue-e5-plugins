@@ -29,8 +29,10 @@ body.ingame #topbar{display:flex}
 #topbar .sp{flex:1 1 auto}
 #ejs_game{display:flex;align-items:center;justify-content:center;overflow:hidden;flex:0 0 auto}
 /* 社区常见做法：画面比例和屏幕不一致时，别留一片死黑，而是把空处做成"机身饰边" */
-body.ingame #stage{background:linear-gradient(#141c2b 0%,#0c1220 60%,#080d16 100%)}
-body.ingame #ejs_game{border-radius:5px;box-shadow:0 0 0 2px #26344c,0 0 0 3px #06090f,0 3px 12px rgba(0,0,0,.65)}
+    /* 游戏内把装饰都去掉：渐变背景和阴影每帧都要重新合成，
+       手机浏览器是软件渲染，这两项会跟模拟器抢 CPU，表现为"玩着玩着卡死"。 */
+body.ingame #stage{background:#000}
+body.ingame #ejs_game{border-radius:0;box-shadow:none;border:1px solid #1b2436}
 body.ingame.fitfull #ejs_game{border-radius:0;box-shadow:none}
 #ejs_game>div{max-width:100%;max-height:100%}
 #ejs_game canvas{image-rendering:pixelated;display:block;max-width:100%;max-height:100%}
@@ -126,6 +128,17 @@ function bindTap(el,fn){
   el.addEventListener('mousedown',function(e){ run(e); });
   el.addEventListener('click',function(e){ run(e); });
 }
+/* 抓 fetch 失败：WebKit 的未处理拒绝只报一句 "Load failed"，看不出是哪个 URL */
+(function(){
+  var of=window.fetch;
+  if(typeof of!=='function') return;
+  window.fetch=function(u,o){
+    return of.apply(this,arguments).catch(function(err){
+      try{ logs.push('fetch失败 '+(typeof u==='string'?u:((u&&u.url)||'?'))+' :: '+err); if(logs.length>20) logs.shift(); }catch(e){}
+      throw err;
+    });
+  };
+})();
 var BASE='/plugins/e5-emulator/';
 
 /* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
@@ -333,6 +346,9 @@ function tokenOf(e){
   return 'code:'+(e.keyCode||0);
 }
 var held={}, keyLog=[], keyCount=0, lastBackId='', lastBackTime=0, backKeyupSincePress=false, backTick=0, hintTimer=0;
+/* 按下和松开都记进日志：判断"能不能同时按两个键"要靠这个序列
+   （如果按住 5 时系统上报了 5 的 keyup，那是硬件/内核只能报一个键）。 */
+function keyLogPush(s){ keyLog.push(s); if(keyLog.length>40) keyLog.shift(); }
 
 function sim(btn,val){
   try{
@@ -348,9 +364,11 @@ function pressBtn(btn){
   if(held[btn]) return;
   held[btn]=true;
   sim(btn,1);
-  /* 兜底松开：WebKit 偶尔会丢 keyup（焦点在画布/弹层之间切换时），
-     没有兜底按钮会一直按住，表现就是"按一下人物自己一直走"。 */
-  held['t'+btn]=setTimeout(function(){ releaseBtn(btn); },450);
+  /* 兜底松开：WebKit 偶尔会丢 keyup（焦点在画布/弹层之间切换时）。
+       这个定时器太短会毁掉"按住方向键"——450ms 后我们自己把键松了，
+       人物就停住，看起来像"不能同时按"。放到 3 秒，丢失的 keyup 最迟
+       3 秒自愈，而正常长按不受影响。 */
+  held['t'+btn]=setTimeout(function(){ releaseBtn(btn); },3000);
 }
 function releaseBtn(btn){
   if(!held[btn]) return;
@@ -360,10 +378,77 @@ function releaseBtn(btn){
 }
 function releaseAll(){ for(var b in held){ if(held[b]===true) releaseBtn(b); } }
 
+/* ---- 自动存档 / 自动读档 ----
+   状态存到 IndexedDB（和运行库自己的存档分开，互不干扰）：
+   玩的过程中每 15 秒存一次，退出游戏时再存一次；下次进同一个游戏自动读回来。 */
+var idbPromise=null, autoLoaded=false, autoTick=0;
+function idb(){
+  if(!idbPromise){
+    idbPromise=new Promise(function(res,rej){
+      if(!window.indexedDB){ rej(new Error('no indexedDB')); return; }
+      var rq=indexedDB.open('e5-emulator',1);
+      rq.onupgradeneeded=function(){ var d=rq.result; if(!d.objectStoreNames.contains('states')) d.createObjectStore('states'); };
+      rq.onsuccess=function(){ res(rq.result); };
+      rq.onerror=function(){ rej(rq.error||new Error('idb open failed')); };
+    });
+  }
+  return idbPromise;
+}
+function idbPut(k,v){
+  return idb().then(function(d){
+    return new Promise(function(res,rej){
+      var tx=d.transaction(['states'],'readwrite');
+      tx.objectStore('states').put(v,k);
+      tx.oncomplete=function(){ res(true); };
+      tx.onerror=function(){ rej(tx.error); };
+      tx.onabort=function(){ rej(new Error('idb abort')); };
+    });
+  });
+}
+function idbGet(k){
+  return idb().then(function(d){
+    return new Promise(function(res,rej){
+      var tx=d.transaction(['states'],'readonly');
+      var q=tx.objectStore('states').get(k);
+      q.onsuccess=function(){ res(q.result); };
+      q.onerror=function(){ rej(q.error); };
+    });
+  });
+}
+function autoKey(){ return 'auto:'+(current?current.n:'?'); }
+function autoSave(){
+  try{
+    var g=gm(); if(!g||!g.FS||!current) return false;
+    if(typeof g.quickSave==='function') g.quickSave('auto');
+    var b=g.FS.readFile('/auto-quick.state');
+    if(!b||!b.length) return false;
+    idbPut(autoKey(),b).then(function(){
+      lastSave='自动存档 '+new Date().toLocaleTimeString();
+    }).catch(function(){});
+    try{ var f=coreFn('saveSaveFiles'); if(f) f(); }catch(e){}
+    return true;
+  }catch(e){ return false; }
+}
+function autoLoad(){
+  if(!current) return;
+  idbGet(autoKey()).then(function(b){
+    if(!b||!b.length) return;
+    try{
+      var g=gm(); if(!g||!g.FS) return;
+      g.FS.writeFile('/auto-quick.state',b);
+      var lf=coreFn('loadState');
+      if(lf) lf('auto-quick.state',0);
+      lastSave='已读回自动存档';
+    }catch(e){}
+  }).catch(function(){});
+}
+
 
 function start(i){
+  clearTimeout(reloadTimer);   /* 别把刚开的游戏连同重载一起干掉 */
   var g=flatList[i]; if(!g) return;
   current=g; running=true; phase='loading'; logs=[]; lastErr=''; marks={}; t0=Date.now(); simCalls=0;
+  autoLoaded=false; autoTick=0; lastSave='';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
   $('menu').style.display='none';
@@ -405,6 +490,8 @@ function start(i){
     applyKeymap();
     try{ var em=window.EJS_emulator; if(em&&em.closePopup) em.closePopup(); }catch(e){}
   };
+  /* 运行库开始跑游戏时给个时间点，用来把"加载慢"拆成几段看 */
+  window.EJS_onGameStart=function(){ try{ marks.gameStart=Date.now()-t0; }catch(e){} };
   var s=document.createElement('script');
   s.src=BASE+'ejs/data/loader.js';
   s.onerror=function(){ phase='loader-error'; $('status').textContent='无法加载运行库'; };
@@ -413,7 +500,21 @@ function start(i){
 function leave(){
   running=false; phase='menu';
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(false); }catch(e){}
-  try{ window.EJS_emulator&&EJS_emulator.stop&&EJS_emulator.stop(); }catch(x){}
+  try{ autoSave(); }catch(e){}
+  /* 真正停掉上一个实例。运行库的 EmulatorJS 类根本没有 stop() 方法，
+     之前的 EJS_emulator.stop() 是空调用 —— 于是每开一次游戏，
+     旧的 WebAssembly 主循环和 10ms 一次的手柄轮询定时器都还在跑，
+     几个叠在一起就把手机 CPU/内存打满，表现为"玩着玩着死机"。 */
+  try{
+    var em=window.EJS_emulator;
+    if(em){
+      try{ if(typeof em.pause==='function') em.pause(true); }catch(x){}
+      try{ var m=em.Module||(em.gameManager&&em.gameManager.Module);
+           if(m&&typeof m.pauseMainLoop==='function') m.pauseMainLoop(); }catch(x){}
+      try{ if(em.gamepad&&typeof em.gamepad.terminate==='function') em.gamepad.terminate(); }catch(x){}
+    }
+  }catch(e){}
+  try{ window.EJS_emulator=null; }catch(e){}
   $('stage').style.display='none';
   $('stage').classList.remove('on');
   document.body.classList.remove('ingame');
@@ -423,7 +524,13 @@ function leave(){
   $('title').textContent='复古游戏机';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
   drawMenu();
+  /* 彻底清场：重载插件页，把上一个实例残留的一切（定时器、主循环、监听、
+     WebAssembly 堆）全部丢掉。存档在 IndexedDB 里，重载不会丢。
+     用户在重载前又进了新游戏，就取消这次重载。 */
+  clearTimeout(reloadTimer);
+  reloadTimer=setTimeout(function(){ try{ location.reload(); }catch(e){} },700);
 }
+var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
 bindTap($('bsave'),function(){
   try{ var f=coreFn('saveSaveFiles'); if(f){ f(); lastSave='savefiles'; } }catch(e){ lastSave='save-err '+e; }
@@ -466,8 +573,7 @@ function backIdOf(e){
 function handleKey(kind,key,repeat,id,code){
   if(cfgOpen) return cfgKey(kind,key,repeat,code);
   if(kind==='menu'||kind==='power'||kind==='call'||kind==='other') return false;
-  keyCount++; keyLog.push(kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
-  if(keyLog.length>40) keyLog.shift();
+  keyCount++; keyLogPush('D:'+kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
   try{ $('tkey').textContent=(code||kind)+''; }catch(e){}
   if(!running){
     if(kind==='up'){ selectIdx(sel-3); return true; }
@@ -530,6 +636,7 @@ window.addEventListener('keydown',function(e){
 window.addEventListener('keyup',function(e){
   if(!running) return;
   var kind=keyKindOf(e);
+  keyLogPush('U:'+kind+(e.key?(':'+e.key):'')+(e.keyCode?('#'+e.keyCode):''));
   if(kind==='back'){
     try{ clearInterval(backTick); }catch(e){}
     backTick=0;
@@ -639,7 +746,7 @@ function applyFitMode(){
   try{ localStorage.setItem('e5fit',fitMode); }catch(e){}
   document.body.classList.toggle('fitfull',fitMode==='full');
   var b=$('bview');
-  if(b) b.textContent=(fitMode==='wide'?'画面:宽铺':'画面:全拉');
+  if(b){ b.textContent=(fitMode==='wide'?'宽铺':'全拉'); b.title=fitMode==='wide'?'画面：左右铺满，不拉伸':'画面：上下也拉满'; }
 }
 bindTap($('bview'),function(){
   fitMode=(fitMode==='wide'?'full':'wide');
@@ -669,6 +776,7 @@ function hostChrome(on){
   }catch(e){}
 }
 
+var fitLastW=0, fitLastH=0;
 function fit(){
   var g=current;
   if(!g||!g.w||!g.h) return;
@@ -688,6 +796,10 @@ function fit(){
     else{ cw=availW; ch=Math.floor(h1); note=kx2.toFixed(2)+'×'; }
   }
   if(cw<1||ch<1) return;
+  /* 尺寸没变就别动 DOM：每帧改 canvas 的样式会触发重新布局，
+     在软件渲染的手机上这是白白的 CPU 开销 */
+  if(fitLastW===cw && fitLastH===ch) return;
+  fitLastW=cw; fitLastH=ch;
   $('ejs_game').style.width=cw+'px';
   $('ejs_game').style.height=ch+'px';
   /* 画布本体跟着容器铺满 */
@@ -703,6 +815,7 @@ setInterval(function(){
   if(running){
     fit();
     applyKeymap();
+    try{ if(!marks.canvas && document.querySelector('#ejs_game canvas')) marks.canvas=Date.now()-t0; }catch(e){}
     try{
       var gf=gm();
       if(gf&&typeof gf.getFrameNum==='function'){
@@ -712,11 +825,15 @@ setInterval(function(){
       }
     }catch(e){}
     $('tfps').innerHTML='<b>'+(window.__fps?window.__fps.toFixed(1):'--')+'</b> FPS';
-    /* 加载阶段把进度显示在顶部条的分辨率位置 */
+    autoTick++;
+    if(autoTick%15===0) autoSave();   /* 每 15 秒自动存档一次 */
+    /* 加载阶段把进度显示在顶部条的分辨率位置（核心编译慢，让用户知道在等什么） */
+    if(phase==='loading'){ $('status').textContent='加载核心 '+current.core+' … '+Math.round((Date.now()-t0)/1000)+'s'; }
     if(phase!=='running') $('tres').textContent=$('status').textContent;
     hostChrome(true);   /* 宿主可能因来电等重排过 body，每秒补一次 */
     if(phase!=='running'&&window.__fps>0){ phase='running'; marks.firstFrame=Date.now()-t0;
       $('status').textContent='运行中 · '+current.sys+' '+current.n; focusCanvas();
+      if(!autoLoaded){ autoLoaded=true; autoLoad(); }   /* 第一次出帧后把上次的自动存档读回来 */
     }
     else if(phase!=='running'&&Date.now()-t0>15000){
       phase='stalled';
@@ -757,6 +874,8 @@ function snapshot(){
        if(c){ var r=c.getBoundingClientRect(); s.cbox=Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height); } }catch(e){}
   try{ var em=window.EJS_emulator;
     if(em){ s.started=!!em.started; s.paused=!!em.paused; s.failedToStart=!!em.failedToStart;
+      s.ejsText=(em.textElem&&em.textElem.innerText||'').slice(0,90);
+      s.ejsWebgl2=(em.webgl2Enabled===true); s.ejsSupWebgl2=(em.supportsWebgl2===true);
       var g=em.gameManager; s.hasGameManager=!!g;
       if(g){ s.fn=g.functions?Object.keys(g.functions).length:0;
         try{ s.frame=g.functions.getFrameNum(); }catch(e){}
