@@ -107,7 +107,7 @@ body.ingame main{top:0;bottom:0}
     <div id="hint"></div>
     <div id="stall"><div class="stxt">画面卡住了</div><div class="srow">
       <button id="sresume" type="button">重进（读回存档）</button>
-      <button id="slegacy" type="button">旧版核心重进</button></div></div>
+      <button id="slegacy" type="button">旧引擎重进</button></div></div>
   </div>
 </main>
 <footer id="foot">↑↓←→ 选游戏　数字 直达　确认 开始</footer>
@@ -192,6 +192,156 @@ try{
 }catch(e){}
 
 var BASE='/plugins/e5-emulator/';
+
+/* ---------------- 原生引擎（e5emu） ----------------
+   浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
+   wasm 抛陷阱、主循环停摆，反复开关还会把 WebGL2 上下文耗尽。所以 FC 游戏
+   默认走原生：后端拉起 /usr/bin/e5emu，它把 RGB565 帧通过本机 WebSocket 推给
+   这个页面，页面只负责把帧画出来、把按键位图发回去。
+   想退回旧路径：地址加 ?engine=ejs，或者点卡死面板里的“旧版核心重进”。 */
+var ENGINE='native';
+(function(){
+  try{
+    var p=new URLSearchParams(location.search).get('engine');
+    if(p==='ejs'||p==='native') ENGINE=p;
+    else if(localStorage.getItem('e5engine')==='ejs') ENGINE='ejs';
+  }catch(e){}
+})();
+var nat={ws:null,cvs:null,ctx:null,img:null,w:0,h:0,frames:0,lastFrames:0,fpsAt:0,open:false,
+         err:'',paused:false,installed:null,mask:0,seen:-1,stallTicks:0,savedAgo:0,autoLoaded:false};
+function nativeActive(){ return ENGINE==='native'; }
+/* 现在只有 fceumm（FC）链进了 e5emu；MD/GBA 还没链核心，先留给旧路径 */
+function nativeWanted(g){ return nativeActive() && nat.installed!==false && !!g && g.core==='fceumm'; }
+function natUrl(){
+  try{ var w=new URLSearchParams(location.search).get('ws'); if(w) return w; }catch(e){}
+  return 'ws://127.0.0.1:9510';
+}
+function natApi(path,body){
+  try{ if(typeof e5!=='undefined'&&e5.api) return e5.api(path,{body:body||{}}); }catch(e){}
+  return Promise.resolve(null);
+}
+function natCanvas(g){
+  var c=document.createElement('canvas');
+  c.id='natcvs'; c.width=g.w; c.height=g.h;
+  c.style.width='100%'; c.style.height='100%'; c.style.imageRendering='pixelated';
+  $('ejs_game').replaceChildren(c);
+  nat.cvs=c; nat.ctx=c.getContext('2d');
+  nat.img=nat.ctx.createImageData(g.w,g.h);
+  var d=nat.img.data; for(var i=3;i<d.length;i+=4) d[i]=255;
+  nat.w=g.w; nat.h=g.h; nat.frames=0; nat.lastFrames=0; nat.fpsAt=0;
+  nat.open=false; nat.err=''; nat.seen=-1; nat.stallTicks=0; nat.paused=false;
+}
+function natBegin(g){
+  natCanvas(g);
+  $('status').textContent='启动原生核心 '+g.f+' …';
+  $('tres').textContent='启动中…';
+  natApi('/emu/start',{rom:g.f}).then(function(r){
+    try{ if(r&&r.ok===false){ logs.push('emu/start '+(r.error||'fail')); nat.err=r.error||'start fail'; } }catch(e){}
+    natConnect(0);
+  }).catch(function(e){ logs.push('emu/start 拒绝 '+e); natConnect(0); });
+}
+/* 后端拉起进程和端口监听有几毫秒到一秒的差：连不上就退避重试，最多 8 秒 */
+function natConnect(tryN){
+  tryN=tryN||0;
+  if(!running) return;
+  /* 旧连接要先彻底断开，否则它继续收帧，画面会被画两遍、帧率也会翻倍 */
+  try{
+    if(nat.ws){ var old=nat.ws; nat.ws=null; old.onmessage=null; old.onclose=null; old.onerror=null; old.close(); }
+  }catch(e){}
+  var ws;
+  try{ ws=new WebSocket(natUrl()); }catch(e){ natFail('原生连接失败 '+e); return; }
+  nat.ws=ws; ws.binaryType='arraybuffer';
+  var opened=false;
+  ws.onopen=function(){
+    opened=true; nat.open=true; nat.err=''; marks.wsOpen=Date.now()-t0;
+    try{ $('status').textContent='原生已连接 · '+current.sys+' '+current.n; }catch(e){}
+    natSendInput();
+  };
+  ws.onmessage=function(ev){ try{ natDraw(ev.data); }catch(e){ nat.err='draw '+e; } };
+  ws.onerror=function(){ if(!opened) nat.err='ws error'; };
+  ws.onclose=function(){
+    if(nat.ws===ws) nat.ws=null;
+    nat.open=false;
+    if(!running) return;
+    if(!opened && tryN<20){ setTimeout(function(){ natConnect(tryN+1); },400); return; }
+    if(opened){ try{ $('status').textContent='原生连接断开'; }catch(e){} showStall(); }
+  };
+}
+/* 帧格式：宽 u16le、高 u16le、RGB565 像素。565→888 用位移拼装，
+   每个像素 4 次位运算；61,440 像素一帧，实测在设备上够用。 */
+function natDraw(buf){
+  if(!(buf instanceof ArrayBuffer)||buf.byteLength<8) return;
+  var dv=new DataView(buf);
+  var w=dv.getUint16(0,true), h=dv.getUint16(2,true);
+  if(!w||!h||buf.byteLength<4+w*h*2) return;
+  if(!nat.img||nat.img.width!==w||nat.img.height!==h){
+    nat.w=w; nat.h=h;
+    nat.cvs.width=w; nat.cvs.height=h;
+    nat.img=nat.ctx.createImageData(w,h);
+    var d0=nat.img.data; for(var i=3;i<d0.length;i+=4) d0[i]=255;
+    fitLastW=0; fitLastH=0;
+  }
+  var out=new Uint32Array(nat.img.data.buffer);
+  var src=new Uint16Array(buf,4,w*h);
+  /* RGB565：R 在高 5 位、B 在低 5 位；ImageData 的内存序是 R,G,B,A（小端下
+     Uint32 的低字节是 R）。所以 R 要左移 3 放到低字节，B 要放到第 3 字节。 */
+  for(var i=0,n=w*h;i<n;i++){
+    var p=src[i];
+    out[i]=0xff000000|(((p>>11)&0x1f)<<3)|(((p>>5)&0x3f)<<10)|((p&0x1f)<<19);
+  }
+  nat.ctx.putImageData(nat.img,0,0);
+  nat.frames++;
+}
+function natSendInput(){
+  var mask=0;
+  for(var b in held){ if(held[b]===true){ var n=b|0; if(n>0&&n<16) mask|=(1<<n); } }
+  nat.mask=mask;
+  var ws=nat.ws;
+  if(!ws||ws.readyState!==1) return;
+  var a=new Uint8Array(4);
+  a[0]=mask&255; a[1]=(mask>>8)&255; a[2]=(mask>>16)&255; a[3]=(mask>>24)&255;
+  try{ ws.send(a); }catch(e){}
+}
+/* 单字节命令：1=存即时档 2=读即时档 3=电池存档落盘 4=暂停/继续 */
+function natCmd(c){
+  var ws=nat.ws;
+  if(!ws||ws.readyState!==1) return false;
+  try{ ws.send(new Uint8Array([c&255])); return true; }catch(e){ return false; }
+}
+function natStop(){
+  try{ if(nat.ws){ var w=nat.ws; nat.ws=null; w.onclose=null; w.close(); } }catch(e){}
+  nat.open=false;
+  natApi('/emu/stop',{});
+}
+function natFail(msg){
+  nat.err=msg; phase='stalled';
+  try{ $('status').textContent=msg; $('tres').textContent=msg;
+       var st=$('stall'); if(st){ st.querySelector('.stxt').textContent=msg; } }catch(e){}
+  showStall();
+}
+/* 每秒一次的 native 侧维护：算帧率、补宿主样式、卡死检测、自动存档 */
+function nativeTick(){
+  fit();
+  var now=Date.now();
+  if(nat.fpsAt) window.__fps=(nat.frames-nat.lastFrames)*1000/Math.max(1,now-nat.fpsAt);
+  nat.lastFrames=nat.frames; nat.fpsAt=now;
+  try{ $('tfps').innerHTML='<b>'+(window.__fps?window.__fps.toFixed(1):'--')+'</b> FPS'; }catch(e){}
+  if(nat.frames>0&&phase!=='running'){
+    phase='running'; marks.firstFrame=now-t0;
+    try{ $('status').textContent='运行中 · '+current.sys+' '+current.n; }catch(e){}
+  }
+  if(nat.frames===0&&now-t0>9000){ natFail('原生核心没有出帧'); }
+  else if(nat.frames>0){ try{ $('tres').textContent=nat.w+'×'+nat.h+(nat.paused?' · 暂停':''); }catch(e){} }
+  if(nat.paused){ nat.stallTicks=0; nat.seen=nat.frames; }
+  else if(nat.seen===nat.frames){ nat.stallTicks++; } else { nat.stallTicks=0; nat.seen=nat.frames; }
+  if(nat.stallTicks>=4&&nat.frames>0){ try{ $('tres').textContent='画面卡住'; }catch(e){} showStall(); }
+  /* 进游戏 3 秒后读回上次的即时档；之后每 30 秒存一次 */
+  if(!nat.autoLoaded&&nat.frames>0&&now-t0>3000){ nat.autoLoaded=true; if(natCmd(2)) lastSave='已读回上次进度'; }
+  nat.savedAgo++;
+  if(nat.savedAgo>=30&&nat.frames>0){ nat.savedAgo=0; if(natCmd(1)) lastSave='自动存档 '+new Date().toLocaleTimeString(); }
+  hostChrome(true);
+} 
+
 
 /* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
    核心初始化音频时会抛 NotAllowedError，主循环随即停住（灰屏、FPS 0、按键无效）。
@@ -345,7 +495,13 @@ function showStall(){
 /* 重进：先删掉可能残缺的核心缓存，再重载（删除完成之后才重载，
    就不会再出现"重载把缓存写坏"的情况），存档会自动读回。 */
 function resumeGame(legacy){
-  try{ if(legacy) localStorage.setItem('e5legacy','1'); if(current) localStorage.setItem('e5resume',current.n); }catch(e){}
+  try{ if(legacy) localStorage.setItem('e5engine','ejs'); if(current) localStorage.setItem('e5resume',current.n); }catch(e){}
+  /* 原生重进：收掉旧进程，刷新页面重新拉起（存档在服务端，会读回） */
+  if(nativeActive()&&!legacy){
+    try{ natStop(); }catch(e){}
+    setTimeout(function(){ try{ location.reload(); }catch(e){} },350);
+    return;
+  }
   clearEjsCoreCache(function(r){
     try{ logs.push('重进清缓存 '+r); }catch(e){}
     setTimeout(function(){ try{ location.reload(); }catch(e){} },250);
@@ -416,6 +572,8 @@ function startStallRecovery(){
   },1000);
 }
 function applyKeymap(){
+  /* 原生引擎直接发位图，没有运行库的 controls 表可写 */
+  if(running&&nativeWanted(current)) return;
   try{
     var em=window.EJS_emulator;
     if(!em||!em.controls||!em.controls[0]) return;
@@ -503,6 +661,8 @@ function btnMax(){
   return 0;
 }
 function sim(btn,val){
+  /* 原生引擎：按键状态整张位图发过去，不需要逐个按钮模拟 */
+  if(running&&nativeWanted(current)){ natSendInput(); return true; }
   try{
     var g=gm();
     if(!g||typeof g.simulateInput!=='function'){ window.__simErr='no-gm'; return false; }
@@ -600,6 +760,8 @@ function autoLoad(){
 
 function start(i){
   var g=flatList[i]; if(!g) return;
+  /* 原生引擎不碰运行库的核心缓存，直接进 */
+  if(nativeWanted(g)){ reallyStart(i); return; }
   /* 进游戏前先验一下运行库缓存的核心是不是完整：长度对不上就删掉，
      让运行库重新下载一份（这是"进游戏几十秒后死"的真正原因）。 */
   checkCoreCache(function(r){
@@ -633,6 +795,13 @@ function reallyStart(i){
   $('title').textContent=g.sys+' · '+g.n;
   $('status').textContent='加载核心 '+g.core+' …';
   $('ejs_game').replaceChildren();
+  /* 原生引擎：后端起进程，帧走本机 WebSocket，页面不再加载运行库 */
+  if(nativeWanted(g)){
+    nat.savedAgo=0; nat.autoLoaded=false;
+    $('status').textContent='启动原生核心 …';
+    natBegin(g);
+    return;
+  }
   window.EJS_player='#ejs_game';
   window.EJS_core=g.core;
   window.EJS_gameUrl='/roms/'+g.f;
@@ -667,6 +836,9 @@ function reallyStart(i){
 }
 function leave(){
   running=false; phase='menu';
+  /* 原生：先让服务端把存档落盘再退出；进程由后端收掉 */
+  try{ if(nativeActive()) natStop(); }catch(e){}
+  try{ $('bpause').textContent='停'; }catch(e){}
   try{ localStorage.removeItem('e5resume'); }catch(e){}   /* 主动退出就别再自动重进了 */
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(false); }catch(e){}
   try{ autoSave(); }catch(e){}
@@ -701,14 +873,23 @@ function leave(){
 var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
 bindTap($('bsave'),function(){
+  if(running&&nativeWanted(current)){ lastSave=natCmd(1)?'已存即时档':'存档失败'; return; }
   try{ var f=coreFn('saveSaveFiles'); if(f){ f(); lastSave='savefiles'; } }catch(e){ lastSave='save-err '+e; }
   try{ gm().quickSave('1'); }catch(e){}
 });
 bindTap($('bload'),function(){
+  if(running&&nativeWanted(current)){ lastSave=natCmd(2)?'已读回即时档':'没有可读的存档'; return; }
   try{ var f=coreFn('loadSaveFiles'); if(f){ f(); lastSave='loadfiles'; } }catch(e){ lastSave='load-err '+e; }
   try{ gm().quickLoad('1'); }catch(e){}
 });
 bindTap($('bpause'),function(){
+  if(running&&nativeWanted(current)){
+    if(!natCmd(4)) return;
+    nat.paused=!nat.paused;
+    $('bpause').textContent=nat.paused?'继续':'停';
+    nat.stallTicks=0; nat.seen=nat.frames;
+    return;
+  }
   try{ var em=window.EJS_emulator; if(em&&em.paused){ em.play&&em.play(); $('bpause').textContent='暂停'; } else if(em){ em.pause&&em.pause(); $('bpause').textContent='继续'; } }catch(e){}
 });
 
@@ -937,7 +1118,11 @@ var hostClass='e5-game-full', hostStyleInjected=false;
 /* 焦点丢失（切到通知/来电）时把所有按下的键松开，避免"一直按住" */
 window.addEventListener('blur',function(){ releaseAll(); },true);
 /* 插件页被关掉/刷新时，务必把宿主工具栏和底部主菜单放回去 */
-window.addEventListener('pagehide',function(){ hostChrome(false); },true);
+window.addEventListener('pagehide',function(){
+  hostChrome(false);
+  /* 页面关掉就把原生进程收掉，别让它占着 ROM 和 CPU（服务端自己也会 120 秒超时退出） */
+  try{ if(nativeActive()) natStop(); }catch(e){}
+},true);
 
 function hostChrome(on){
   try{
@@ -989,6 +1174,7 @@ function fit(){
 
 var lastFrame=null, lastAt=0;
 setInterval(function(){
+  if(running&&nativeWanted(current)){ nativeTick(); post(); return; }
   if(running){
     fit();
     applyKeymap();
@@ -1074,6 +1260,8 @@ function snapshot(){
   s.sel=sel; s.items=cells.length; s.first=window.__first||0; s.keyCount=keyCount; s.keyLog=keyLog.join(','); s.keyTest=window.__keytest||''; s.simCalls=simCalls; s.simErr=window.__simErr||''; s.lastBtn=(window.__lastBtn===undefined?null:window.__lastBtn); s.lastVal=(window.__lastVal===undefined?null:window.__lastVal); s.lastSave=lastSave; s.backTaken=(window.__backTaken===undefined?null:window.__backTaken);
   s.scrollX=window.scrollX; s.scrollY=window.scrollY;
   s.fitMode=fitMode; s.keymap=JSON.stringify(keymap); s.cfgOpen=cfgOpen;
+  s.engine=ENGINE;
+  try{ s.nat={w:nat.w,h:nat.h,frames:nat.frames,open:nat.open,err:(nat.err||'').slice(0,80),mask:nat.mask,paused:nat.paused,installed:nat.installed}; }catch(e){}
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
   return s;
 }
@@ -1258,6 +1446,18 @@ try{
 
 applyFitMode();
 drawMenu();
+/* 启动时问一下后端原生二进制装了没有；没装就自动回落运行库，
+   免得每次开游戏都弹“启动失败”。 */
+(function(){
+  if(!nativeActive()) return;
+  natApi('/emu/status').then(function(r){
+    if(!r||typeof r.installed!=='boolean') return;
+    nat.installed=r.installed;
+    if(!r.installed){
+      try{ logs.push('e5emu 未安装，回落运行库'); $('status').textContent='原生引擎未安装，用运行库'; }catch(e){}
+    }
+  }).catch(function(){});
+})();
 try{
   var qp=new URLSearchParams(location.search).get('auto');
   if(qp!==null&&qp!==''){ var ai=parseInt(qp,10); if(flatList[ai]) setTimeout(function(){ start(ai); },300); }

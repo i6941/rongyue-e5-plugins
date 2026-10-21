@@ -101,6 +101,56 @@ return function (ctx) {
             } catch (e) {
                 return { ok: false, error: `${e}` };
             }
+        },
+
+        /* ---- 原生引擎（e5emu）启停 ----
+           浏览器里跑 wasm 核心在这台机器上会卡死，FC 游戏改走原生：
+           后端只负责拉起/结束 /usr/bin/e5emu，帧走本机回环的 WebSocket。
+           rom 只接受白名单字符，拼出来的路径不会有空格或引号。 */
+        'POST /emu/start': function (req) {
+            let b = req.body ?? {};
+            let raw = `${b.rom ?? ''}`;
+            let allowed = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-';
+            let clean = '';
+            for (let i = 0; i < length(raw); i++) {
+                let ch = substr(raw, i, 1);
+                if (index(allowed, ch) !== null) clean += ch;
+            }
+            if (length(clean) < 5 || substr(clean, 0, 1) === '.') {
+                return { ok: false, error: 'bad rom name' };
+            }
+            /* 只认这三种扩展名（e5emu 现在链的是 fceumm，只有 .nes 真能跑） */
+            let ok = false;
+            let tail3 = substr(clean, length(clean) - 3, 3);
+            let tail4 = substr(clean, length(clean) - 4, 4);
+            if (tail4 === '.nes' || tail4 === '.gba' || tail3 === '.md') ok = true;
+            if (!ok) return { ok: false, error: 'unsupported rom' };
+
+            try {
+                let r = ctx.sh('[ -x /usr/bin/e5emu ] && echo yes');
+                if (index(`${r ?? ''}`, 'yes') === null) return { ok: false, error: 'e5emu not installed' };
+            } catch (e) {
+                return { ok: false, error: 'e5emu not installed' };
+            }
+
+            /* 先收掉上一个实例，避免端口占用 */
+            ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
+            let romfile = ROMDIR + '/' + clean;
+            let cmd = 'start-stop-daemon -S -q -b -m -p /var/run/e5emu.pid -x /usr/bin/e5emu'
+                + ' -- --serve ' + romfile + ' 9510 --log /tmp/e5emu.log';
+            let out = ctx.sh(cmd);
+            let pid = read_text('/var/run/e5emu.pid');
+            return { ok: length(pid) > 0, pid: pid, rom: romfile, out: out };
+        },
+        'POST /emu/stop': function () {
+            let out = ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
+            return { ok: true, out: out };
+        },
+        'GET /emu/status': function () {
+            let inst = false;
+            try { inst = index(`${ctx.sh('[ -x /usr/bin/e5emu ] && echo yes') ?? ''}`, 'yes') !== null; } catch (e) { }
+            let pid = read_text('/var/run/e5emu.pid');
+            return { ok: true, installed: inst, pid: pid };
         }
     };
 };

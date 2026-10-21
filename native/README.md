@@ -1,53 +1,68 @@
 # Native emulator frontend for the E5
 
-The browser route (EmulatorJS/WASM) hits hard limits on this phone: a
-16-26 second start while a JavaScript LZMA decoder unpacks a 4.5 MB
-WebAssembly core, a WebAssembly trap that kills the frame loop a few
-seconds into a game, and repeated launches exhausting the WebGL2 contexts
-of the browser process. `e5emu` is the native replacement: a small
-libretro frontend with the core linked in statically, built for
-`aarch64-linux-musl` with Zig.
+The browser route (EmulatorJS/WASM) does not work on this phone: a 16-26
+second start while a JavaScript LZMA decoder unpacks a 4.5 MB WebAssembly
+core, a WebAssembly trap that kills the frame loop a few seconds into a
+game, and repeated launches exhausting the WebGL2 contexts of the browser
+process. `e5emu` is the native replacement: a small libretro frontend with
+the core linked in statically, built for `aarch64-linux-musl` with Zig.
 
 ## Measured on the device
 
-Unisoc UMS9621, OpenWrt 25.12.5, kernel 18.54-e5 (5.4?), 320x480 screen.
+Unisoc UMS9621, OpenWrt 25.12.5, 320x480 screen.
 
 Headless benchmark:
 
 ```
-$ /tmp/e5emu --selftest /etc/e5-infoscreen/roms/fc-contra.nes 600
+$ e5emu --selftest /etc/e5-infoscreen/roms/fc-contra.nes 600
 E5EMU geometry=256x240 fps=60.100
 E5EMU frames=600 elapsed_ms=10088.2 fps=59.48 core_frames=600
 ```
 
-WebSocket frame server plus its test client, both on the device:
+Frame server driven by `test-ws-client.py` on the device itself:
 
 ```
-$ /tmp/e5emu --serve /etc/e5-infoscreen/roms/fc-contra.nes 9510 &
+$ e5emu --serve /etc/e5-infoscreen/roms/fc-contra.nes 9510 --log /tmp/e5emu.log &
 E5EMU listening 127.0.0.1:9510
 E5EMU geometry=256x240 fps=60.100
 
-$ python3 /tmp/test-ws.py 9510 120
+$ python3 test-ws-client.py 9510 60
 handshake: HTTP/1.1 101 Switching Protocols
 frame0: 256x240 pixels=122880 (expected 122880)
-received 120 frames in 2.01s -> 59.6 fps
+received 60 frames in 1.00s -> 60.3 fps
 frames after input: 10 -> OK
+after save cmd: 10 -> OK
+
+$ tail /tmp/e5emu.log
+E5EMU buttons=0x0008
+E5EMU state save ok /etc/e5-infoscreen/roms/fc-contra.st0 (13903 bytes)
+E5EMU state load ok /etc/e5-infoscreen/roms/fc-contra.st0
+E5EMU client disconnected, frames=121
 ```
 
 Starting the binary is immediate; there is no unpack or compile step.
-Compare with the browser route on the same device: 16-26 s before the
-first frame and a stall 2-3 s into the game.
 
 ## Protocol
 
-- The server listens on `127.0.0.1:9510` only (never on the LAN address).
-- It runs the core only while a client is connected; disconnecting stops
-  the loop, so the emulator is on demand rather than resident.
-- Each binary WebSocket frame is `width u16le, height u16le` followed by
+- Listens on `127.0.0.1:9510` only, never on the LAN address.
+- Runs the core only while a client is connected; if nobody reconnects
+  within 120 seconds after a client leaves, the process exits, so the
+  emulator is on demand rather than resident.
+- Each binary frame is `width u16le, height u16le` followed by
   `width*height` RGB565 pixels (122880 bytes for 256x240).
-- The client sends a 4-byte little-endian button bitmask, using the
-  libretro joypad ids (bit 0 = B, 2 = SELECT, 3 = START, 4-7 = d-pad,
-  8 = A, 10 = L, 11 = R).
+- Client to server, 4 bytes: little-endian libretro button bitmask
+  (bit 0 = B, 2 = SELECT, 3 = START, 4-7 = d-pad, 8 = A, 10 = L, 11 = R).
+- Client to server, 1 byte: command. 1 = save a state, 2 = load it,
+  3 = flush the battery save, 4 = pause or resume.
+
+## Saves
+
+- `<rom>.srm`: the core's battery-backed save RAM, loaded at start and
+  written back two seconds after it changes and when the client leaves.
+- `<rom>.st0`: a serialized machine state (13 KB for a NES game), written
+  by command 1 and read back by command 2.
+- Both live next to the ROM, so they survive restarts and follow the ROM
+  directory backup.
 
 ## Build
 
@@ -69,11 +84,16 @@ about 8 MB.
 
 ## Status
 
-- Stage 1 (done): headless self-test, 59.5 FPS sustained on the device.
-- Stage 2 (done): WebSocket frame server and input, verified at 59.6 FPS
-  with 256x240 RGB565 frames by `native/test-ws-client.py`.
-- Stage 3 (next): a canvas client in the plugin that connects to the
-  server, draws the RGB565 frames and sends the key bitmask, plus the
-  start/stop wiring so the daemon is launched when a game is opened and
-  exits after a few idle minutes. The plugin keeps its key
-  configuration, save states and layout.
+- Stage 1 (done): headless self-test, 59.5 FPS sustained.
+- Stage 2 (done): WebSocket frame server and input, 60.3 FPS with
+  256x240 RGB565 frames.
+- Stage 3 (done): the plugin page is the client. `index.html` opens a
+  canvas, decodes the frames into RGBA and sends the button bitmask built
+  from its existing key map; `backend.uc` starts and stops the daemon
+  with `start-stop-daemon` on demand. Verified locally with
+  `tools/native-preview.py` (a fake frame server drawing colour bars) and
+  on the device through the HTTP API: start, 60.3 FPS, `buttons=0x0008`
+  reaching the core, state save and load, stop leaving no process behind.
+- Only fceumm (NES) is linked in. MD and GBA games still take the old
+  browser path, so linking genesis_plus_gx and mgba is the next step if
+  those systems matter.

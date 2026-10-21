@@ -24,6 +24,8 @@
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
+#include <poll.h>
+#include <signal.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -33,6 +35,7 @@
 /* ---------------- libretro 回调 ---------------- */
 
 static unsigned buttons = 0;
+static bool paused = false;
 static const void *last_frame = NULL;
 static unsigned last_w = 0, last_h = 0;
 static size_t last_pitch = 0;
@@ -246,6 +249,11 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
     return r == (ssize_t)(hlen + 4 + bytes) ? 0 : -1;
 }
 
+/* 存档相关（定义在后面）：按键处理里要能直接触发存/读档 */
+static bool state_save(void);
+static bool state_load(void);
+static void sram_sync(bool force);
+
 /* 读客户端来的按键位图（4 字节，带掩码） */
 static int ws_read_buttons(int fd)
 {
@@ -262,9 +270,22 @@ static int ws_read_buttons(int fd)
     if (len > sizeof(payload)) { uint8_t tmp[64]; size_t left = len; while (left) { size_t chunk = left > sizeof(tmp) ? sizeof(tmp) : left; if (recv(fd, tmp, chunk, MSG_WAITALL) != (ssize_t)chunk) return -1; left -= chunk; } return 0; }
     if (len && recv(fd, payload, (size_t)len, MSG_WAITALL) != (ssize_t)len) return -1;
     for (size_t i = 0; i < len; i++) if (masked) payload[i] ^= mask[i & 3];
-    if (h[0] & 0x0f) { /* 控制帧：忽略（ping/close 由客户端重连处理） */ return 0; }
-    if (len >= 4) buttons = (uint32_t)payload[0] | ((uint32_t)payload[1] << 8) |
-                             ((uint32_t)payload[2] << 16) | ((uint32_t)payload[3] << 24);
+    /* 只有 opcode >= 8 才是控制帧（close/ping/pong）；二进制帧是 opcode 2，
+       以前这里写成 "任何非零 opcode 都忽略"，把按键帧和命令帧全丢了。 */
+    if ((h[0] & 0x0f) >= 0x8) return 0;
+    if (len == 1) {
+        /* 单字节命令：1=存即时档 2=读即时档 3=立刻把电池存档落盘 4=暂停/继续 */
+        if (payload[0] == 1) state_save();
+        else if (payload[0] == 2) state_load();
+        else if (payload[0] == 3) sram_sync(true);
+        else if (payload[0] == 4) paused = !paused;
+        return 0;
+    }
+    if (len >= 4) {
+        uint32_t mask_in = (uint32_t)payload[0] | ((uint32_t)payload[1] << 8) |
+                           ((uint32_t)payload[2] << 16) | ((uint32_t)payload[3] << 24);
+        if (mask_in != buttons) { buttons = mask_in; fprintf(stderr, "E5EMU buttons=0x%04x\n", buttons); }
+    }
     return 0;
 }
 
@@ -302,6 +323,73 @@ static void sleep_ms(double ms)
     nanosleep(&ts, NULL);
 }
 
+/* ---------------- 存档 ----------------
+   电池存档（SRAM）写到 <rom>.srm，即时存档（整机状态）写到 <rom>.st0。
+   都在 ROM 旁边，跟着 ROM 目录一起持久化；文件不存在时用空白存档开局。 */
+
+static char save_base[512];
+static char sram_path[600];
+static char state_path[600];
+static uint8_t *sram = NULL;
+static size_t sram_size = 0;
+static uint8_t *sram_shadow = NULL;
+static double sram_check_at = 0;
+
+/* fc-contra.nes -> fc-contra（保留目录部分），用来拼 .srm / .st0 */
+static void path_strip_ext(const char *rom_path, char *out, size_t cap)
+{
+    size_t n = strlen(rom_path);
+    size_t keep = n;
+    for (size_t i = n; i > 0; i--) {
+        if (rom_path[i - 1] == '.') { keep = i - 1; break; }
+        if (rom_path[i - 1] == '/') break;
+    }
+    if (keep >= cap) keep = cap - 1;
+    memcpy(out, rom_path, keep);
+    out[keep] = 0;
+}
+
+static bool write_blob(const char *path, const void *data, size_t size)
+{
+    FILE *f = fopen(path, "wb");
+    if (!f) return false;
+    bool ok = fwrite(data, 1, size, f) == size;
+    fclose(f);
+    return ok;
+}
+
+static void sram_sync(bool force)
+{
+    if (!sram || !sram_size || !sram_shadow) return;
+    if (!force && memcmp(sram, sram_shadow, sram_size) == 0) return;
+    bool ok = write_blob(sram_path, sram, sram_size);
+    if (ok) memcpy(sram_shadow, sram, sram_size);
+    fprintf(stderr, "E5EMU sram %s %s (%zu bytes)\n", ok ? "saved" : "failed", sram_path, sram_size);
+}
+
+static bool state_save(void)
+{
+    size_t sz = retro_serialize_size();
+    if (!sz) { fprintf(stderr, "E5EMU state save: core reports no serialize support\n"); return false; }
+    void *buf = malloc(sz);
+    if (!buf) return false;
+    bool ok = retro_serialize(buf, sz) && write_blob(state_path, buf, sz);
+    free(buf);
+    fprintf(stderr, "E5EMU state save %s %s (%zu bytes)\n", ok ? "ok" : "failed", state_path, sz);
+    return ok;
+}
+
+static bool state_load(void)
+{
+    size_t sz = 0;
+    void *buf = read_file(state_path, &sz);
+    if (!buf) { fprintf(stderr, "E5EMU state load: no %s\n", state_path); return false; }
+    bool ok = retro_unserialize(buf, sz);
+    free(buf);
+    fprintf(stderr, "E5EMU state load %s %s\n", ok ? "ok" : "failed", state_path);
+    return ok;
+}
+
 /* ---------------- 主流程 ---------------- */
 
 static void *rom_data = NULL;
@@ -324,6 +412,24 @@ static bool core_load(const char *rom_path)
     info.data = rom_data;
     info.size = rom_size;
     if (!retro_load_game(&info)) { fprintf(stderr, "retro_load_game failed\n"); return false; }
+
+    path_strip_ext(rom_path, save_base, sizeof(save_base));
+    snprintf(sram_path, sizeof(sram_path), "%s.srm", save_base);
+    snprintf(state_path, sizeof(state_path), "%s.st0", save_base);
+    sram = retro_get_memory_data(RETRO_MEMORY_SAVE_RAM);
+    sram_size = retro_get_memory_size(RETRO_MEMORY_SAVE_RAM);
+    if (sram && sram_size) {
+        sram_shadow = calloc(1, sram_size);
+        size_t got = 0;
+        uint8_t *b = read_file(sram_path, &got);
+        if (b) {
+            /* 旧存档比这片 SRAM 短：前面的照搬，其余留空（换核心版本时不至于整个丢档） */
+            memcpy(sram, b, got < sram_size ? got : sram_size);
+            free(b);
+        }
+        if (sram_shadow) memcpy(sram_shadow, sram, sram_size);
+        fprintf(stderr, "E5EMU sram=%zu %s\n", sram_size, sram_path);
+    }
     return true;
 }
 
@@ -378,6 +484,12 @@ static int run_server(const char *rom_path, int port)
     const double target = 1000.0 / ((double)av.timing.fps > 1.0 ? (double)av.timing.fps : 60.0);
 
     for (;;) {
+        /* 客户端断开后最多等 120 秒：没人再来就退出，别把进程和 ROM 一直占着 */
+        struct pollfd pfd;
+        pfd.fd = ls; pfd.events = POLLIN; pfd.revents = 0;
+        int pr = poll(&pfd, 1, 120000);
+        if (pr == 0) { fprintf(stderr, "E5EMU idle 120s, exiting\n"); break; }
+        if (pr < 0) { if (errno == EINTR) continue; break; }
         int cfd = accept(ls, NULL, NULL);
         if (cfd < 0) { if (errno == EINTR) continue; break; }
         setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
@@ -387,7 +499,7 @@ static int run_server(const char *rom_path, int port)
 
         while (1) {
             double t0 = now_ms();
-            retro_run();
+            if (!paused) retro_run();
             if (last_frame && last_w && last_h) {
                 size_t need = (size_t)last_w * last_h * 2;
                 if (need > frame_copy_cap) {
@@ -406,14 +518,17 @@ static int run_server(const char *rom_path, int port)
                 if (ws_send_frame(cfd, hdr4, frame_copy, need) != 0) break;
             }
             if (ws_read_buttons(cfd) < 0) break;
+            if (now_ms() - sram_check_at > 2000) { sram_check_at = now_ms(); sram_sync(false); }
             sleep_ms(target - (now_ms() - t0));
         }
 
         printf("E5EMU client disconnected, frames=%lu\n", frame_counter);
         fflush(stdout);
+        sram_sync(true);
         close(cfd);
         buttons = 0;
     }
+    sram_sync(true);
     retro_unload_game();
     retro_deinit();
     close(ls);
@@ -423,15 +538,27 @@ static int run_server(const char *rom_path, int port)
 int main(int argc, char **argv)
 {
     const char *rom_path = NULL;
+    const char *log_path = NULL;
     long frames = 600;
     int port = 9510;
     bool selftest = false, serve = false;
 
+    /* 客户端拔线/关页面时写回帧会触发 SIGPIPE；默认动作是杀掉进程，
+       这里改成忽略，让 writev 返回 -1、按断开处理。 */
+    signal(SIGPIPE, SIG_IGN);
+
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--selftest")) selftest = true;
         else if (!strcmp(argv[i], "--serve")) serve = true;
+        else if (!strcmp(argv[i], "--log") && i + 1 < argc) log_path = argv[++i];
         else if (!rom_path) rom_path = argv[i];
         else { long v = atol(argv[i]); if (v > 100) frames = v; else if (v > 0) port = (int)v; }
+    }
+    /* start-stop-daemon -b 会把子进程的 stdio 接到 /dev/null；
+       有了 --log 就自己重定向，出问题时能从文件里看原因。 */
+    if (log_path) {
+        int fd = open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (fd >= 0) { dup2(fd, 1); dup2(fd, 2); if (fd > 2) close(fd); }
     }
     if (!rom_path || (!selftest && !serve)) {
         fprintf(stderr, "usage: e5emu --selftest <rom.nes> [frames]\n"

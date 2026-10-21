@@ -95,6 +95,23 @@ def main() -> int:
         read_frame(sock)
         ok += 1
     print("frames after input: %d -> %s" % (ok, "OK" if ok == 10 else "FAIL"))
+
+    # 单字节命令：1=存即时档
+    def send_cmd(c):
+        mask = b"\x05\x06\x07\x08"
+        payload = bytes([c ^ mask[0]])
+        sock.sendall(b"\x82" + bytes([0x80 | 1]) + mask + payload)
+
+    send_cmd(1)
+    time.sleep(0.4)
+    alive = 0
+    for _ in range(10):
+        read_frame(sock)
+        alive += 1
+    print("after save cmd: %d -> %s" % (alive, "OK" if alive == 10 else "FAIL"))
+    send_cmd(2)
+    time.sleep(0.3)
+    print("load cmd sent")
     sock.close()
     return 0
 
