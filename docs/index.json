@@ -1,6 +1,6 @@
 {
  "api_version": 2,
- "generated": "2026-10-22T06:23:05Z",
+ "generated": "2026-10-22T16:59:30Z",
  "plugins": [
   {
    "id": "phone",
@@ -61,7 +61,7 @@
   },
   {
    "id": "e5-emulator",
-   "version": "1.10.0",
+   "version": "1.10.1",
    "api_version": 2,
    "name": {
     "zh": "复古游戏机",
@@ -74,9 +74,9 @@
    "order": 45,
    "input_method": false,
    "backend": true,
-   "size": 39298,
-   "sha256": "bf9db9700fbbe5c3d3caadfae2419ed7fc43317e21eecde6eaf62d116a48851a",
-   "url": "https://raw.githubusercontent.com/i6941/rongyue-e5-plugins/main/docs/packages/e5-emulator-1.10.0.tar.gz"
+   "size": 40994,
+   "sha256": "20859c7e87046f8ee658a4b47337a3e47f5503a164cac01ef628f224ac747017",
+   "url": "https://raw.githubusercontent.com/i6941/rongyue-e5-plugins/main/docs/packages/e5-emulator-1.10.1.tar.gz"
   }
  ]
 }

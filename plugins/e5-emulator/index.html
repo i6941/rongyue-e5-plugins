@@ -6,9 +6,9 @@
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden}
 body{margin:0;background:#0b111b;color:#edf3fc;font:12px "Noto Sans CJK SC",sans-serif;position:relative;min-height:100%}
-header{position:absolute;top:0;left:0;right:0;height:24px;z-index:5;padding:2px 4px 2px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;display:flex;align-items:center;gap:6px}
+header{position:absolute;top:0;left:0;right:0;height:34px;z-index:5;padding:3px 4px 3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;display:flex;align-items:center;gap:6px}
 h1{font-size:12px;margin:0;display:inline-block;flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;flex:1 1 auto;vertical-align:middle}
-main{position:absolute;top:50px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+main{position:absolute;top:60px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
 #stage{display:none;position:absolute;inset:0;background:#000}
 body.ingame #tabs{display:none}
 #menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 42px}
@@ -23,7 +23,7 @@ body.ingame #tabs{display:none}
 .cell .sys{position:absolute;right:3px;top:3px;z-index:2;padding:0 4px;height:14px;line-height:14px;
   background:rgba(11,17,27,.85);border:1px solid #2f4463;border-radius:3px;color:#9fc6ef;font-size:9px}
 /* 机种 tab：上面一行，数字 1-4 直接切 */
-#tabs{position:absolute;top:24px;left:0;right:0;height:26px;z-index:5;display:flex;gap:4px;padding:3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden}
+#tabs{position:absolute;top:34px;left:0;right:0;height:26px;z-index:5;display:flex;gap:4px;padding:3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden}
 #tabs button{flex:1 1 0;min-width:0;height:20px;padding:0 4px;font:inherit;font-size:11px;line-height:18px;color:#a8bad0;background:#141d2c;border:1px solid #223047;border-radius:10px;white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #tabs button b{color:#65bdff;font-weight:700;margin-right:2px}
 #tabs button.on b{color:#04121f}
@@ -57,6 +57,12 @@ body.ingame #ejs_game{border-radius:0;box-shadow:none;border:1px solid #1b2436}
 body.ingame.fitfull #ejs_game{border-radius:0;box-shadow:none}
 #ejs_game>div{max-width:100%;max-height:100%}
 #ejs_game canvas{image-rendering:pixelated;display:block;max-width:100%;max-height:100%}
+/* 画面层的滤镜：一整块叠在黑边以内，纯 CSS 合成，不参与每帧绘制 */
+#screenwrap{position:relative;width:100%;height:100%;display:flex;align-items:center;justify-content:center}
+#screenwrap canvas{position:relative;z-index:1}
+#fx{position:absolute;inset:0;z-index:2;pointer-events:none;display:none}
+body.fx-scan #fx{display:block;background:repeating-linear-gradient(to bottom,rgba(0,0,0,0) 0 1px,rgba(0,0,0,.32) 1px 2px)}
+body.fx-lcd #fx{display:block;background:repeating-linear-gradient(to right,rgba(0,0,0,.20) 0 1px,rgba(0,0,0,0) 1px 3px),repeating-linear-gradient(to bottom,rgba(0,0,0,.20) 0 1px,rgba(0,0,0,0) 1px 3px)}
 /* 底部操作条：手指能按到的尺寸（原来 15px 高、30px 宽，点不中） */
 #hud{position:absolute;left:0;right:0;bottom:0;height:40px;z-index:8;display:flex;align-items:center;gap:5px;
   padding:0 6px;background:#0b111b;border-top:1px solid #29354a;font-size:10px;color:#a8bad0;
@@ -86,8 +92,8 @@ body.ingame #hint.show{display:block}
 #stall .srow{display:flex;gap:10px}
 #stall button{height:42px;padding:0 14px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:8px}
 /* ---- 按键设置面板 ---- */
-#bcfg{flex:0 0 auto;height:19px;padding:0 8px;font:inherit;font-size:11px;line-height:17px;
-  color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:10px;
+#bcfg{flex:0 0 auto;height:28px;min-width:64px;padding:0 10px;font:inherit;font-size:13px;font-weight:600;line-height:26px;
+  color:#eaf4ff;background:#2b4a72;border:1px solid #4a6f9f;border-radius:8px;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #bcfg:active{background:#31527f}
 body.ingame #bcfg{display:none}
@@ -96,20 +102,23 @@ body.ingame #bcfg{display:none}
 #cfghead{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 6px;background:#101827;border-bottom:1px solid #29354a;font-size:12px}
 #cfghead .sp{flex:1 1 auto}
 #cfgtip{font-size:10px;color:#ffd479;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:62%}
-#cfghead button{font:inherit;font-size:12px;height:24px;padding:0 9px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:5px}
-#cfgrid{flex:1 1 auto;display:grid;grid-template-columns:1fr 1fr;gap:6px;padding:6px;align-content:start;overflow-y:auto}
-.cfgcell{position:relative;height:46px;padding:4px 6px;background:#141d2c;border:1px solid #223047;border-radius:6px;text-align:left}
-.cfgcell .nm{font-size:12px;color:#edf3fc}
-.cfgcell .kv{font-size:11px;color:#8ff0b0;margin-top:3px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-right:18px}
+#cfghead button{font:inherit;font-size:13px;height:30px;padding:0 11px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:5px}
+#cfgrid{flex:1 1 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:5px 6px 8px;align-content:start;overflow-y:auto}
+.cfgcell{position:relative;height:52px;padding:5px 8px;background:#141d2c;border:1px solid #223047;border-radius:6px;text-align:left}
+.cfgcell .nm{font-size:13px;color:#edf3fc}
+.cfgcell .kv{font-size:12px;color:#8ff0b0;margin-top:5px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-right:30px}
 .cfgcell.sel{border-color:#65bdff;background:#1d2c44}
 .cfgcell.listen{border-color:#ffd479;background:#2a2440}
 .cfgcell.listen .kv{color:#ffd479}
-.cfgcell .clr{position:absolute;right:2px;top:2px;width:22px;height:22px;padding:0;font:inherit;font-size:12px;line-height:20px;
+.cfgcell .clr{position:absolute;right:3px;top:3px;width:28px;height:28px;padding:0;font:inherit;font-size:15px;line-height:26px;
   color:#9fb4cf;background:#182234;border:1px solid #2b3a52;border-radius:4px}
 .cfgcell .clr.hit{background:#3a5f96;color:#fff}
 #cfgfoot{flex:0 0 auto;display:flex;gap:6px;padding:6px;background:#101827;border-top:1px solid #29354a}
-#cfgfoot button{flex:1 1 0;height:32px;font:inherit;font-size:13px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
+#cfgfoot button{flex:1 1 0;height:40px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 #cfgfoot button:active{background:#31527f}
+#cfgfx{flex:0 0 auto;display:flex;gap:6px;padding:6px 6px 0;background:#101827}
+#cfgfx button{flex:1 1 0;height:38px;font:inherit;font-size:13px;color:#dce8f8;background:#182234;border:1px solid #2b3a52;border-radius:6px}
+#cfgfx button:active{background:#31527f}
 footer{position:absolute;bottom:0;left:0;right:0;height:20px;z-index:6;padding:1px 6px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:10px;overflow:hidden;white-space:nowrap}
 #fver{float:right;color:#65bdff;font-weight:600;margin-left:6px}
 body.ingame footer{display:none}
@@ -123,7 +132,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
-<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button">按键</button></header>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button">按键 #</button></header>
 <div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button></div>
 <main>
   <div id="menu"></div>
@@ -145,10 +154,11 @@ body.ingame main{top:0;bottom:0}
       <button id="slegacy" type="button">旧引擎重进</button></div></div>
   </div>
 </main>
-<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　确认 开始</footer>
+<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　# 按键设置　确认 开始</footer>
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
+  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button></div>
   <div id="cfgfoot"><button id="cfgdef" type="button">默认</button><button id="cfgnum" type="button">数字键</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
@@ -246,7 +256,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.10.0';
+var APP_VER='1.10.1';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -297,7 +307,10 @@ function natCanvas(g){
   var c=document.createElement('canvas');
   c.id='natcvs'; c.width=g.w; c.height=g.h;
   c.style.width='100%'; c.style.height='100%'; c.style.imageRendering='pixelated';
-  $('ejs_game').replaceChildren(c);
+  var wrap=document.createElement('div'); wrap.id='screenwrap';
+  var fx=document.createElement('div'); fx.id='fx';
+  wrap.appendChild(c); wrap.appendChild(fx);
+  $('ejs_game').replaceChildren(wrap);
   nat.cvs=c; nat.ctx=c.getContext('2d');
   nat.img=nat.ctx.createImageData(g.w,g.h);
   var d=nat.img.data; for(var i=3;i<d.length;i+=4) d[i]=255;
@@ -369,6 +382,8 @@ function natDraw(buf){
     nat.img=nat.ctx.createImageData(w,h);
     var d0=nat.img.data; for(var i=3;i<d0.length;i+=4) d0[i]=255;
     fitLastW=0; fitLastH=0;
+    /* 核心换了分辨率就重新算外框（只在这一刻做一次，不占每帧的开销） */
+    try{ fit(); }catch(e){}
   }
   var out=new Uint32Array(nat.img.data.buffer);
   var src=new Uint16Array(buf,4,w*h);
@@ -1036,6 +1051,8 @@ function reallyStart(i){
 }
 function leave(){
   running=false; phase='menu';
+  /* 退出后的 0.9 秒内吞掉返回键：长按退出的余波不能把插件也关掉 */
+  backGuardUntil=Date.now()+900;
   susp.on=false; susp.ticks=0;
   /* 原生：先让服务端把存档落盘再退出；进程由后端收掉 */
   try{ if(nativeActive()) natCmd2(1,0); }catch(e){}
@@ -1194,6 +1211,9 @@ function backIdOf(e){
   if(e.keyCode===166||e.key==='BrowserBack'||e.key==='GoBack') return 'bb';
   return 'k:'+(e.key||'');
 }
+/* 返回键按下的时刻：长按退出后手还没松开，按键重复会一波波继续来。
+   靠它把那一串重复吞掉，别漏给宿主（漏了宿主就会把整个插件关掉）。 */
+var backDownAt=0, backGuardUntil=0;
 function handleKey(kind,key,repeat,id,code){
   try{ window.__kinds=((window.__kinds||'')+kind.charAt(0)).slice(-48); }catch(e){}
   if(slotOpen) return slotKey(kind);
@@ -1202,6 +1222,7 @@ function handleKey(kind,key,repeat,id,code){
   keyCount++; keyLogPush('D:'+kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
   try{ $('tkey').textContent=(code||kind)+''; }catch(e){}
   if(!running){
+    if(kind==='back'&&(Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
     if(kind==='up'){ selectIdx(sel-3); return true; }
     if(kind==='down'){ selectIdx(sel+3); return true; }
     if(kind==='left'){ selectIdx(sel-1); return true; }
@@ -1213,13 +1234,18 @@ function handleKey(kind,key,repeat,id,code){
       setTab(t);
       return true;
     }
+    /* 菜单里按 # 进按键设置；9 作为备用（有的机器不报 #） */
+    if(kind==='digit'&&(key==='#'||key==='9')){ openCfg(); return true; }
     return false;
   }
   /* 按下第一个键就收起开局提示 */
   try{ if($('hint').classList.contains('show')) $('hint').classList.remove('show'); }catch(e){}
+  /* 游戏里按 # 也能进按键设置：先把核心暂停，关面板再继续 */
+  if(kind==='digit'&&key==='#'){ openCfg(); return true; }
   if(kind==='back'){
     /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
     if(repeat) return true;
+    backDownAt=Date.now();
     var now=Date.now();
     /* 硬件返回键一次按压会上报 KEY_BACK+Backspace 两个按下事件（<150ms，宿主 app.js 有同样窗口的去重）。
        不去重的话单击会被当双击，一按就直接退出游戏。 */
@@ -1274,8 +1300,10 @@ window.addEventListener('keydown',function(e){
   if(handleKey(keyKindOf(e),e.key,e.repeat,backIdOf(e),e.keyCode)) e.preventDefault();
 },true);
 window.addEventListener('keyup',function(e){
-  if(!running) return;
   var kind=keyKindOf(e);
+  /* 松键要记下来（即使已经退出游戏）：下一次按返回才算新的按压 */
+  if(kind==='back'){ backDownAt=0; backGuardUntil=Date.now()+300; }
+  if(!running) return;
   keyLogPush('U:'+kind+(e.key?(':'+e.key):'')+(e.keyCode?('#'+e.keyCode):''));
   if(kind==='back'){
     try{ clearInterval(backTick); }catch(e){}
@@ -1307,9 +1335,15 @@ if(typeof e5!=='undefined'){
     if(cfgOpen) return k.kind!=='power';
     if(k.kind==='power'||k.kind==='call') return false;
     if(k.kind==='menu') return !!running;
+    /* 长按退出的余波、刚退出这一刻的重复按键都要吞掉；
+       漏给宿主 SDK 会发 e5:exit，整个插件被关掉 —— 就是"一退出退到最外面"。 */
+    if(k.kind==='back'&&(Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
     return !(k.kind==='back'&&!running);
   });
-  if(e5.onBack) e5.onBack(function(){ window.__backTaken=running; return running; });
+  if(e5.onBack) e5.onBack(function(){
+    if(Date.now()<backGuardUntil||Date.now()-backDownAt<1500) return true;
+    window.__backTaken=running; return running;
+  });
 }
 
 /* ---- 按键设置面板 ----
@@ -1375,14 +1409,33 @@ function cfgKey(kind,key,repeat,code){
     assignKey(tok); return true;
   }
   if(kind==='ok'){ cfgListen=!cfgListen; refreshCfg(); $('cfgtip').textContent=cfgListen?'现在按一个键':'选一项，再按一个键'; return true; }
-  if(kind==='up'){ cfgSel=Math.max(0,cfgSel-2); refreshCfg(); return true; }
-  if(kind==='down'){ cfgSel=Math.min(ACTIONS.length-1,cfgSel+2); refreshCfg(); return true; }
-  if(kind==='left'){ if(cfgSel%2) cfgSel--; refreshCfg(); return true; }
-  if(kind==='right'){ if(cfgSel%2===0) cfgSel++; refreshCfg(); return true; }
+  /* 面板是三列：上下跳一行（±3），左右在行内移动 */
+  if(kind==='up'){ cfgSel=Math.max(0,cfgSel-3); refreshCfg(); return true; }
+  if(kind==='down'){ cfgSel=Math.min(ACTIONS.length-1,cfgSel+3); refreshCfg(); return true; }
+  if(kind==='left'){ if(cfgSel%3) cfgSel--; refreshCfg(); return true; }
+  if(kind==='right'){ if(cfgSel%3<2&&cfgSel+1<ACTIONS.length) cfgSel++; refreshCfg(); return true; }
   return true;
 }
-function openCfg(){ cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open'); $('cfgtip').textContent='选一项，再按一个键'; }
-function closeCfg(){ cfgOpen=false; cfgListen=false; $('cfg').classList.remove('open'); }
+var cfgPausedNative=false;
+function openCfg(){
+  cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open');
+  $('cfgtip').textContent='选一项，再按一个键';
+  /* 游戏里进设置就暂停核心：面板是全屏的，不暂停会白烧 CPU，也听不见按键反馈 */
+  try{
+    if(running&&nativeWanted(current)&&!nat.paused){
+      if(natCmd(4)){ nat.paused=true; cfgPausedNative=true; $('bpause').textContent='继续'; }
+    }
+  }catch(e){}
+}
+function closeCfg(){
+  cfgOpen=false; cfgListen=false; $('cfg').classList.remove('open');
+  try{
+    if(cfgPausedNative&&running&&nativeWanted(current)&&nat.paused){
+      if(natCmd(4)){ nat.paused=false; $('bpause').textContent='停'; }
+    }
+  }catch(e){}
+  cfgPausedNative=false;
+}
 bindTap($('bcfg'),function(){ openCfg(); });
 try{ bindTap($('bcore'),function(){ coreInstall(); }); }catch(e){}
 bindTap($('cfgclose'),function(){ closeCfg(); });
@@ -1415,19 +1468,42 @@ bindTap($('cfgnode'),function(){
 var fitMode='wide';
 try{
   var fp=new URLSearchParams(location.search).get('fit');
-  if(fp==='full'||fp==='wide') fitMode=fp;
-  else{ var fm=localStorage.getItem('e5fit'); if(fm==='full'||fm==='wide') fitMode=fm; }
+  if(fp==='full'||fp==='wide'||fp==='int') fitMode=fp;
+  else{ var fm=localStorage.getItem('e5fit'); if(fm==='full'||fm==='wide'||fm==='int') fitMode=fm; }
 }catch(e){}
 function applyFitMode(){
   try{ localStorage.setItem('e5fit',fitMode); }catch(e){}
   document.body.classList.toggle('fitfull',fitMode==='full');
   var b=$('bview');
-  if(b){ b.textContent=(fitMode==='wide'?'铺':'拉'); b.title=fitMode==='wide'?'画面：左右铺满，不拉伸':'画面：上下也拉满'; }
+  if(b){ b.textContent=(fitMode==='wide'?'铺':(fitMode==='full'?'拉':'1:1'));
+    b.title=(fitMode==='wide'?'画面：左右铺满，不拉伸':(fitMode==='full'?'画面：上下也拉满':'画面：整数倍点对点')); }
+  var s=$('cfgscale');
+  if(s) s.textContent='比例：'+(fitMode==='wide'?'宽铺':(fitMode==='full'?'拉伸':'1:1'));
 }
 bindTap($('bview'),function(){
-  fitMode=(fitMode==='wide'?'full':'wide');
+  fitMode=(fitMode==='wide'?'full':(fitMode==='full'?'int':'wide'));
   applyFitMode(); fit();
 });
+bindTap($('cfgscale'),function(){
+  fitMode=(fitMode==='wide'?'full':(fitMode==='full'?'int':'wide'));
+  applyFitMode(); fit();
+});
+
+/* 画面滤镜：关 / 扫描线 / LCD 网格。只往画面上叠一层 CSS，不改核心、不加每帧开销。 */
+var FXS=['off','scan','lcd'], FXN={off:'关',scan:'扫描线',lcd:'LCD 网格'};
+var fxMode='off';
+try{
+  var fxq=new URLSearchParams(location.search).get('fx');
+  fxMode=(fxq&&FXN[fxq])?fxq:(localStorage.getItem('e5fx')||'off');
+}catch(e){}
+if(!FXN[fxMode]) fxMode='off';
+function applyFx(){
+  try{ localStorage.setItem('e5fx',fxMode); }catch(e){}
+  document.body.classList.remove('fx-scan','fx-lcd');
+  if(fxMode!=='off') document.body.classList.add('fx-'+fxMode);
+  var b=$('cfgscan'); if(b) b.textContent='滤镜：'+FXN[fxMode];
+}
+bindTap($('cfgscan'),function(){ fxMode=FXS[(FXS.indexOf(fxMode)+1)%FXS.length]; applyFx(); });
 
 /* 同一源：可以给宿主页面注入样式。游戏期间把宿主自己的工具栏和底部主菜单藏掉，
    把整块竖向空间让给画面；退出时立刻恢复。宿主不需要改代码，也不改全局配置。 */
@@ -1482,11 +1558,19 @@ var fitLastW=0, fitLastH=0;
 function fit(){
   var g=current;
   if(!g||!g.w||!g.h) return;
+  /* 原生核心每帧都报真实分辨率（同一个 ROM 也可能换模式，比如 MD 的
+     320x224 和 256x192）。外框按核心的实际尺寸算，别拿游戏表里的估计值
+     去拉伸，否则画面会被拉长。 */
+  if(running&&nativeWanted(g)&&nat.w&&nat.h) g={w:nat.w,h:nat.h};
   var stage=$('stage').getBoundingClientRect();
   var availW=Math.floor(stage.width), availH=Math.floor(stage.height-58);   /* 顶部条 18 + 操作条 40 */
   if(!availW||!availH) return;
   var cw,ch,note;
-  if(fitMode==='full'){
+  if(fitMode==='int'){
+    /* 点对点：整数倍放大，像素不糊也不变形，四周留黑边 */
+    var ki=Math.max(1,Math.floor(Math.min(availW/g.w,availH/g.h)));
+    cw=g.w*ki; ch=g.h*ki; note=ki+'× 原始大小';
+  }else if(fitMode==='full'){
     /* 全拉：可用区整个铺满，纵向拉伸不设上限 */
     var kx=availW/g.w, h0=g.h*kx;
     if(h0>availH){ var k2=availH/g.h; cw=Math.floor(g.w*k2); ch=Math.floor(g.h*k2); note='等比 '+k2.toFixed(2)+'×'; }
@@ -1868,6 +1952,7 @@ try{
 }catch(e){}
 
 applyFitMode();
+applyFx();
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 try{ hostChromeReset(); }catch(e){}
