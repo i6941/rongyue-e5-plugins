@@ -128,9 +128,8 @@ return function (ctx) {
 
             let dir = '/tmp/e5emu-install';
             ctx.sh('mkdir -p ' + dir);
-            /* 状态文件：state=downloading|done|error，后面跟 file= 和 error= */
-            write_text(dir + '/status', 'state=starting\n', 0o644);
-            let script = [
+            let script = '';
+            let lines = [
                 '#!/bin/sh',
                 'BASE="' + base + '"',
                 'DIR=' + dir,
@@ -140,16 +139,19 @@ return function (ctx) {
                 'for c in e5emu e5emu-genesis e5emu-gba; do',
                 '  say "state=downloading"; say "file=$c"',
                 '  wget -q -O $DIR/$c "$BASE/$c" || { say "state=error"; say "error=$c download failed"; exit 1; }',
-                '  (cd $DIR && grep " $c$" sha256sums.txt | sha256sum -c -) || { say "state=error"; say "error=$c checksum failed"; exit 1; }',
-                '  install -m 0755 $DIR/$c /usr/bin/$c || { say "state=error"; say "error=$c install failed"; exit 1; }',
+                '  (cd $DIR && tr -d "\\r" < sha256sums.txt | grep " $c\\$" | sha256sum -c -) || { say "state=error"; say "error=$c checksum failed"; exit 1; }',
+                '  cp -f $DIR/$c /usr/bin/$c && chmod 0755 /usr/bin/$c || { say "state=error"; say "error=$c install failed"; exit 1; }',
                 '  rm -f $DIR/$c',
                 'done',
                 'say "state=done"'
-            ].join('\n') + '\n';
+            ];
+            for (let i = 0; i < length(lines); i++) script += lines[i] + '\n';
             if (!write_text(dir + '/install.sh', script, 0o755))
                 return { ok: false, error: 'cannot write install script' };
-            /* 后台跑，别把这次 API 调用拖住 */
-            ctx.sh('cd ' + dir + ' && (nohup sh install.sh >install.log 2>&1 &)');
+            /* 状态文件：state=downloading|done|error，后面跟 file= 和 error= */
+            write_text(dir + '/status', 'state=starting\n', 0o644);
+            /* 后台跑，别把这次 API 调用拖住（设备上没有 nohup） */
+            ctx.sh('cd ' + dir + ' && (sh install.sh >install.log 2>&1 </dev/null &)');
             return { ok: true, base: base };
         },
         'GET /emu/install-status': function () {

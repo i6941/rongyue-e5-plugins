@@ -89,8 +89,9 @@ for c in $CORES; do
 done
 if fetch "$RELEASE/sha256sums.txt" sha256sums.txt; then
     if command -v sha256sum >/dev/null 2>&1; then
+        # 校验文件可能是 CRLF 结尾（Windows 上生成的），先去掉 \r 再比对
         for c in $CORES; do
-            grep " $c\$" sha256sums.txt | sha256sum -c - || die "$c 校验不通过"
+            tr -d '\r' < sha256sums.txt | grep " $c\$" | sha256sum -c - || die "$c 校验不通过"
         done
     fi
 else

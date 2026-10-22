@@ -149,7 +149,7 @@ def build_index(out_dir, pkg, manifest, base_url, official_path=None):
         "plugins": plugins,
     }
     path = os.path.join(out_dir, "index.json")
-    with open(path, "w", encoding="utf-8") as f:
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
         json.dump(index, f, ensure_ascii=False, indent=1)
     # 另存一份带版本号的：raw.githubusercontent.com 的 CDN 会按路径缓存，
     # 同一路径在推送后几分钟内还可能发旧内容（实测边缘节点发的是旧副本）。
@@ -204,9 +204,10 @@ def main():
         print("缺少二进制：%s（先跑 native/build-*.ps1）" % "、".join(missing))
         return 1
 
-    # 3) 校验和
+    # 3) 校验和。必须用 LF 结尾：在 Windows 上用文本模式写会变成 CRLF，
+    #    设备上 grep " e5emu$" 就匹配不上了。
     sums = os.path.join(out, "sha256sums.txt")
-    with open(sums, "w", encoding="utf-8") as f:
+    with open(sums, "w", encoding="utf-8", newline="\n") as f:
         for path in made:
             f.write("%s  %s\n" % (sha256(path), os.path.basename(path)))
     made.append(sums)
