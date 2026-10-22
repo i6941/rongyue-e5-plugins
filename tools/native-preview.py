@@ -189,7 +189,115 @@ class Handler(SimpleHTTPRequestHandler):
         return str(ROOT / "tools" / "native-preview-missing")
 
     def log_message(self, fmt: str, *args) -> None:  # 静态请求太吵，只留错误
-        pass
+        msg = fmt % args
+        if "/ws" in msg or "Upgrade" in msg or "101" in msg or "404" in msg:
+            print("[preview] " + msg, flush=True)
+
+    def do_GET(self) -> None:
+        """同源 WebSocket 中转：/ws -> 127.0.0.1:9510。
+
+        浏览器连 ws://127.0.0.1:9510 会被系统代理（FlClash）拦掉，握手直接 1006；
+        但同一个 http://127.0.0.1:18080 的普通请求没问题。所以让页面连同源的
+        /ws，由这个服务转发到真正的帧服务，浏览器侧就完全不过代理。
+        """
+        if self.path.split("?", 1)[0] == "/ws":
+            print("[preview] /ws 请求到达 path=%s" % self.path, flush=True)
+            self.relay_ws()
+            return
+        super().do_GET()
+
+    def relay_ws(self) -> None:
+        import base64
+        import hashlib
+        import socket as _socket
+        import threading
+
+        # 请求头已经被 BaseHTTPRequestHandler 解析过了，直接取，不要再读一遍（会卡住）
+        key = self.headers.get("Sec-WebSocket-Key", "")
+
+        # 先把 101 回给浏览器，再去连上游。上游 e5emu 只有一个客户端位，
+        # 它正忙的时候如果先把上游握手做完，浏览器就会一直卡在 CONNECTING。
+        accept = base64.b64encode(
+            hashlib.sha1((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode()).digest()
+        ).decode()
+        self.wfile.write(
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+            b"Connection: Upgrade\r\nSec-WebSocket-Accept: " + accept.encode() + b"\r\n\r\n"
+        )
+        self.wfile.flush()
+        print("[preview] 101 已回浏览器，开始连上游 9510", flush=True)
+
+        try:
+            up = _socket.create_connection(("127.0.0.1", 9510), timeout=5)
+        except OSError as exc:
+            print("[preview] 连上游失败: %s" % exc, flush=True)
+            try:
+                self.connection.shutdown(1)
+            except OSError:
+                pass
+            return
+
+        # 用浏览器给的那个 key 向上游做客户端握手：同一把 key 算出来的 accept
+        # 两边一致，浏览器那头能通过校验。
+        req = (
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:9510\r\nUpgrade: websocket\r\n"
+            "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
+            "Sec-WebSocket-Version: 13\r\n\r\n" % key
+        )
+        up.sendall(req.encode())
+        up.settimeout(8)
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            try:
+                chunk = up.recv(4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            resp += chunk
+        if b"101" not in resp.split(b"\r\n")[0]:
+            up.close()
+            print("[preview] 上游拒绝握手: %r" % resp[:80], flush=True)
+            try:
+                self.connection.shutdown(1)
+            except OSError:
+                pass
+            return
+        # 握手响应后面可能已经跟着第一帧，一起转给浏览器，别丢掉
+        cut = resp.find(b"\r\n\r\n")
+        leftover = resp[cut + 4:] if cut >= 0 else b""
+        if leftover:
+            try:
+                self.connection.sendall(leftover)
+            except OSError:
+                pass
+        print("[preview] 上游握手成功，转发帧", flush=True)
+
+        stop = threading.Event()
+
+        def pump(src, dst):
+            try:
+                while not stop.is_set():
+                    data = src.recv(65536)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except OSError:
+                pass
+            finally:
+                stop.set()
+
+        t1 = threading.Thread(target=pump, args=(self.connection, up), daemon=True)
+        t2 = threading.Thread(target=pump, args=(up, self.connection), daemon=True)
+        t1.start()
+        t2.start()
+        while not stop.is_set() and (t1.is_alive() or t2.is_alive()):
+            stop.wait(0.2)
+        stop.set()
+        try:
+            up.close()
+        except OSError:
+            pass
 
     def do_POST(self) -> None:
         """页面把 canvas 的 PNG(base64) 传上来存盘：做本机联调时能拿到真实分辨率的画面。"""

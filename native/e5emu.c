@@ -287,6 +287,11 @@ static int do_handshake(int fd)
 {
     char req[4096];
     size_t got = 0;
+    /* 握手读取必须有超时。客户端连上却没把请求发完（半开连接、被中间设备
+       掐住）时，阻塞读会把整个服务卡死：后面所有客户端都停在 CONNECTING，
+       页面只看到"启动中…"。五秒读不到就当这个连接废了，继续 accept 下一个。 */
+    struct timeval rcv_to = { 5, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rcv_to, sizeof(rcv_to));
     while (got < sizeof(req) - 1) {
         ssize_t n = recv(fd, req + got, sizeof(req) - 1 - got, 0);
         if (n <= 0) return -1;
@@ -387,9 +392,13 @@ static int ws_read_buttons(int fd)
     if (len > sizeof(payload)) { uint8_t tmp[64]; size_t left = len; while (left) { size_t chunk = left > sizeof(tmp) ? sizeof(tmp) : left; if (recv(fd, tmp, chunk, MSG_WAITALL) != (ssize_t)chunk) return -1; left -= chunk; } return 0; }
     if (len && recv(fd, payload, (size_t)len, MSG_WAITALL) != (ssize_t)len) return -1;
     for (size_t i = 0; i < len; i++) if (masked) payload[i] ^= mask[i & 3];
-    /* 只有 opcode >= 8 才是控制帧（close/ping/pong）；二进制帧是 opcode 2，
-       以前这里写成 "任何非零 opcode 都忽略"，把按键帧和命令帧全丢了。 */
-    if ((h[0] & 0x0f) >= 0x8) return 0;
+    /* 控制帧：0x8=close、0x9=ping、0xA=pong。
+       close 必须当成断开处理：页面退出游戏时会发 close 帧，如果这里忽略它，
+       服务端就会一直往一个已经关掉的连接推帧。这个服务端只接一个客户端，
+       于是它被"僵尸连接"占住，下一次开游戏连不上（页面一直卡在 CONNECTING）。 */
+    uint8_t op = h[0] & 0x0f;
+    if (op == 0x8) return -1;
+    if (op >= 0x8) return 0;
     if (len == 1) {
         /* 单字节命令：1=存即时档 2=读即时档 3=立刻把电池存档落盘 4=暂停/继续 */
         if (payload[0] == 1) state_save(0);
@@ -591,6 +600,9 @@ static int run_selftest(const char *rom_path, long frames)
     return 0;
 }
 
+/* 监听地址：默认只有本机能连。--bind 可以改（0.0.0.0 只在本机联调用）。 */
+static const char *g_bind_addr = "127.0.0.1";
+
 static int run_server(const char *rom_path, int port)
 {
     int ls = socket(AF_INET, SOCK_STREAM, 0);
@@ -600,11 +612,16 @@ static int run_server(const char *rom_path, int port)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    /* 默认只听本机回环，设备上不能让局域网连上；
+       本机联调时可以用 --bind 0.0.0.0 绑到 WSL 的真实 IP，绕开端口转发中继。 */
+    if (!strcmp(g_bind_addr, "0.0.0.0") || !strcmp(g_bind_addr, "*"))
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    else
+        addr.sin_addr.s_addr = inet_addr(g_bind_addr);
     addr.sin_port = htons((uint16_t)port);
     if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) < 0) { perror("bind"); close(ls); return 5; }
-    if (listen(ls, 1) < 0) { perror("listen"); close(ls); return 5; }
-    printf("E5EMU listening 127.0.0.1:%d\n", port);
+    if (listen(ls, 4) < 0) { perror("listen"); close(ls); return 5; }
+    printf("E5EMU listening %s:%d\n", g_bind_addr, port);
     fflush(stdout);
 
     if (!core_load(rom_path)) { close(ls); return 4; }
@@ -692,6 +709,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--selftest")) selftest = true;
         else if (!strcmp(argv[i], "--serve")) serve = true;
         else if (!strcmp(argv[i], "--log") && i + 1 < argc) log_path = argv[++i];
+        else if (!strcmp(argv[i], "--bind") && i + 1 < argc) g_bind_addr = argv[++i];
         else if (!rom_path) rom_path = argv[i];
         else { long v = atol(argv[i]); if (v > 100) frames = v; else if (v > 0) port = (int)v; }
     }
@@ -703,7 +721,7 @@ int main(int argc, char **argv)
     }
     if (!rom_path || (!selftest && !serve)) {
         fprintf(stderr, "usage: e5emu --selftest <rom.nes> [frames]\n"
-                        "       e5emu --serve <rom.nes> [port]\n");
+                        "       e5emu --serve <rom.nes> [port] [--bind <addr>]\n");
         return 2;
     }
     return serve ? run_server(rom_path, port) : run_selftest(rom_path, frames);

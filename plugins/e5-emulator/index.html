@@ -330,14 +330,25 @@ function natConnect(tryN){
   try{ ws=new WebSocket(natUrl()); }catch(e){ natFail('原生连接失败 '+e); return; }
   nat.ws=ws; ws.binaryType='arraybuffer';
   var opened=false;
+  /* 握手有可能一直挂着：端口在监听、但服务端正忙着上一个客户端（只接受一个
+     连接），Chrome 既不报错也不断开，就一直停在 CONNECTING。所以自己定个时限，
+     到点主动断开再重连，不然后面所有的重试逻辑都等不到 onclose。 */
+  var timer=setTimeout(function(){
+    if(opened) return;
+    try{ ws.onopen=null; ws.onmessage=null; ws.onerror=null; ws.onclose=null; ws.close(); }catch(e){}
+    if(nat.ws===ws) nat.ws=null;
+    nat.open=false; nat.err='连接超时';
+    if(running&&tryN<20){ setTimeout(function(){ natConnect(tryN+1); },400); }
+  },2500);
   ws.onopen=function(){
-    opened=true; nat.open=true; nat.err=''; marks.wsOpen=Date.now()-t0;
+    opened=true; clearTimeout(timer); nat.open=true; nat.err=''; marks.wsOpen=Date.now()-t0;
     try{ $('status').textContent='原生已连接 · '+current.sys+' '+current.n; }catch(e){}
     natSendInput();
   };
   ws.onmessage=function(ev){ try{ natDraw(ev.data); }catch(e){ nat.err='draw '+e; } };
   ws.onerror=function(){ if(!opened) nat.err='ws error'; };
   ws.onclose=function(){
+    clearTimeout(timer);
     if(nat.ws===ws) nat.ws=null;
     nat.open=false;
     if(!running) return;
