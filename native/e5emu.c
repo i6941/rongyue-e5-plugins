@@ -342,8 +342,28 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
     iov[0].iov_base = head; iov[0].iov_len = hlen;
     iov[1].iov_base = meta; iov[1].iov_len = 4;
     iov[2].iov_base = (void *)pixels; iov[2].iov_len = bytes;
-    ssize_t r = writev(fd, iov, 3);
-    return r == (ssize_t)(hlen + 4 + bytes) ? 0 : -1;
+    /* 一次 writev 可能只写出一部分（客户端读得慢或已经消失），
+       这里循环写完；写不出去就返回 -1，当作连接断了。 */
+    size_t want = hlen + 4 + bytes;
+    size_t done = 0;
+    while (done < want) {
+        ssize_t r = writev(fd, iov, 3);
+        if (r <= 0) return -1;
+        done += (size_t)r;
+        if (done >= want) break;
+        /* 把已经写掉的部分从 iov 里挪掉，继续写剩下的 */
+        size_t left = want - done;
+        const uint8_t *base[3] = { head, meta, (const uint8_t *)pixels };
+        size_t len[3] = { hlen, 4, bytes };
+        int k = 0;
+        for (int i = 0; i < 3; i++) {
+            if (left >= len[i]) { base[i] += len[i]; left -= len[i]; }
+            else { base[i] += left; len[i] -= left; left = 0; }
+            if (len[i]) { iov[k].iov_base = (void *)base[i]; iov[k].iov_len = len[i]; k++; }
+        }
+        if (k == 0) break;
+    }
+    return 0;
 }
 
 /* 存档相关（定义在后面）：按键处理里要能直接触发存/读档 */
@@ -607,6 +627,11 @@ static int run_server(const char *rom_path, int port)
         int cfd = accept(ls, NULL, NULL);
         if (cfd < 0) { if (errno == EINTR) continue; break; }
         setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+        /* 客户端要是突然消失（页面被杀、网络断），写帧会一直卡在内核缓冲区里，
+           服务端就永远回不到 accept，下一次开游戏连不上。给发送设个超时，
+           卡住两秒就当连接断了。 */
+        struct timeval snd_to = { 2, 0 };
+        setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
         if (do_handshake(cfd) != 0) { close(cfd); continue; }
         printf("E5EMU client connected\n");
         fflush(stdout);

@@ -191,6 +191,32 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt: str, *args) -> None:  # 静态请求太吵，只留错误
         pass
 
+    def do_POST(self) -> None:
+        """页面把 canvas 的 PNG(base64) 传上来存盘：做本机联调时能拿到真实分辨率的画面。"""
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(length).decode("ascii", "replace")
+            name = "shot.png"
+            if "?" in self.path:
+                q = self.path.split("?", 1)[1]
+                for kv in q.split("&"):
+                    if kv.startswith("name="):
+                        name = kv[5:].replace("/", "_")
+                        break
+            import base64
+            data = base64.b64decode(body + "===")
+            out = ROOT / ".notes" / "img" / name
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(data)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(str(out).encode())
+        except Exception as exc:  # noqa: BLE001
+            self.send_response(500)
+            self.end_headers()
+            self.wfile.write(str(exc).encode())
+
 
 def main() -> int:
     argv = sys.argv[1:]
