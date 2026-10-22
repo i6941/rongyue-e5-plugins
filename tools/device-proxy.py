@@ -17,7 +17,7 @@ from pathlib import Path
 import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
-HOST = os.environ.get('E5_HOST', '192.168.9.1')
+HOST = os.environ.get('E5_HOST', 'fe80::50:ff:fe00:e501%50')
 REMOTE = ("127.0.0.1", 8088)
 LOCAL_PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18088
 

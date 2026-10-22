@@ -372,6 +372,9 @@ function natDraw(buf){
   }
   var out=new Uint32Array(nat.img.data.buffer);
   var src=new Uint16Array(buf,4,w*h);
+  /* 留一份最新帧的引用：这台 WebKit 的 canvas.toDataURL 对非空画面会吐
+     乱码，截图只能走"原始像素 → 后端拼 PNG"这条路。 */
+  nat.rawBuf=buf; nat.rawW=w; nat.rawH=h;
   /* RGB565：R 在高 5 位、B 在低 5 位；ImageData 的内存序是 R,G,B,A（小端下
      Uint32 的低字节是 R）。所以 R 要左移 3 放到低字节，B 要放到第 3 字节。 */
   for(var i=0,n=w*h;i<n;i++){
@@ -554,6 +557,15 @@ var GAMES=[
 
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
 var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
+/* ?auto=N 自动开局。这个参数和"断点续玩"标记可能同时指向一个游戏，
+   两个 start() 会互相把原生核心杀掉（后端开新核心前要先收掉上一个），
+   所以自动开局全局只允许一次。 */
+var autoIdx=-1;
+try{ var qpAuto=new URLSearchParams(location.search).get('auto'); if(qpAuto!==null&&qpAuto!=='') autoIdx=parseInt(qpAuto,10); }catch(e){}
+/* ?shot=1 让页面把当前画布传回后端存成 PNG（真机没有截图接口） */
+var shotWant=false;
+try{ shotWant=(new URLSearchParams(location.search).get('shot')==='1'); }catch(e){}
+var shotState=0, shotTick=0;
 
 function note(t){ }
 function flat(){ var o=[]; GAMES.forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
@@ -588,7 +600,7 @@ function drawMenu(){
   /* 上次是"卡死后重进"留下的标记：自动进同一个游戏（自动存档会读回进度） */
   try{
     var rn=localStorage.getItem('e5resume');
-    if(rn && !window.__resumed){
+    if(rn && !window.__resumed && autoIdx<0){
       window.__resumed=1;
       localStorage.removeItem('e5resume');
       for(var ri=0;ri<flatList.length;ri++){
@@ -1474,7 +1486,7 @@ setInterval(function(){
     susp.ticks=0;
     if(susp.on) nativeResume();
   }
-  if(running&&nativeWanted(current)){ nativeTick(); post(); return; }
+  if(running&&nativeWanted(current)){ nativeTick(); post(); if(shotWant&&phase==='running'){ shotTick++; if(shotTick%5===0) shotUpload(); } return; }
   if(running){
     fit();
     applyKeymap();
@@ -1503,6 +1515,7 @@ setInterval(function(){
     if(phase==='loading'){ $('status').textContent='加载核心 '+current.core+' … '+Math.round((Date.now()-t0)/1000)+'s'; }
     if(phase!=='running') $('tres').textContent=$('status').textContent;
     hostChrome(true);   /* 宿主可能因来电等重排过 body，每秒补一次 */
+    if(shotWant && phase==='running') shotUpload();
     if(phase!=='running'&&window.__fps>0){ phase='running'; marks.firstFrame=Date.now()-t0;
       $('status').textContent='运行中 · '+current.sys+' '+current.n; focusCanvas();
       if(!autoLoaded){ autoLoaded=true; autoLoad(); }   /* 第一次出帧后把上次的自动存档读回来 */
@@ -1517,6 +1530,42 @@ setInterval(function(){
 },1000);
 
 function statTag(){ try{ var qp=new URLSearchParams(location.search); var t=qp.get('tag')||qp.get('t'); return t||'ui'; }catch(e){ return 'ui'; } }
+/* 真机没有截图接口。这台 WebKit 的 canvas.toDataURL 对非空画面会吐乱码，
+   所以直接把最新一帧的原始 RGB565 像素分块传给后端，由后端那边拼成 PNG。
+   宿主的 read_body 超过 4096 字节就整块丢弃，所以分块传。 */
+function shotUpload(){
+  if(shotState) return;
+  if(!nat.rawBuf){ logs.push('shot 还没有帧'); return; }
+  shotState=1;
+  try{
+    var w=nat.rawW, h=nat.rawH;
+    var src=new Uint16Array(nat.rawBuf,4,w*h);
+    var bytes=new Uint8Array(src.buffer,src.byteOffset,w*h*2);
+    /* RGB565 → base64：3 字节变 4 字符 */
+    var b64='', i=0, STEP=6000, n=bytes.length;
+    while(i<n){
+      var sl=bytes.subarray(i,Math.min(i+STEP,n));
+      var arr=new Array(sl.length);
+      for(var k=0;k<sl.length;k++) arr[k]=String.fromCharCode(sl[k]);
+      b64+=btoa(arr.join(''));
+      i+=STEP;
+    }
+    var CH=3000;
+    var parts=['w='+w+',h='+h+',n='+n+';'];
+    for(var p=0;p<b64.length;p+=CH) parts.push(b64.slice(p,p+CH));
+    logs.push('shot 上传 '+w+'x'+h+' '+parts.length+' 块');
+    function send(){
+      if(shotIdx>=parts.length){ shotState=0; logs.push('shot 发完'); return; }
+      var myIdx=shotIdx; shotIdx++;
+      natApi('/emu/shot',{part:myIdx, b64:parts[myIdx]}).then(send).catch(function(e){
+        shotState=3; logs.push('shot 失败 '+e);
+      });
+    }
+    shotIdx=0;
+    send();
+  }catch(e){ shotState=3; logs.push('shot 出错 '+e); }
+}
+var shotIdx=0;
 function post(){
   try{
     if(typeof e5!=='undefined'&&e5.api){
@@ -1821,8 +1870,7 @@ function coreCheck(){
 }
 coreCheck();
 try{
-  var qp=new URLSearchParams(location.search).get('auto');
-  if(qp!==null&&qp!==''){ var ai=parseInt(qp,10); if(flatList[ai]) setTimeout(function(){ start(ai); },300); }
+  if(autoIdx>=0 && flatList[autoIdx]) setTimeout(function(){ start(autoIdx); },300);
 }catch(e){}
 </script>
 </body></html>

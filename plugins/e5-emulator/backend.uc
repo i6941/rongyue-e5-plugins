@@ -211,6 +211,14 @@ return function (ctx) {
 
             /* 先收掉上一个实例，避免端口占用 */
             ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
+            /* 旧核心收到 TERM 后还要把存档写完才退（几百毫秒）。不等它退，
+               新核心 bind 9510 会撞 "Address in use"，自己就退出了。 */
+            for (let i = 0; i < 50; i++) {
+                let busy = '';
+                try { busy = trim(`${ctx.sh('netstat -ltn 2>/dev/null | grep -c ":9510 "') ?? '0'}`); } catch (e) { busy = '0'; }
+                if (busy === '0' || busy === '') break;
+                ctx.sh('sleep 0.1');
+            }
             let romfile = ROMDIR + '/' + clean;
             let cmd = 'start-stop-daemon -S -q -b -m -p /var/run/e5emu.pid -x ' + bin
                 + ' -- --serve ' + romfile + ' 9510 --log /tmp/e5emu.log';
@@ -236,6 +244,27 @@ return function (ctx) {
                 } catch (e) { }
             }
             return { ok: length(pid) > 0, pid: pid, rom: romfile, state: hasState, slots: slots, out: out };
+        },
+        /* 真机截图：页面把画布的 PNG（base64）分块传上来，这里按分块序号
+           各存一个文件（不靠截断，避免"新上传还没写完就被下一次覆盖"）。
+           宿主 read_body 超过 4096 字节就整块丢弃，所以必须分块。 */
+        'POST /emu/shot': function (req) {
+            let b = req.body ?? {};
+            let part = 0;
+            /* ucode 没有 parseInt，用一元加号做数值转换 */
+            try {
+                let pv = b.part;
+                if (pv != null) { let num = +pv; if (num != null) part = num; }
+            } catch (e) { part = 0; }
+            if (!(part >= 0)) part = 0;
+            let data = `${b.b64 ?? ''}`;
+            if (length(data) === 0) return { ok: false, error: 'empty' };
+            let path = '/tmp/e5emu-shot-' + part + '.b64';
+            let f = open(path, 'w', 0o644);
+            if (!f) return { ok: false, error: 'cannot write' };
+            f.write(data);
+            f.close();
+            return { ok: true, part: part, len: length(data) };
         },
         'POST /emu/stop': function () {
             let out = ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
