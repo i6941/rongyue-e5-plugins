@@ -220,8 +220,23 @@ var nat={ws:null,cvs:null,ctx:null,img:null,w:0,h:0,frames:0,lastFrames:0,fpsAt:
    停掉进程省 CPU，框架回来再重新拉起并读回存档，游戏进度不会丢。 */
 var susp={on:false,count:0,at:0,why:'',ticks:0};
 function nativeActive(){ return ENGINE==='native'; }
-/* 现在只有 fceumm（FC）链进了 e5emu；MD/GBA 还没链核心，先留给旧路径 */
-function nativeWanted(g){ return nativeActive() && nat.installed!==false && !!g && g.core==='fceumm'; }
+/* 每个内核编译成一个独立二进制：fceumm → e5emu，genesis_plus_gx → e5emu-genesis，
+   mgba → e5emu-gba。哪个装了就走原生，没装就退回运行库。 */
+function nativeCoreKey(g){
+  if(!g) return '';
+  if(g.core==='fceumm') return 'nes';
+  if(g.core==='genesis_plus_gx') return 'md';
+  if(g.core==='mgba') return 'gba';
+  return '';
+}
+function nativeWanted(g){
+  if(!nativeActive()||!g) return false;
+  var k=nativeCoreKey(g);
+  if(!k) return false;
+  if(nat.installed===false) return false;
+  if(nat.bins&&nat.bins[k]===false) return false;
+  return true;
+}
 function natUrl(){
   try{ var w=new URLSearchParams(location.search).get('ws'); if(w) return w; }catch(e){}
   return 'ws://127.0.0.1:9510';
@@ -1604,6 +1619,7 @@ try{ hostChromeReset(); }catch(e){}
   natApi('/emu/status').then(function(r){
     if(!r||typeof r.installed!=='boolean') return;
     nat.installed=r.installed;
+    if(r.bins) nat.bins=r.bins;
     if(!r.installed){
       try{ logs.push('e5emu 未安装，回落运行库'); $('status').textContent='原生引擎未安装，用运行库'; }catch(e){}
     }
