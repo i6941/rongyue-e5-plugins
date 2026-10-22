@@ -3,6 +3,8 @@
    www/roms 只是软链；每次 API 调用都检查一次，更新后第一次打开应用就自动补回。 */
 const ROMDIR = '/etc/e5-infoscreen/roms';
 const ROMLINK = '/usr/share/e5-infoscreen/www/roms';
+/* 三个原生核心二进制：FC / MD / GBA（GB） */
+const CORE_BINS = ['/usr/bin/e5emu', '/usr/bin/e5emu-genesis', '/usr/bin/e5emu-gba'];
 import { open } from 'fs';
 
 // 前端把状态（帧率、核心、错误）POST 过来，写进 /tmp 供 SSH 侧读取。
@@ -107,6 +109,76 @@ return function (ctx) {
            浏览器里跑 wasm 核心在这台机器上会卡死，FC 游戏改走原生：
            后端只负责拉起/结束 /usr/bin/e5emu，帧走本机回环的 WebSocket。
            rom 只接受白名单字符，拼出来的路径不会有空格或引号。 */
+        /* ---- 原生核心的首次下载 ----
+           从应用商店装插件的人没有 SSH，三个核心二进制（合计 30MB）又装不进
+           商店限定的 2MB 插件包，所以由后端在第一次用到时下载并校验。
+           下载在后台跑，页面轮询 GET /emu/install-status 看进度。 */
+        'POST /emu/install': function (req) {
+            let b = req.body ?? {};
+            let raw = `${b.base ?? ''}`;
+            /* 只允许 https 与常见 URL 字符，顺便挡掉 shell 特殊符号 */
+            let allowed = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:/-_~';
+            let base = '';
+            for (let i = 0; i < length(raw); i++) {
+                let ch = substr(raw, i, 1);
+                if (index(allowed, ch) !== null) base += ch;
+            }
+            if (length(base) < 9 || substr(base, 0, 8) !== 'https://')
+                return { ok: false, error: 'bad base url' };
+
+            let dir = '/tmp/e5emu-install';
+            ctx.sh('mkdir -p ' + dir);
+            /* 状态文件：state=downloading|done|error，后面跟 file= 和 error= */
+            write_text(dir + '/status', 'state=starting\n', 0o644);
+            let script = [
+                '#!/bin/sh',
+                'BASE="' + base + '"',
+                'DIR=' + dir,
+                'say() { printf "%s\\n" "$*" > $DIR/status; }',
+                'say "state=downloading"',
+                'wget -q -O $DIR/sha256sums.txt "$BASE/sha256sums.txt" || { say "state=error"; say "error=sums download failed"; exit 1; }',
+                'for c in e5emu e5emu-genesis e5emu-gba; do',
+                '  say "state=downloading"; say "file=$c"',
+                '  wget -q -O $DIR/$c "$BASE/$c" || { say "state=error"; say "error=$c download failed"; exit 1; }',
+                '  (cd $DIR && grep " $c$" sha256sums.txt | sha256sum -c -) || { say "state=error"; say "error=$c checksum failed"; exit 1; }',
+                '  install -m 0755 $DIR/$c /usr/bin/$c || { say "state=error"; say "error=$c install failed"; exit 1; }',
+                '  rm -f $DIR/$c',
+                'done',
+                'say "state=done"'
+            ].join('\n') + '\n';
+            if (!write_text(dir + '/install.sh', script, 0o755))
+                return { ok: false, error: 'cannot write install script' };
+            /* 后台跑，别把这次 API 调用拖住 */
+            ctx.sh('cd ' + dir + ' && (nohup sh install.sh >install.log 2>&1 &)');
+            return { ok: true, base: base };
+        },
+        'GET /emu/install-status': function () {
+            let dir = '/tmp/e5emu-install';
+            let txt = read_text(dir + '/status');
+            let out = { state: 'idle', file: '', error: '' };
+            let lines = split(txt, '\n');
+            for (let i = 0; i < length(lines); i++) {
+                let ln = trim(lines[i]);
+                if (ln === '') continue;
+                let eq = index(ln, '=');
+                if (eq < 0) continue;
+                let k = substr(ln, 0, eq);
+                let v = substr(ln, eq + 1);
+                if (k === 'state') out.state = v;
+                else if (k === 'file') out.file = v;
+                else if (k === 'error') out.error = v;
+            }
+            /* 已经装好的核心也要报上去，页面据此决定要不要提示下载 */
+            out.installed = [];
+            for (let i = 0; i < length(CORE_BINS); i++) {
+                let p = CORE_BINS[i];
+                try {
+                    let r = trim(`${ctx.sh('[ -x ' + p + ' ]; echo $?') ?? ''}`);
+                    if (r === '0') push(out.installed, p);
+                } catch (e) { }
+            }
+            return out;
+        },
         'POST /emu/start': function (req) {
             let b = req.body ?? {};
             let raw = `${b.rom ?? ''}`;

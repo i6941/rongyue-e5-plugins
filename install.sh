@@ -9,6 +9,7 @@
 #   --roms        连 19 个自制游戏一起装（许可允许再分发）
 #   --no-restart  装完不重启信息屏
 #   --remove      卸载：删插件、三个核心二进制和自制游戏
+#   --official    用官方商店索引（https://enceka.github.io/...）而不是我们这份
 #
 # 想装自己的 ROM：把文件放进设备的 /etc/e5-infoscreen/roms/ 即可，
 # 扩展名决定用哪个内核：.nes 用 e5emu，.md 用 e5emu-genesis，.gba/.gb 用 e5emu-gba。
@@ -16,24 +17,30 @@
 
 set -e
 
-BASE="${E5_BASE:-https://github.com/i6941/rongyue-e5-plugins/releases/latest/download}"
+REPO="${E5_REPO:-i6941/rongyue-e5-plugins}"
+RELEASE="${E5_RELEASE:-https://github.com/$REPO/releases/latest/download}"
+STORE="${E5_STORE:-https://i6941.github.io/$REPO/index.json}"
+OFFICIAL_STORE="https://enceka.github.io/infoscreen-plugins/index.json"
 PLUGIN_ID=e5-emulator
 PLUGIN_DIR="/etc/e5-infoscreen/plugins/$PLUGIN_ID"
 ROM_DIR=/etc/e5-infoscreen/roms
 CACHE_DIR=/tmp/run/e5-infoscreen/.cache/wpe/WebKitCache
 WORK=/tmp/e5-install
+PLUGIN_TOOL=/usr/libexec/e5-infoscreen/plugin
 CORES="e5emu e5emu-genesis e5emu-gba"
 
 WITH_ROMS=0
 RESTART=1
 REMOVE=0
+USE_OFFICIAL=0
 
 for arg in "$@"; do
     case "$arg" in
         --roms) WITH_ROMS=1 ;;
         --no-restart) RESTART=0 ;;
         --remove) REMOVE=1 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        --official) USE_OFFICIAL=1 ;;
+        -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
         *) echo "不认识的参数：$arg（用 --help 看用法）" >&2; exit 1 ;;
     esac
 done
@@ -72,25 +79,19 @@ fetch() {
     return 1
 }
 
-say "下载核心与插件"
-fetch "$BASE/e5-emulator.tar.gz" plugin.tar.gz || die "下载插件包失败：$BASE/e5-emulator.tar.gz（网络不通？）"
+say "下载核心"
 for c in $CORES; do
-    fetch "$BASE/$c" "$c" || die "下载 $c 失败"
+    fetch "$RELEASE/$c" "$c" || die "下载 $c 失败：$RELEASE/$c（网络不通？）"
 done
-if fetch "$BASE/sha256sums.txt" sha256sums.txt; then
-    say "校验完整性"
+if fetch "$RELEASE/sha256sums.txt" sha256sums.txt; then
     if command -v sha256sum >/dev/null 2>&1; then
         for c in $CORES; do
-            if grep -q " $c\$" sha256sums.txt; then
-                grep " $c\$" sha256sums.txt | sha256sum -c - || die "$c 校验不通过"
-            fi
+            grep " $c\$" sha256sums.txt | sha256sum -c - || die "$c 校验不通过"
         done
     fi
 else
     echo "（没有校验文件，跳过完整性校验）"
 fi
-
-say "安装核心"
 for c in $CORES; do
     cp -f "$c" "/usr/bin/$c"
     chmod 0755 "/usr/bin/$c"
@@ -98,22 +99,48 @@ for c in $CORES; do
 done
 
 say "安装插件"
-rm -rf "$PLUGIN_DIR"
-mkdir -p "$PLUGIN_DIR"
-tar -xzf plugin.tar.gz -C "$PLUGIN_DIR"
+if [ -x "$PLUGIN_TOOL" ]; then
+    # 设备自带的应用商店：把商店索引指到我们这份，再用它自己的安装命令
+    if [ "$USE_OFFICIAL" = 1 ]; then
+        STORE="$OFFICIAL_STORE"
+    fi
+    if uci -q get e5-infoscreen.main.store_url >/dev/null 2>&1; then
+        uci set e5-infoscreen.main.store_url="$STORE"
+    else
+        uci add_list e5-infoscreen.main.store_url="$STORE" 2>/dev/null ||
+            uci set e5-infoscreen.main.store_url="$STORE"
+    fi
+    uci commit e5-infoscreen
+    echo "  商店索引 -> $STORE"
+    if "$PLUGIN_TOOL" store >/dev/null 2>&1; then
+        "$PLUGIN_TOOL" get "$PLUGIN_ID" || echo "  商店安装失败，改用直接解包"
+    fi
+fi
 if [ ! -f "$PLUGIN_DIR/index.html" ]; then
-    die "插件包结构不对（缺 index.html）"
+    # 没有商店工具，或者商店安装失败：直接解包
+    fetch "https://raw.githubusercontent.com/$REPO/main/dist/packages/$PLUGIN_ID-1.10.0.tar.gz" plugin.tar.gz ||
+        die "下载插件包失败"
+    rm -rf "$PLUGIN_DIR"
+    mkdir -p "$PLUGIN_DIR"
+    tar -xzf plugin.tar.gz -C "$PLUGIN_DIR"
+fi
+if [ ! -f "$PLUGIN_DIR/index.html" ]; then
+    die "插件没装上（缺 index.html）"
 fi
 echo "  $PLUGIN_DIR"
 
 if [ "$WITH_ROMS" = 1 ]; then
     say "下载自制游戏"
-    if fetch "$BASE/roms-homebrew.tar.gz" roms.tar.gz; then
-        mkdir -p "$ROM_DIR"
-        tar -xzf roms.tar.gz -C "$ROM_DIR"
-        echo "  $(ls "$ROM_DIR" | wc -l) 个文件 -> $ROM_DIR"
+    if fetch "https://codeload.github.com/$REPO/tar.gz/refs/heads/main" repo.tar.gz; then
+        tar -xzf repo.tar.gz -C "$WORK" 2>/dev/null || true
+        d=$(ls -d "$WORK"/"$REPO"-* 2>/dev/null | head -1)
+        if [ -n "$d" ] && [ -d "$d/roms" ]; then
+            mkdir -p "$ROM_DIR"
+            cp -f "$d"/roms/* "$ROM_DIR"/ 2>/dev/null || true
+            echo "  $(ls "$ROM_DIR" | wc -l) 个文件 -> $ROM_DIR"
+        fi
     else
-        echo "（自制游戏包下载失败，跳过）"
+        echo "（自制游戏下载失败，跳过）"
     fi
 fi
 

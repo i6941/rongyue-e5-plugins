@@ -123,7 +123,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
-<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcfg" type="button">按键</button></header>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button">按键</button></header>
 <div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button></div>
 <main>
   <div id="menu"></div>
@@ -1334,6 +1334,7 @@ function cfgKey(kind,key,repeat,code){
 function openCfg(){ cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open'); $('cfgtip').textContent='选一项，再按一个键'; }
 function closeCfg(){ cfgOpen=false; cfgListen=false; $('cfg').classList.remove('open'); }
 bindTap($('bcfg'),function(){ openCfg(); });
+try{ bindTap($('bcore'),function(){ coreInstall(); }); }catch(e){}
 bindTap($('cfgclose'),function(){ closeCfg(); });
 bindTap($('cfgdone'),function(){ closeCfg(); });
 bindTap($('cfgdef'),function(){
@@ -1752,19 +1753,73 @@ drawMenu();
 try{ hostChromeReset(); }catch(e){}
 try{ slotLabel(); }catch(e){}
 try{ $('fver').textContent='v'+APP_VER; }catch(e){}
-/* 启动时问一下后端原生二进制装了没有；没装就自动回落运行库，
-   免得每次开游戏都弹“启动失败”。 */
-(function(){
+/* ---- 首次使用时下载原生核心 ----
+   从应用商店装插件的人没有 SSH，而三个核心二进制（合计 30MB）装不进商店
+   限定的 2MB 插件包，所以由后端下载安装；这里负责发起和显示进度。 */
+var CORE_BASE='https://github.com/i6941/rongyue-e5-plugins/releases/latest/download';
+function coreBase(){
+  try{
+    var w=new URLSearchParams(location.search).get('core');
+    if(w&&w.indexOf('https://')===0) return w;
+  }catch(e){}
+  return CORE_BASE;
+}
+var coreBusy=false;
+function coreText(s){
+  if(s.state==='downloading') return '正在下载核心'+(s.file?(' '+s.file):'')+'…';
+  if(s.state==='done') return '核心已就绪';
+  if(s.state==='error') return '核心下载失败：'+(s.error||'');
+  return '核心未安装';
+}
+function coreReset(){
+  coreBusy=false;
+  try{ var b=$('bcore'); if(b){ b.textContent='核心'; b.disabled=false; } }catch(e){}
+}
+function coreInstall(){
+  if(coreBusy) return;
+  coreBusy=true;
+  try{ var b=$('bcore'); if(b){ b.textContent='下载中'; b.disabled=true; } $('status').textContent='开始下载核心…'; }catch(e){}
+  natApi('/emu/install',{base:coreBase()}).then(function(r){
+    if(r&&r.ok===false) throw new Error(r.error||'fail');
+    pollCore();
+  }).catch(function(e){
+    coreReset();
+    try{ $('status').textContent='核心下载失败：'+e; }catch(e2){}
+  });
+}
+function pollCore(){
+  natApi('/emu/install-status').then(function(s){
+    if(!s) return;
+    try{ $('status').textContent=coreText(s); }catch(e){}
+    if(s.state==='done'){
+      coreReset();
+      natApi('/emu/status').then(function(r){
+        if(r){ nat.installed=r.installed; if(r.bins) nat.bins=r.bins; }
+        try{ var b=$('bcore'); if(b) b.hidden=true; $('status').textContent='核心已就绪，选个游戏开玩'; }catch(e){}
+      });
+      return;
+    }
+    if(s.state==='error'){ coreReset(); return; }
+    setTimeout(pollCore,1500);
+  }).catch(function(){ setTimeout(pollCore,2500); });
+}
+/* 问一下后端原生二进制装了没有：没装就把标题栏的“核心”按钮亮出来 */
+function coreCheck(){
   if(!nativeActive()) return;
   natApi('/emu/status').then(function(r){
     if(!r||typeof r.installed!=='boolean') return;
     nat.installed=r.installed;
     if(r.bins) nat.bins=r.bins;
-    if(!r.installed){
-      try{ logs.push('e5emu 未安装，回落运行库'); $('status').textContent='原生引擎未安装，用运行库'; }catch(e){}
-    }
+    try{
+      var b=$('bcore');
+      if(b) b.hidden=!!r.installed;
+      if(!r.installed&&!coreBusy)
+        $('status').textContent='原生核心未安装，点右上角“核心”下载（约 30MB）';
+      else if(r.installed) $('status').textContent='选择游戏';
+    }catch(e){}
   }).catch(function(){});
-})();
+}
+coreCheck();
 try{
   var qp=new URLSearchParams(location.search).get('auto');
   if(qp!==null&&qp!==''){ var ai=parseInt(qp,10); if(flatList[ai]) setTimeout(function(){ start(ai); },300); }
