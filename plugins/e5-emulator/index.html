@@ -8,7 +8,9 @@ html,body{width:100%;height:100%;overflow:hidden}
 body{margin:0;background:#0b111b;color:#edf3fc;font:12px "Noto Sans CJK SC",sans-serif;position:relative;min-height:100%}
 header{position:absolute;top:0;left:0;right:0;height:24px;z-index:5;padding:2px 4px 2px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;display:flex;align-items:center;gap:6px}
 h1{font-size:12px;margin:0;display:inline-block;flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;flex:1 1 auto;vertical-align:middle}
-main{position:absolute;top:24px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+main{position:absolute;top:50px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+#stage{display:none;position:absolute;inset:0;background:#000}
+body.ingame #tabs{display:none}
 #menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 42px}
 .cell{position:relative;display:block;width:100%;padding:0 0 4px;background:#141d2c;color:inherit;border:1px solid #223047;border-radius:6px;font:inherit;overflow:hidden}
 .cell.sel{border-color:#65bdff;background:#1d2c44}
@@ -20,7 +22,21 @@ main{position:absolute;top:24px;bottom:20px;left:0;right:0;overflow-y:auto;overf
 /* 每个格子右上角标出它属于哪个机种（FC/MD/GBA） */
 .cell .sys{position:absolute;right:3px;top:3px;z-index:2;padding:0 4px;height:14px;line-height:14px;
   background:rgba(11,17,27,.85);border:1px solid #2f4463;border-radius:3px;color:#9fc6ef;font-size:9px}
-#stage{display:none;position:absolute;inset:0;background:#000}
+/* 机种 tab：上面一行，数字 1-4 直接切 */
+#tabs{position:absolute;top:24px;left:0;right:0;height:26px;z-index:5;display:flex;gap:4px;padding:3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden}
+#tabs button{flex:1 1 0;min-width:0;height:20px;padding:0 4px;font:inherit;font-size:11px;line-height:18px;color:#a8bad0;background:#141d2c;border:1px solid #223047;border-radius:10px;white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#tabs button.on{color:#04121f;background:#65bdff;border-color:#65bdff;font-weight:600}
+/* 存档弹窗 */
+#slots{position:absolute;inset:0;z-index:19;display:none;align-items:center;justify-content:center;background:rgba(4,7,12,.82)}
+#slots.open{display:flex}
+#slots .sbox{width:280px;max-width:92%;background:#101827;border:1px solid #2b3a52;border-radius:10px;overflow:hidden}
+#slots .stitle{height:28px;line-height:28px;padding:0 10px;font-size:13px;color:#edf3fc;background:#16202f;border-bottom:1px solid #2b3a52}
+#slots .row{display:flex;align-items:center;gap:8px;height:38px;padding:0 10px;font-size:12px;color:#cfe0f5;border-bottom:1px solid #1b2433}
+#slots .row.sel{background:#1d2c44;color:#fff}
+#slots .row .nm{flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#slots .row .st{flex:0 0 auto;font-size:11px;color:#8ff0b0}
+#slots .row.empty .st{color:#8a93a3}
+#slots .sfoot{padding:6px 10px;font-size:10px;color:#8a93a3;background:#0d1420;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #stage.on{display:flex;align-items:center;justify-content:center}
 /* 顶部条（游戏名/分辨率/帧率）+ 底部 HUD 各自占一条，画面在中间那块 */
 body.ingame #stage.on{padding:18px 0 40px 0}
@@ -106,21 +122,27 @@ body.ingame main{top:0;bottom:0}
 </style></head><body>
 <header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcfg" type="button">按键</button></header>
 <main>
+  <div id="tabs"><button type="button" data-sys="ALL" class="on">全部</button><button type="button" data-sys="FC">FC</button><button type="button" data-sys="MD">MD</button><button type="button" data-sys="GBA">GBA</button></div>
   <div id="menu"></div>
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
     <div id="hud"><span class="sp"></span>
-      <button id="bview" type="button">铺</button><button id="bslot" type="button">槽1</button>
+      <button id="bview" type="button">铺</button><button id="bslot" type="button">存档</button>
       <button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
       <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
     <div id="hint"></div>
     <div id="loadtip">存档读取中…</div>
+    <div id="slots"><div class="sbox">
+      <div class="stitle">存档</div>
+      <div id="slotlist"></div>
+      <div class="sfoot">↑↓ 选 · 确认 读档 · ← 存档 · 返回 关闭</div>
+    </div></div>
     <div id="stall"><div class="stxt">画面卡住了</div><div class="srow">
       <button id="sresume" type="button">重进（读回存档）</button>
       <button id="slegacy" type="button">旧引擎重进</button></div></div>
   </div>
 </main>
-<footer id="foot">↑↓←→ 选游戏　数字 直达　确认 开始</footer>
+<footer id="foot">↑↓←→ 选游戏　数字 1-4 切机种　确认 开始</footer>
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
@@ -359,7 +381,7 @@ function natSendInput(){
    自动存档只写自己的槽，不会覆盖你手动存的进度。 */
 var slot=1;
 try{ var s0=parseInt(localStorage.getItem('e5slot')||'1',10); if(s0>=1&&s0<=3) slot=s0; }catch(e){}
-function slotLabel(){ try{ $('bslot').textContent='槽'+slot; }catch(e){} }
+function slotLabel(){ /* HUD 上固定叫「存档」，具体槽位在弹窗里选 */ }
 function natCmd2(cmd,sl){
   var ws=nat.ws;
   if(!ws||ws.readyState!==1) return false;
@@ -515,7 +537,7 @@ var GAMES=[
 ];
 
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
-var sel=0, cells=[], flatList=[], backTimer=0, simCalls=0, lastSave='', keyCount=0;
+var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
 
 function note(t){ }
 function flat(){ var o=[]; GAMES.forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
@@ -523,7 +545,8 @@ function hue(s){ var h=0; for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%3
 
 /* 九宫格：3 列，纵向滚动；序号按“当前可见的第一格”往后排 */
 function drawMenu(){
-  flatList=flat();
+  var all=flat();
+  flatList=all.filter(function(g){ return tabSys==='ALL'||g.sys===tabSys; });
   var m=$('menu'); m.replaceChildren();
   cells=[];
   flatList.forEach(function(g,i){
@@ -536,17 +559,16 @@ function drawMenu(){
     img.onload=function(){ art.style.background='transparent'; img.style.display='block'; };
     img.src='/roms/art/'+g.key+'.jpg';
     art.appendChild(img);
-    var num=document.createElement('span'); num.className='num';
     var sys=document.createElement('span'); sys.className='sys'; sys.textContent=g.sys;
     var cap=document.createElement('span'); cap.className='cap'; cap.textContent=g.n;
-    b.append(art,num,sys,cap);
+    b.append(art,sys,cap);
     bindTap(b,function(){ start(i); });
     m.appendChild(b);
     cells.push(b);
   });
   sel=Math.max(0,Math.min(sel,cells.length-1));
   renumber();
-  $('status').textContent='共 '+flatList.length+' 个游戏';
+  $('status').textContent=(tabSys==='ALL'?'共 ':'')+flatList.length+' 个游戏'+(tabSys==='ALL'?'':' · '+tabSys);
   /* 上次是"卡死后重进"留下的标记：自动进同一个游戏（自动存档会读回进度） */
   try{
     var rn=localStorage.getItem('e5resume');
@@ -559,17 +581,31 @@ function drawMenu(){
     }
   }catch(e){}
 }
+function setTab(sys){
+  tabSys=sys;
+  try{
+    var bs=document.querySelectorAll('#tabs button');
+    for(var i=0;i<bs.length;i++) bs[i].classList.toggle('on',bs[i].getAttribute('data-sys')===sys);
+  }catch(e){}
+  sel=0;
+  drawMenu();
+}
+(function(){
+  try{
+    var bs=document.querySelectorAll('#tabs button');
+    for(var i=0;i<bs.length;i++){
+      (function(b){ bindTap(b,function(){ setTab(b.getAttribute('data-sys')); }); })(bs[i]);
+    }
+  }catch(e){}
+})();
 function renumber(){
+  /* 序号角标已经去掉（数字键改成切 tab），这里只保留"当前可见第一项"的计算，
+     十字键翻页仍然需要它。 */
   var m=$('menu'), top=m.getBoundingClientRect().top;
   var first=0;
   for(var i=0;i<cells.length;i++){
     var r=cells[i].getBoundingClientRect();
     if(r.bottom>top+2){ first=i; break; }
-  }
-  for(var j=0;j<cells.length;j++){
-    var n=cells[j].querySelector('.num');
-    var d=j-first;
-    n.textContent=(d>=0&&d<9)?String(d+1):'·';
   }
   window.__first=first;
 }
@@ -1016,14 +1052,62 @@ function playedMin(){
   var ms=nat.startedAt?Date.now()-nat.startedAt:0;
   return Math.max(0,Math.floor(ms/60000));
 }
-/* 点一下换槽：1→2→3→1；切过去就告诉这个槽有没有东西 */
-bindTap($('bslot'),function(){
-  slot=slot>=3?1:slot+1;
-  try{ localStorage.setItem('e5slot',String(slot)); }catch(e){}
-  slotLabel();
-  var has=nat.slots&&nat.slots.indexOf(slot)>=0;
-  loadTip(true,'槽'+slot+(has?(' 有存档 · 本局'+playedMin()+'分钟'):' 是空槽'),1500);
-});
+/* ---- 存档弹窗 ----
+   像大多数游戏那样列出来：自动续玩 + 3 个手动槽，每个槽写明有没有存档。
+   没有触摸屏也能用：上下选、确认读、左键存、返回关闭。 */
+var slotOpen=false, slotSel=0;
+function slotRows(){
+  return [{n:0,name:'自动续玩'},{n:1,name:'槽1'},{n:2,name:'槽2'},{n:3,name:'槽3'}];
+}
+function renderSlots(){
+  var box=$('slotlist'); if(!box) return;
+  box.replaceChildren();
+  var rows=slotRows();
+  rows.forEach(function(r,i){
+    var has=(nat.slots||[]).indexOf(r.n)>=0;
+    var d=document.createElement('div');
+    d.className='row'+(i===slotSel?' sel':'')+(has?'':' empty');
+    var nm=document.createElement('span'); nm.className='nm';
+    nm.textContent=r.name+(r.n===slot?'（当前）':'');
+    var st=document.createElement('span'); st.className='st';
+    st.textContent=has?'有存档':'空';
+    d.append(nm,st);
+    bindTap(d,function(){ slotSel=i; slotAction('load'); });
+    box.appendChild(d);
+  });
+}
+function openSlots(){
+  slotOpen=true; slotSel=0;
+  try{ renderSlots(); $('slots').classList.add('open'); }catch(e){}
+}
+function closeSlots(){
+  slotOpen=false;
+  try{ $('slots').classList.remove('open'); }catch(e){}
+}
+function slotAction(kind){
+  var rows=slotRows(), r=rows[slotSel]||rows[0];
+  var has=(nat.slots||[]).indexOf(r.n)>=0;
+  if(kind==='load'){
+    if(!has){ loadTip(true,r.name+' 是空的',1200); return; }
+    if(natCmd2(2,r.n)) loadTip(true,'已读回 '+r.name,1200);
+  }else{
+    if(natCmd2(1,r.n)){
+      if(!has) nat.slots.push(r.n);
+      if(r.n>=1&&r.n<=3) slot=r.n;
+      loadTip(true,'已存到 '+r.name,1200);
+    }else loadTip(true,'存档失败',1200);
+  }
+  renderSlots();
+}
+function slotKey(kind){
+  if(kind==='up'){ slotSel=(slotSel+3)%4; renderSlots(); return true; }
+  if(kind==='down'){ slotSel=(slotSel+1)%4; renderSlots(); return true; }
+  if(kind==='ok'){ slotAction('load'); return true; }
+  if(kind==='left'){ slotAction('save'); return true; }
+  if(kind==='back'||kind==='menu'){ closeSlots(); return true; }
+  return true;   /* 弹窗期间吃掉其它键，别漏进游戏 */
+}
+bindTap($('bslot'),openSlots);
 bindTap($('bpause'),function(){
   if(running&&nativeWanted(current)){
     if(!natCmd(4)) return;
@@ -1063,6 +1147,7 @@ function backIdOf(e){
 }
 function handleKey(kind,key,repeat,id,code){
   try{ window.__kinds=((window.__kinds||'')+kind.charAt(0)).slice(-48); }catch(e){}
+  if(slotOpen) return slotKey(kind);
   if(cfgOpen) return cfgKey(kind,key,repeat,code);
   if(kind==='menu'||kind==='power'||kind==='call'||kind==='other') return false;
   keyCount++; keyLogPush('D:'+kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
@@ -1073,9 +1158,10 @@ function handleKey(kind,key,repeat,id,code){
     if(kind==='left'){ selectIdx(sel-1); return true; }
     if(kind==='right'){ selectIdx(sel+1); return true; }
     if(kind==='ok'){ if(cells[sel]) cells[sel].click(); return true; }
-    if(kind==='digit'&&key>='1'&&key<='9'){
-      var idx=(window.__first||0)+(parseInt(key,10)-1);
-      if(idx<flatList.length) start(idx);
+    if(kind==='digit'&&key>='1'&&key<='4'){
+      /* 数字 1-4 切机种 tab（列表上的序号角标已去掉） */
+      var t=['ALL','FC','MD','GBA'][parseInt(key,10)-1];
+      setTab(t);
       return true;
     }
     return false;
