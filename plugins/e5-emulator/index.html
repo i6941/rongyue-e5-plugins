@@ -52,6 +52,11 @@ body.ingame.fitfull #ejs_game{border-radius:0;box-shadow:none}
   padding:5px 6px;background:rgba(8,13,22,.85);border:1px solid #2b3a52;border-radius:6px;
   color:#cfe0f5;font-size:11px;line-height:16px;text-align:center}
 body.ingame #hint.show{display:block}
+/* 读档/恢复时的轻提示：不占布局，只在屏幕中间浮一小会儿 */
+#loadtip{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:7;display:none;
+  padding:6px 12px;background:rgba(8,13,22,.92);border:1px solid #2b3a52;border-radius:14px;
+  color:#cfe0f5;font-size:12px;white-space:nowrap}
+#loadtip.show{display:block}
 /* 卡死后的恢复面板：模拟器主循环被打断时给出"一键重进"，存档会自动读回 */
 #stall{position:absolute;left:0;right:0;top:18px;bottom:40px;z-index:9;display:none;flex-direction:column;
   align-items:center;justify-content:center;gap:12px;background:rgba(4,7,12,.93)}
@@ -105,6 +110,7 @@ body.ingame main{top:0;bottom:0}
       <button id="bview" type="button">画面</button><button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
       <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
     <div id="hint"></div>
+    <div id="loadtip">存档读取中…</div>
     <div id="stall"><div class="stxt">画面卡住了</div><div class="srow">
       <button id="sresume" type="button">重进（读回存档）</button>
       <button id="slegacy" type="button">旧引擎重进</button></div></div>
@@ -239,7 +245,10 @@ function natBegin(g){
   $('status').textContent='启动原生核心 '+g.f+' …';
   $('tres').textContent='启动中…';
   natApi('/emu/start',{rom:g.f}).then(function(r){
-    try{ if(r&&r.ok===false){ logs.push('emu/start '+(r.error||'fail')); nat.err=r.error||'start fail'; } }catch(e){}
+    try{
+      if(r&&r.ok===false){ logs.push('emu/start '+(r.error||'fail')); nat.err=r.error||'start fail'; }
+      nat.hasState=!!(r&&r.state);
+    }catch(e){}
     natConnect(0);
   }).catch(function(e){ logs.push('emu/start 拒绝 '+e); natConnect(0); });
 }
@@ -313,6 +322,17 @@ function natCmd(c){
   if(!ws||ws.readyState!==1) return false;
   try{ ws.send(new Uint8Array([c&255])); return true; }catch(e){ return false; }
 }
+/* 屏幕中间的小提示：读档/恢复时给个交代，别让画面突然一跳 */
+var loadTipTimer=0;
+function loadTip(on,text,ms){
+  try{
+    var el=$('loadtip'); if(!el) return;
+    if(text) el.textContent=text;
+    el.classList.toggle('show',!!on);
+    clearTimeout(loadTipTimer);
+    if(on&&ms) loadTipTimer=setTimeout(function(){ try{ el.classList.remove('show'); }catch(e){} },ms);
+  }catch(e){}
+}
 function natStop(){
   try{ if(nat.ws){ var w=nat.ws; nat.ws=null; w.onclose=null; w.close(); } }catch(e){}
   nat.open=false;
@@ -360,7 +380,10 @@ function nativeTick(){
   else if(nat.seen===nat.frames){ nat.stallTicks++; } else { nat.stallTicks=0; nat.seen=nat.frames; }
   if(nat.stallTicks>=4&&nat.frames>0){ try{ $('tres').textContent='画面卡住'; }catch(e){} showStall(); }
   /* 进游戏 3 秒后读回上次的即时档；之后每 30 秒存一次 */
-  if(!nat.autoLoaded&&nat.frames>0&&now-t0>3000){ nat.autoLoaded=true; if(natCmd(2)) lastSave='已读回上次进度'; }
+  if(!nat.autoLoaded&&nat.frames>0&&now-t0>3000){
+    nat.autoLoaded=true;
+    if(nat.hasState&&natCmd(2)){ lastSave='已读回上次进度'; loadTip(true,'存档读取中…',1400); }
+  }
   nat.savedAgo++;
   if(nat.savedAgo>=30&&nat.frames>0){ nat.savedAgo=0; if(natCmd(1)) lastSave='自动存档 '+new Date().toLocaleTimeString(); }
   hostChrome(true);
@@ -1030,7 +1053,15 @@ window.addEventListener('keyup',function(e){
    真正的处理在上面的 window 监听里。返回键在菜单态必须放行：
    SDK 收到 onKey=false 会调用 onBack，onBack 再返回 false 就发 e5:exit 让宿主关掉插件。 */
 if(typeof e5!=='undefined'){
-  if(e5.onKey) e5.onKey(function(k){ if(cfgOpen) return k.kind!=='power'; return k.kind!=='menu'&&k.kind!=='power'&&k.kind!=='call'&&(k.kind!=='back'||running); });
+  /* 游戏里连 menu 类按键也吞掉：宿主收到 menu 会直接 closeApp()，
+     而多键同按时键盘矩阵偶尔会报出一个幽灵 menu 键，正打着就被弹回应用列表。
+     退出游戏仍有两个明确入口：HUD 上的「退」和长按返回 2.5 秒。 */
+  if(e5.onKey) e5.onKey(function(k){
+    if(cfgOpen) return k.kind!=='power';
+    if(k.kind==='power'||k.kind==='call') return false;
+    if(k.kind==='menu') return !!running;
+    return !(k.kind==='back'&&!running);
+  });
   if(e5.onBack) e5.onBack(function(){ window.__backTaken=running; return running; });
 }
 

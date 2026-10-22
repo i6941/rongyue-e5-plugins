@@ -140,7 +140,18 @@ return function (ctx) {
                 + ' -- --serve ' + romfile + ' 9510 --log /tmp/e5emu.log';
             let out = ctx.sh(cmd);
             let pid = read_text('/var/run/e5emu.pid');
-            return { ok: length(pid) > 0, pid: pid, rom: romfile, out: out };
+            /* 有没有即时档：有的话前端在进游戏 3 秒后显示“存档读取中”并读回 */
+            let base = clean;
+            let dot = -1;
+            for (let i = 0; i < length(clean); i++)
+                if (substr(clean, i, 1) === '.') dot = i;
+            if (dot > 0) base = substr(clean, 0, dot);
+            let hasState = false;
+            try {
+                let s = ctx.sh('[ -f ' + ROMDIR + '/' + base + '.st0 ] && echo yes');
+                hasState = index(`${s ?? ''}`, 'yes') !== null;
+            } catch (e) { }
+            return { ok: length(pid) > 0, pid: pid, rom: romfile, state: hasState, out: out };
         },
         'POST /emu/stop': function () {
             let out = ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
