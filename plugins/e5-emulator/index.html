@@ -99,6 +99,9 @@ body.ingame #hint.show{display:block}
 body.ingame #bcfg{display:none}
 #cfg{position:absolute;inset:0;z-index:20;display:none;flex-direction:column;background:#0b111b}
 #cfg.open{display:flex}
+/* 打开后的头 450ms 不吃点击：手指还按在「# 按键」上，合成 click 会落到
+   同一位置的「关闭」按钮，面板只闪一下就没了。 */
+#cfg.opening{pointer-events:none}
 #cfghead{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 6px;background:#101827;border-bottom:1px solid #29354a;font-size:12px}
 #cfghead .sp{flex:1 1 auto}
 #cfgtip{font-size:10px;color:#ffd479;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:62%}
@@ -132,7 +135,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
-<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button">按键 #</button></header>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button"># 按键</button></header>
 <div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button></div>
 <main>
   <div id="menu"></div>
@@ -239,6 +242,8 @@ try{
 /* 全局错误监听：wasm 陷阱只会给一句 "RuntimeError: ...", 这里把文件名和行号也留下 */
 window.addEventListener('error',function(e){
   try{
+    /* 没有 message 的 error 是资源加载失败（封面图不在设备上），不是脚本异常 */
+    if(!e.message) return;
     var msg=(e.message||'')+' @ '+(e.filename||'?')+':'+(e.lineno||'?')+':'+(e.colno||'?');
     logs.push('uncaught '+msg); if(logs.length>20) logs.shift();
     lastErr='uncaught '+msg.slice(0,160);
@@ -256,7 +261,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.10.1';
+var APP_VER='1.10.2';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -770,6 +775,14 @@ function applyKeymap(){
     window.__keymap=JSON.stringify(c);
   }catch(e){}
 }
+/* 菜单里没有画布可以抢焦点，而宿主的按键处理只做"把焦点搬进 iframe"。
+   这里主动把焦点拿过来，进菜单后第一下按键就能直接到这页。 */
+function grabFocus(){
+  try{ document.body.setAttribute('tabindex','-1'); document.body.focus(); }catch(e){}
+  try{ window.focus(); }catch(e){}
+}
+document.addEventListener('touchstart',function(){ grabFocus(); },{passive:true,capture:true});
+document.addEventListener('mousedown',function(){ grabFocus(); },{passive:true,capture:true});
 function focusCanvas(){
   try{
     var c=document.querySelector('#ejs_game canvas');
@@ -1201,6 +1214,10 @@ function keyKindOf(e){
   if(k==='Enter'||k==='Select'||k==='Accept'||c===13) return 'ok';
   if(k==='BrowserBack'||k==='GoBack'||k==='Backspace'||k==='Escape'||c===8||c===27||c===166) return 'back';
   if(k==='PowerOff'||k==='Power'||k==='Standby'||k==='Sleep') return 'power';
+  /* 这台机器的 # 键是 KEY_NUMERIC_POUND -> numbersign，但 WebKit 报成
+     Unidentified + keyCode 51（和数字 3 同一个码），所以只能靠 key 名区分：
+     数字 3 会带 key="3"，# 只有码没有名字。 */
+  if(c===51&&(!k||k==='Unidentified')) return 'digit';
   if(k&&k.length===1&&((k>='0'&&k<='9')||k==='*'||k==='#')) return 'digit';
   return 'other';
 }
@@ -1234,14 +1251,15 @@ function handleKey(kind,key,repeat,id,code){
       setTab(t);
       return true;
     }
-    /* 菜单里按 # 进按键设置；9 作为备用（有的机器不报 #） */
-    if(kind==='digit'&&(key==='#'||key==='9')){ openCfg(); return true; }
+    /* 菜单里按 # 进按键设置；9 作为备用。
+       # 在 WPE 上可能没有 key 名、只有 keyCode 51，见 keyKindOf。 */
+    if(kind==='digit'&&(key==='#'||key==='9'||((!key||key==='Unidentified')&&code===51))){ openCfg(); return true; }
     return false;
   }
   /* 按下第一个键就收起开局提示 */
   try{ if($('hint').classList.contains('show')) $('hint').classList.remove('show'); }catch(e){}
   /* 游戏里按 # 也能进按键设置：先把核心暂停，关面板再继续 */
-  if(kind==='digit'&&key==='#'){ openCfg(); return true; }
+  if(kind==='digit'&&(key==='#'||((!key||key==='Unidentified')&&code===51))){ openCfg(); return true; }
   if(kind==='back'){
     /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
     if(repeat) return true;
@@ -1420,6 +1438,11 @@ var cfgPausedNative=false;
 function openCfg(){
   cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open');
   $('cfgtip').textContent='选一项，再按一个键';
+  /* 挡住这一次按压的合成点击（否则会点到「关闭」） */
+  try{
+    var c=$('cfg'); c.classList.add('opening');
+    setTimeout(function(){ try{ c.classList.remove('opening'); }catch(e){} },450);
+  }catch(e){}
   /* 游戏里进设置就暂停核心：面板是全屏的，不暂停会白烧 CPU，也听不见按键反馈 */
   try{
     if(running&&nativeWanted(current)&&!nat.paused){
@@ -1524,6 +1547,28 @@ window.addEventListener('pagehide',function(){
   try{ if(nativeActive()) natStop(); }catch(e){}
 },true);
 
+/* 宿主自己的 keydown 处理只做两件事：记日志、把焦点搬进 iframe，然后就 return，
+   这一下按键就丢了。菜单里没有画布抢焦点，所以菜单状态的按键永远到不了本页。
+   这里往宿主注入一个转发器：宿主收到键且当前打开的正是本插件时，复制一份
+   派发进 iframe。焦点已经在 iframe 里时宿主根本收不到事件，所以不会重复。 */
+function hostKeyForward(){
+  try{
+    var d=window.parent.document;
+    if(!d||d.__e5KeyFwd) return;
+    d.__e5KeyFwd=true;
+    /* 同源，直接挂监听。注入 <script> 在这台 WebKit 上不执行，别再走那条路。 */
+    d.addEventListener('keydown',function(e){
+      try{
+        var f=d.getElementById('app-frame');
+        if(!f||f.hidden) return;
+        if(!/\/plugins\/e5-emulator\//.test(f.getAttribute('src')||'')) return;
+        var w=f.contentWindow; if(!w) return;
+        var ev=new w.KeyboardEvent('keydown',{key:e.key,code:e.code,keyCode:e.keyCode,which:e.which,repeat:e.repeat,bubbles:true,cancelable:true});
+        w.document.dispatchEvent(ev);
+      }catch(x){}
+    },false);
+  }catch(e){}
+}
 function hostChrome(on){
   try{
     var d=window.parent.document;
@@ -1956,6 +2001,8 @@ applyFx();
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 try{ hostChromeReset(); }catch(e){}
+try{ hostKeyForward(); }catch(e){}
+try{ grabFocus(); }catch(e){}
 try{ slotLabel(); }catch(e){}
 try{ $('fver').textContent='v'+APP_VER; }catch(e){}
 /* ---- 首次使用时下载原生核心 ----

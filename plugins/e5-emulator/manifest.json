@@ -1,7 +1,7 @@
 {
   "id": "e5-emulator",
   "api_version": 2,
-  "version": "1.10.1",
+  "version": "1.10.2",
   "name": {
     "zh": "复古游戏机",
     "en": "Retro console"
