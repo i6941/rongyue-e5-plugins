@@ -32,6 +32,10 @@ PUBLISH = r"D:\workspace\rongyue-e5-plugins"
 # Directories copied wholesale from the working directory.
 SYNC_DIRS = ("plugins", "tools", "tests", "overlays")
 
+# Files at the root of the working directory that belong in the published
+# repository too (the one-line installer users pipe into the device).
+ROOT_FILES = ("install.sh",)
+
 # Files that exist only in the working directory and are never published.
 SKIP_NAMES = {"__pycache__", ".pytest_cache", ".mypy_cache"}
 SKIP_SUFFIXES = (".pyc", ".pyo", ".log", ".bak")
@@ -133,6 +137,14 @@ def main():
         raise SystemExit("source or publish directory not found")
 
     report = []
+    for rel in ROOT_FILES:
+        src = os.path.join(source, rel)
+        if not os.path.isfile(src):
+            continue
+        dst = os.path.join(publish, rel)
+        if sync_file(src, dst, report):
+            pass
+
     for sub in SYNC_DIRS:
         src_dir = os.path.join(source, sub)
         if not os.path.isdir(src_dir):
