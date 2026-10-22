@@ -33,6 +33,12 @@ ROOT = Path(__file__).resolve().parent.parent
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 W, H, FPS = 256, 240, 60
 
+# 假核心的 WS 端口。默认 9510（和真核心一样），但这台电脑上 9510 可能被
+# WSL 里的 e5emu 占着——WSL2 的 localhost 转发会让 Windows 侧 bind 报
+# "地址已在使用"，而 bind 失败后如果不报错，浏览器就会连上那个占位的进程，
+# 表现为"连上了但一帧不来"。用 E5_CORE_PORT=9511 之类换个端口即可。
+CORE_PORT = int(os.environ.get("E5_CORE_PORT", "9510"))
+
 
 def rgb565(r: int, g: int, b: int) -> int:
     return ((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3)
@@ -106,9 +112,16 @@ def ws_read(sock: socket.socket) -> bytes | None:
 def serve_ws() -> None:
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind(("127.0.0.1", 9510))
+    try:
+        srv.bind(("127.0.0.1", CORE_PORT))
+    except OSError as exc:
+        # 端口被别人占着时必须说出来：SO_REUSEADDR 会让 bind 静默失败或
+        # 抢不到连接，浏览器就会连上占位进程，一直等不到帧。
+        print("假核心 bind 127.0.0.1:%d 失败：%s（换个端口：E5_CORE_PORT=9511）"
+              % (CORE_PORT, exc), flush=True)
+        raise
     srv.listen(8)
-    print("fake e5emu on ws://127.0.0.1:9510", flush=True)
+    print("fake e5emu on ws://127.0.0.1:%d" % CORE_PORT, flush=True)
     while True:
         conn, _ = srv.accept()
         threading.Thread(target=serve_client, args=(conn,), daemon=True).start()
@@ -144,6 +157,9 @@ def serve_client(conn: socket.socket) -> None:
                     bits = struct.unpack("<I", data)[0]
                     on = [n for n in range(16) if bits >> n & 1]
                     print("buttons=0x%04x (%s)" % (bits, on), flush=True)
+                elif len(data) == 2:
+                    # 状态命令：[1,槽]=存 [2,槽]=读（原生核心的即时存档）
+                    print("state cmd=%d slot=%d" % (data[0], data[1]), flush=True)
                 elif len(data) == 1:
                     print("cmd=%d" % data[0], flush=True)
 
@@ -228,7 +244,7 @@ class Handler(SimpleHTTPRequestHandler):
         print("[preview] 101 已回浏览器，开始连上游 9510", flush=True)
 
         try:
-            up = _socket.create_connection(("127.0.0.1", 9510), timeout=5)
+            up = _socket.create_connection(("127.0.0.1", CORE_PORT), timeout=5)
         except OSError as exc:
             print("[preview] 连上游失败: %s" % exc, flush=True)
             try:
@@ -240,9 +256,9 @@ class Handler(SimpleHTTPRequestHandler):
         # 用浏览器给的那个 key 向上游做客户端握手：同一把 key 算出来的 accept
         # 两边一致，浏览器那头能通过校验。
         req = (
-            "GET / HTTP/1.1\r\nHost: 127.0.0.1:9510\r\nUpgrade: websocket\r\n"
+            "GET / HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nUpgrade: websocket\r\n"
             "Connection: Upgrade\r\nSec-WebSocket-Key: %s\r\n"
-            "Sec-WebSocket-Version: 13\r\n\r\n" % key
+            "Sec-WebSocket-Version: 13\r\n\r\n" % (CORE_PORT, key)
         )
         up.sendall(req.encode())
         up.settimeout(8)
@@ -334,12 +350,15 @@ def main() -> int:
     missing = ROOT / "tools" / "native-preview-missing"
     missing.mkdir(exist_ok=True)
     if real:
-        # --real：不造假帧服务，端口 9510 留给真的 e5emu（本机 x86 版本或设备上的）
-        print("using the real frame server on ws://127.0.0.1:9510", flush=True)
+        # --real：不造假帧服务，端口留给真的 e5emu（本机 x86 版本或设备上的）
+        print("using the real frame server on ws://127.0.0.1:%d" % CORE_PORT, flush=True)
     else:
         threading.Thread(target=serve_ws, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print("plugin page: http://127.0.0.1:%d/plugins/e5-emulator/index.html?preview=1&auto=0" % port, flush=True)
+    # 页面连同源的 /ws（由这个服务转发到假核心）。浏览器直连 ws://127.0.0.1:<core>
+    # 会被系统代理（FlClash）拦掉，握手直接 1006；同源 HTTP 请求不受影响。
+    print("plugin page: http://127.0.0.1:%d/plugins/e5-emulator/index.html?preview=1&auto=0&ws=ws://127.0.0.1:%d/ws"
+          % (port, port), flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

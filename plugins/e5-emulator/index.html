@@ -463,6 +463,7 @@ function nativeTick(){
   if(nat.frames>0&&phase!=='running'){
     phase='running'; marks.firstFrame=now-t0;
     try{ $('status').textContent='运行中 · '+current.sys+' '+current.n; }catch(e){}
+    if(selftestWant&&!selftestDone){ selftestDone=true; try{ runSelftest(); }catch(e){} }
   }
   if(nat.frames===0&&now-t0>9000){ natFail('原生核心没有出帧'); }
   else if(nat.frames>0){ try{ $('tres').textContent=nat.w+'×'+nat.h+(nat.paused?' · 暂停':''); }catch(e){} }
@@ -566,6 +567,9 @@ try{ var qpAuto=new URLSearchParams(location.search).get('auto'); if(qpAuto!==nu
 var shotWant=false;
 try{ shotWant=(new URLSearchParams(location.search).get('shot')==='1'); }catch(e){}
 var shotState=0, shotTick=0;
+/* ?selftest=1 让页面自己合成按键事件跑一遍映射，结果写进遥测 */
+var selftestWant=false, selftestDone=false;
+try{ selftestWant=(new URLSearchParams(location.search).get('selftest')==='1'); }catch(e){}
 
 function note(t){ }
 function flat(){ var o=[]; GAMES.forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
@@ -779,22 +783,34 @@ function btnsOf(id){
   for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btns||[ACTIONS[i].btn];
   return [];
 }
-/* 默认键位：方向用物理方向键；A=确认键或3；B=6；START=#；SELECT=*。
-   两个侧键（呼叫/返回）不参与游戏输入，返回键只保留"长按退出游戏"。 */
+/* 默认键位（验收标准）：方向用物理方向键；OK 键 = A；返回键短按 = B、长按 1.2 秒退出；
+   数字键 0=START、1=SELECT、2=L、3=R。
+   方向键和 OK 键在 handleKey 里按"键的种类"直接映射（不靠 key 字面值），
+   因为手机上报的 key 名不一定是 ArrowUp / Enter。 */
 var DEFAULT_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
-                  a:['Enter','3'],b:['6','0'],start:['#'],select:['*'],l:[],r:[]};
-/* 数字键方案：2/4/6/8 当第二套方向键（和十字键并存），5 跳，0 射击。
-   这是老式按键手机跑模拟器的常见分工（numpad 当摇杆），适合十字键不顺手的人。 */
-var NUMPAD_KEYS={up:['ArrowUp','2'],down:['ArrowDown','8'],
-                 left:['ArrowLeft','4'],right:['ArrowRight','6'],
-                 upleft:['7'],upright:['9'],downleft:['1'],downright:['3'],
-                 a:['Enter','5'],b:['0'],start:['#'],select:['*'],l:[],r:[]};
-/* 数字键没法像十字键那样一次压两个方向，所以四个角单独给键：
-   7=左上 9=右上 1=左下 3=右下 —— 老式按键手机跑模拟器就是这么凑出八方向的。 */
+                  a:['Enter'],b:['6'],start:['0'],select:['1'],l:['2'],r:['3']};
+/* 数字键方案：在十字键之外，补一套数字键（5=A、6=B、7/9=两个斜角）。
+   0/1/2/3 固定是 START/SELECT/L/R（验收标准），这套方案不占用它们，
+   所以按键含义跟默认方案不冲突。 */
+var NUMPAD_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
+                 upleft:['7'],upright:['9'],downleft:[],downright:[],
+                 a:['Enter','5'],b:['6'],start:['0'],select:['1'],l:['2'],r:['3']};
+/* 键位表带版本号：默认键位改过一次之后，旧版本存下来的自定义键位
+   （上一轮调试时留下的"数字键方案"）会让新默认不生效，所以版本对不上
+   就整份丢掉，重新用默认。用户自己改过之后版本会更新，不会被顶掉。 */
+var KEYMAP_VERSION=2;
 var keymap=loadKeymap();
 function loadKeymap(){
   var m=null;
-  try{ var s=localStorage.getItem('e5keymap'); if(s) m=JSON.parse(s); }catch(e){}
+  try{
+    var ver=localStorage.getItem('e5keymapver');
+    if(ver===String(KEYMAP_VERSION)){
+      var s=localStorage.getItem('e5keymap'); if(s) m=JSON.parse(s);
+    }else{
+      localStorage.removeItem('e5keymap');
+      localStorage.setItem('e5keymapver',String(KEYMAP_VERSION));
+    }
+  }catch(e){}
   var out={};
   for(var i=0;i<ACTIONS.length;i++){
     var id=ACTIONS[i].id, v=(m&&Array.isArray(m[id]))?m[id]:(DEFAULT_KEYS[id]||[]);
@@ -802,7 +818,12 @@ function loadKeymap(){
   }
   return out;
 }
-function saveKeymap(){ try{ localStorage.setItem('e5keymap',JSON.stringify(keymap)); }catch(e){} }
+function saveKeymap(){
+  try{
+    localStorage.setItem('e5keymap',JSON.stringify(keymap));
+    localStorage.setItem('e5keymapver',String(KEYMAP_VERSION));
+  }catch(e){}
+}
 function btnOf(id){ for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btn; return undefined; }
 /* 一个键可以同时绑多个动作 */
 function actsOf(tok){
@@ -1214,20 +1235,30 @@ function handleKey(kind,key,repeat,id,code){
       if(lastBackId && now-lastBackTime<150) return true;
     }
     lastBackId=id||''; lastBackTime=now; backKeyupSincePress=false;
-    /* 侧键（返回）不再当 B 键用：之前它既能开枪又会在按住 1.2 秒后退出游戏，
-       玩射击游戏时按住连射就被踢出游戏。现在侧键只做一件事：长按 2.5 秒退出，
-       按住过程中顶部条显示倒计时，松手就取消。 */
+    /* 返回键：短按当 B（开枪/确认），按住超过 1.2 秒退出游戏。
+       短按的 B 在 keyup 时松开；长按到点直接退出。 */
+    pressBtn(btnOf('b'));
     try{ clearInterval(backTick); }catch(e){}
     var bt0=Date.now();
     backTick=setInterval(function(){
-      var left=2.5-(Date.now()-bt0)/1000;
+      var left=1.2-(Date.now()-bt0)/1000;
       if(left<=0){
         try{ clearInterval(backTick); }catch(e){}
-        backTick=0; leave(); return;
+        backTick=0;
+        releaseBtn(btnOf('b'));
+        leave(); return;
       }
       try{ $('tkey').textContent='长按退出 '+left.toFixed(1)+'s'; }catch(e){}
     },100);
     return true;
+  }
+  /* 方向键和确认键按"键的种类"映射：手机上的方向键/确认键上报的 key 名
+     不一定是 ArrowUp / Enter（有的是 Up、Select、Accept），按种类才稳。
+     用户自定义的键位（数字键等）仍按 key 字面值查表。 */
+  var kindAct={up:'up',down:'down',left:'left',right:'right',ok:'a'};
+  if(kindAct[kind]){
+    var kb=btnsOf(kindAct[kind]);
+    for(var jk=0;jk<kb.length;jk++) if(kb[jk]!==undefined) pressBtn(kb[jk]);
   }
   var acts=actsOf(key||('code:'+(code||0)));
   if(acts.length){
@@ -1237,7 +1268,7 @@ function handleKey(kind,key,repeat,id,code){
     }
     return true;
   }
-  return false;
+  return kindAct[kind]?true:false;
 }
 window.addEventListener('keydown',function(e){
   if(handleKey(keyKindOf(e),e.key,e.repeat,backIdOf(e),e.keyCode)) e.preventDefault();
@@ -1250,12 +1281,19 @@ window.addEventListener('keyup',function(e){
     try{ clearInterval(backTick); }catch(e){}
     backTick=0;
     backKeyupSincePress=true;   /* 出现过 keyup → 下一次同身份事件算新的按压 */
+    releaseBtn(btnOf('b'));     /* 短按返回 = 松开 B */
     return;
   }
   var acts=actsOf(e.key||('code:'+(e.keyCode||0)));
   for(var i=0;i<acts.length;i++){
     var bs=btnsOf(acts[i]);
     for(var j=0;j<bs.length;j++) if(bs[j]!==undefined) releaseBtn(bs[j]);
+  }
+  /* 按"种类"按下的键（方向键 / 确认键）也要在这里松开 */
+  var kindActUp={up:'up',down:'down',left:'left',right:'right',ok:'a'};
+  if(kindActUp[kind]){
+    var ku=btnsOf(kindActUp[kind]);
+    for(var ju=0;ju<ku.length;ju++) if(ku[ju]!==undefined) releaseBtn(ku[ju]);
   }
 },true);
 /* SDK 回调只负责告诉宿主"这个键插件收了"（否则宿主会把返回键当退出应用），
@@ -1351,13 +1389,14 @@ bindTap($('cfgclose'),function(){ closeCfg(); });
 bindTap($('cfgdone'),function(){ closeCfg(); });
 bindTap($('cfgdef'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
-  saveKeymap(); applyKeymap(); refreshCfg(); $('cfgtip').textContent='已恢复默认（方向键 + 3 跳 + 6/0 射击）';
+  saveKeymap(); applyKeymap(); refreshCfg();
+  $('cfgtip').textContent='已恢复默认（方向键 + OK 跳 + 返回键射击；0/1/2/3 = START/SELECT/L/R）';
 });
 /* 一键切到数字键方案：两套方向都能用，不用自己一个个绑 */
 bindTap($('cfgnum'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(NUMPAD_KEYS[ACTIONS[i].id]||[]).slice();
   saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='数字键方案：2/4/6/8 方向，1/3/7/9 斜角，5 跳，0 射击';
+  $('cfgtip').textContent='数字键方案：5=A、6=B、7/9=斜角（0/1/2/3 不变）';
 });
 /* 核心版本切换（WebGL2 / 旧版）+ 清掉运行库缓存的核心文件 */
 function coreLabel(){ try{ return localStorage.getItem('e5legacy')==='1'?'旧版':'WebGL2'; }catch(e){ return 'WebGL2'; } }
@@ -1530,6 +1569,37 @@ setInterval(function(){
 },1000);
 
 function statTag(){ try{ var qp=new URLSearchParams(location.search); var t=qp.get('tag')||qp.get('t'); return t||'ui'; }catch(e){ return 'ui'; } }
+/* ---- 按键自检（?selftest=1）----
+   真机没有 uinput，硬件按键没法自动注入，所以让页面自己合成按键事件，
+   走一遍真实的 handleKey → 按键位图 → 原生核心这条路，把每个键的
+   位图结果写进遥测（window.__selftest），真机上也能核对映射对不对。 */
+var SELFTEST_CASES=[
+  {k:'ArrowUp',c:38,want:16},{k:'ArrowDown',c:40,want:32},
+  {k:'ArrowLeft',c:37,want:64},{k:'ArrowRight',c:39,want:128},
+  {k:'Enter',c:13,want:256},
+  {k:'0',c:48,want:8},{k:'1',c:49,want:4},{k:'2',c:50,want:1024},{k:'3',c:51,want:2048},
+  {k:'Backspace',c:8,want:1}
+];
+function runSelftest(){
+  var out=[], allOk=true;
+  for(var i=0;i<SELFTEST_CASES.length;i++){
+    var t=SELFTEST_CASES[i];
+    try{
+      releaseAll();
+      var ev=new KeyboardEvent('keydown',{key:t.k,code:t.k,keyCode:t.c,bubbles:true,cancelable:true});
+      window.dispatchEvent(ev);
+      var got=(typeof nat!=='undefined')?nat.mask:-1;
+      var ok=(got===t.want);
+      if(!ok) allOk=false;
+      out.push(t.k+'='+got+(ok?'':'!'));
+      var ev2=new KeyboardEvent('keyup',{key:t.k,code:t.k,keyCode:t.c,bubbles:true,cancelable:true});
+      window.dispatchEvent(ev2);
+    }catch(e){ out.push(t.k+'=err'); allOk=false; }
+  }
+  try{ releaseAll(); }catch(e){}
+  window.__selftest=(allOk?'OK ':'BAD ')+out.join(',');
+  return window.__selftest;
+}
 /* 真机没有截图接口。这台 WebKit 的 canvas.toDataURL 对非空画面会吐乱码，
    所以直接把最新一帧的原始 RGB565 像素分块传给后端，由后端那边拼成 PNG。
    宿主的 read_body 超过 4096 字节就整块丢弃，所以分块传。 */
@@ -1615,6 +1685,7 @@ function snapshot(){
   s.pagehideAt=window.__pagehideAt||''; s.hiddenAt=window.__hiddenAt||'';
   try{ s.nat={w:nat.w,h:nat.h,frames:nat.frames,open:nat.open,err:(nat.err||'').slice(0,80),mask:nat.mask,paused:nat.paused,installed:nat.installed}; }catch(e){}
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
+  s.selftest=window.__selftest||'';
   return s;
 }
 
