@@ -474,7 +474,7 @@ function nativeTick(){
   nat.savedAgo++;
   if(nat.savedAgo>=30&&nat.frames>0){ nat.savedAgo=0; if(natCmd2(1,0)) lastSave='自动存档 '+new Date().toLocaleTimeString(); }
   hostChrome(true);
-} 
+}
 
 
 /* 这台机器的 WPE 浏览器没有可用的音频输出（缺 GStreamer 的 autoaudiosink）：
