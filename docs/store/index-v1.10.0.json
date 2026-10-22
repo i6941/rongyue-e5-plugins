@@ -1,0 +1,82 @@
+{
+ "api_version": 2,
+ "generated": "2026-10-22T04:55:47Z",
+ "plugins": [
+  {
+   "id": "phone",
+   "version": "1.5",
+   "api_version": 2,
+   "name": {
+    "zh": "电话",
+    "en": "Phone"
+   },
+   "description": {
+    "zh": "双卡拨号、通讯录和来电",
+    "en": "Dual-SIM dialer, contacts and calls"
+   },
+   "order": 5,
+   "input_method": false,
+   "backend": true,
+   "size": 15699,
+   "sha256": "78557fb6bcd750c7769d88d2efd0aba2bc5642cd8fd75497dd121a13da71931a",
+   "url": "https://enceka.github.io/infoscreen-plugins/packages/phone-1.5.tar.gz"
+  },
+  {
+   "id": "pinyin9",
+   "version": "1.1",
+   "api_version": 2,
+   "name": {
+    "zh": "九键输入法",
+    "en": "Nine-key Chinese"
+   },
+   "description": {
+    "zh": "用数字键输入中文、英文和数字",
+    "en": "Type Chinese, English and numbers with the keypad"
+   },
+   "order": 20,
+   "input_method": true,
+   "backend": false,
+   "size": 9942,
+   "sha256": "c0dc14322de7e74d27dec754da6bedb14456eb4d095732ccf5ccc25de72fd044",
+   "url": "https://enceka.github.io/infoscreen-plugins/packages/pinyin9-1.1.tar.gz"
+  },
+  {
+   "id": "bigclock",
+   "version": "1.0",
+   "api_version": 1,
+   "name": {
+    "zh": "大字时钟",
+    "en": "Big clock"
+   },
+   "description": {
+    "zh": "整屏显示时间和日期，可保持亮屏",
+    "en": "The time and date, full screen, the screen kept on if wanted"
+   },
+   "order": 40,
+   "input_method": false,
+   "backend": false,
+   "size": 1611,
+   "sha256": "2084e72d1bc897d1b22f10e5d3e151fac0bdee3d277d1c4d2358f5fbd1dbc441",
+   "url": "https://enceka.github.io/infoscreen-plugins/packages/bigclock-1.0.tar.gz"
+  },
+  {
+   "id": "e5-emulator",
+   "version": "1.10.0",
+   "api_version": 2,
+   "name": {
+    "zh": "复古游戏机",
+    "en": "Retro console"
+   },
+   "description": {
+    "zh": "FC / MD / GBA 模拟器（原生内核）",
+    "en": "FC, MD and GBA emulators (native cores)"
+   },
+   "order": 45,
+   "input_method": false,
+   "backend": true,
+   "size": 36629,
+   "sha256": "92b4d493d333bca1e338d9ef33b7329237032148b7c139146fc1cea1952828f7",
+   "url": "https://raw.githubusercontent.com/i6941/rongyue-e5-plugins/main/docs/packages/e5-emulator-1.10.0.tar.gz"
+  }
+ ]
+}

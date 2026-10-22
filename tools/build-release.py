@@ -151,14 +151,21 @@ def build_index(out_dir, pkg, manifest, base_url, official_path=None):
     path = os.path.join(out_dir, "index.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(index, f, ensure_ascii=False, indent=1)
-    return path, entry
+    # 另存一份带版本号的：raw.githubusercontent.com 的 CDN 会按路径缓存，
+    # 同一路径在推送后几分钟内还可能发旧内容（实测边缘节点发的是旧副本）。
+    # 带版本号的路径是新的缓存键，发出去的一定是这一版。
+    ver_path = os.path.join(out_dir, "store", "index-v%s.json" % manifest["version"])
+    os.makedirs(os.path.dirname(ver_path), exist_ok=True)
+    with open(ver_path, "w", encoding="utf-8") as f:
+        json.dump(index, f, ensure_ascii=False, indent=1)
+    return path, ver_path, entry
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", default=os.path.join(ROOT, "dist"))
     ap.add_argument("--publish", default=os.path.join(ROOT, "..", "rongyue-e5-plugins"))
-    ap.add_argument("--base-url", default="https://i6941.github.io/rongyue-e5-plugins",
+    ap.add_argument("--base-url", default="https://raw.githubusercontent.com/i6941/rongyue-e5-plugins/main/docs",
                     help="商店包对外可访问的基地址")
     ap.add_argument("--official-index", default="", help="官方 index.json 的本地副本（不给就联网取）")
     args = ap.parse_args()
@@ -176,9 +183,11 @@ def main():
     pkg, manifest, total = build_store_package(publish, out)
     made.append(pkg)
     print("商店包：%s（%d 字节，限制 %d）" % (os.path.basename(pkg), total, MAX_APP_BYTES))
-    index_path, entry = build_index(out, pkg, manifest, args.base_url, args.official_index or None)
+    index_path, ver_path, entry = build_index(out, pkg, manifest, args.base_url, args.official_index or None)
     made.append(index_path)
+    made.append(ver_path)
     print("商店条目：%s v%s -> %s" % (entry["id"], entry["version"], entry["url"]))
+    print("商店索引（带版本）：%s" % os.path.relpath(ver_path, out))
 
     # 2) 命令行路径用的三个核心
     missing = []

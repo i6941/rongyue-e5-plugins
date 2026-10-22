@@ -19,7 +19,11 @@ set -e
 
 REPO="${E5_REPO:-i6941/rongyue-e5-plugins}"
 RELEASE="${E5_RELEASE:-https://github.com/$REPO/releases/latest/download}"
-STORE="${E5_STORE:-https://i6941.github.io/$REPO/index.json}"
+# 商店索引放在带版本号的路径下：raw 的 CDN 按路径缓存，同一路径推送后
+# 几分钟内可能还在发旧副本，带版本号的路径是新的缓存键。
+PLUGIN_VER=1.10.0
+STORE="${E5_STORE:-https://raw.githubusercontent.com/$REPO/main/docs/store/index-v$PLUGIN_VER.json}"
+STORE_FALLBACK="https://raw.githubusercontent.com/$REPO/main/docs/index.json"
 OFFICIAL_STORE="https://enceka.github.io/infoscreen-plugins/index.json"
 PLUGIN_ID=e5-emulator
 PLUGIN_DIR="/etc/e5-infoscreen/plugins/$PLUGIN_ID"
@@ -103,6 +107,11 @@ if [ -x "$PLUGIN_TOOL" ]; then
     # 设备自带的应用商店：把商店索引指到我们这份，再用它自己的安装命令
     if [ "$USE_OFFICIAL" = 1 ]; then
         STORE="$OFFICIAL_STORE"
+    else
+        # 带版本的路径取不到就退回不带版本的
+        if ! fetch "$STORE" /dev/null 2>/dev/null; then
+            STORE="$STORE_FALLBACK"
+        fi
     fi
     if uci -q get e5-infoscreen.main.store_url >/dev/null 2>&1; then
         uci set e5-infoscreen.main.store_url="$STORE"
@@ -112,6 +121,7 @@ if [ -x "$PLUGIN_TOOL" ]; then
     fi
     uci commit e5-infoscreen
     echo "  商店索引 -> $STORE"
+    rm -f /tmp/run/e5-infoscreen/store.json
     if "$PLUGIN_TOOL" store >/dev/null 2>&1; then
         "$PLUGIN_TOOL" get "$PLUGIN_ID" || echo "  商店安装失败，改用直接解包"
     fi
