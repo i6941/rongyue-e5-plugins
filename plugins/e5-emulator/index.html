@@ -261,7 +261,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.10.2';
+var APP_VER='1.11.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -308,16 +308,21 @@ function natApi(path,body){
   try{ if(typeof e5!=='undefined'&&e5.api) return e5.api(path,{body:body||{}}); }catch(e){}
   return Promise.resolve(null);
 }
+/* 画布按「目标尺寸」建，源帧用 imageSmoothingEnabled=false 直接画上去：
+   最近邻由我们自己保证，不依赖引擎对 CSS image-rendering 的支持
+   （WPE 上 pixelated 不一定生效，那样就会被双线性糊掉）。 */
 function natCanvas(g){
   var c=document.createElement('canvas');
   c.id='natcvs'; c.width=g.w; c.height=g.h;
-  c.style.width='100%'; c.style.height='100%'; c.style.imageRendering='pixelated';
+  c.style.width='100%'; c.style.height='100%';
   var wrap=document.createElement('div'); wrap.id='screenwrap';
   var fx=document.createElement('div'); fx.id='fx';
   wrap.appendChild(c); wrap.appendChild(fx);
   $('ejs_game').replaceChildren(wrap);
   nat.cvs=c; nat.ctx=c.getContext('2d');
-  nat.img=nat.ctx.createImageData(g.w,g.h);
+  var src=document.createElement('canvas'); src.width=g.w; src.height=g.h;
+  nat.src=src; nat.srcCtx=src.getContext('2d');
+  nat.img=nat.srcCtx.createImageData(g.w,g.h);
   var d=nat.img.data; for(var i=3;i<d.length;i+=4) d[i]=255;
   nat.w=g.w; nat.h=g.h; nat.frames=0; nat.lastFrames=0; nat.fpsAt=0;
   nat.open=false; nat.err=''; nat.seen=-1; nat.stallTicks=0; nat.paused=false;
@@ -383,8 +388,8 @@ function natDraw(buf){
   if(!w||!h||buf.byteLength<4+w*h*2) return;
   if(!nat.img||nat.img.width!==w||nat.img.height!==h){
     nat.w=w; nat.h=h;
-    nat.cvs.width=w; nat.cvs.height=h;
-    nat.img=nat.ctx.createImageData(w,h);
+    nat.src.width=w; nat.src.height=h;
+    nat.img=nat.srcCtx.createImageData(w,h);
     var d0=nat.img.data; for(var i=3;i<d0.length;i+=4) d0[i]=255;
     fitLastW=0; fitLastH=0;
     /* 核心换了分辨率就重新算外框（只在这一刻做一次，不占每帧的开销） */
@@ -401,7 +406,10 @@ function natDraw(buf){
     var p=src[i];
     out[i]=0xff000000|(((p>>11)&0x1f)<<3)|(((p>>5)&0x3f)<<10)|((p&0x1f)<<19);
   }
-  nat.ctx.putImageData(nat.img,0,0);
+  /* 关掉平滑，把源帧最近邻画到画布的真实尺寸上（画布由 fit() 设成目标尺寸） */
+  nat.srcCtx.putImageData(nat.img,0,0);
+  nat.ctx.imageSmoothingEnabled=false;
+  nat.ctx.drawImage(nat.src,0,0,nat.cvs.width,nat.cvs.height);
   nat.frames++;
 }
 function natSendInput(){
@@ -1485,32 +1493,36 @@ bindTap($('cfgnode'),function(){
   }catch(e){ $('cfgtip').textContent='切换失败 '+e; }
 });
 
-/* 画面模式：
+/* 画面模式（按顺序循环）：
    wide  = 左右铺满、上下保持同一缩放比（不拉伸，像素不变形）——默认
-   full  = 高度也铺满（纵向拉伸，不设上限） */
+   full  = 高度也铺满（纵向拉伸，不设上限）
+   int   = 1:1 原生分辨率不缩放，像素绝对清晰，画面小、四周黑边
+   三种都由 JS 用最近邻画到目标尺寸，不依赖引擎的 CSS 缩放过滤器。 */
+var FIT_MODES=['wide','full','int'];
 var fitMode='wide';
 try{
   var fp=new URLSearchParams(location.search).get('fit');
-  if(fp==='full'||fp==='wide'||fp==='int') fitMode=fp;
-  else{ var fm=localStorage.getItem('e5fit'); if(fm==='full'||fm==='wide'||fm==='int') fitMode=fm; }
+  if(FIT_MODES.indexOf(fp)>=0) fitMode=fp;
+  else{ var fm=localStorage.getItem('e5fit'); if(FIT_MODES.indexOf(fm)>=0) fitMode=fm; }
 }catch(e){}
+var FIT_LABEL={wide:'铺',full:'拉',int:'1:1'};
+var FIT_TITLE={wide:'画面：左右铺满，不拉伸',
+               full:'画面：上下也拉满',
+               int:'画面：原生分辨率不缩放，最清晰但画面小'};
 function applyFitMode(){
   try{ localStorage.setItem('e5fit',fitMode); }catch(e){}
   document.body.classList.toggle('fitfull',fitMode==='full');
   var b=$('bview');
-  if(b){ b.textContent=(fitMode==='wide'?'铺':(fitMode==='full'?'拉':'1:1'));
-    b.title=(fitMode==='wide'?'画面：左右铺满，不拉伸':(fitMode==='full'?'画面：上下也拉满':'画面：整数倍点对点')); }
+  if(b){ b.textContent=FIT_LABEL[fitMode]; b.title=FIT_TITLE[fitMode]; }
   var s=$('cfgscale');
-  if(s) s.textContent='比例：'+(fitMode==='wide'?'宽铺':(fitMode==='full'?'拉伸':'1:1'));
+  if(s) s.textContent='比例：'+(fitMode==='wide'?'宽铺':(fitMode==='full'?'拉伸':'原生 1:1'));
 }
-bindTap($('bview'),function(){
-  fitMode=(fitMode==='wide'?'full':(fitMode==='full'?'int':'wide'));
+function cycleFit(){
+  fitMode=FIT_MODES[(FIT_MODES.indexOf(fitMode)+1)%FIT_MODES.length];
   applyFitMode(); fit();
-});
-bindTap($('cfgscale'),function(){
-  fitMode=(fitMode==='wide'?'full':(fitMode==='full'?'int':'wide'));
-  applyFitMode(); fit();
-});
+}
+bindTap($('bview'),cycleFit);
+bindTap($('cfgscale'),cycleFit);
 
 /* 画面滤镜：关 / 扫描线 / LCD 网格。只往画面上叠一层 CSS，不改核心、不加每帧开销。 */
 var FXS=['off','scan','lcd'], FXN={off:'关',scan:'扫描线',lcd:'LCD 网格'};
@@ -1635,6 +1647,11 @@ function fit(){
   }catch(e){}
   if(fitLastW===cw && fitLastH===ch) return;
   fitLastW=cw; fitLastH=ch;
+  /* 画布的真实尺寸就是目标尺寸：源帧由 JS 最近邻画上来，CSS 不再做任何缩放 */
+  try{
+    var cv=document.querySelector('#ejs_game canvas');
+    if(cv&&(cv.width!==cw||cv.height!==ch)){ cv.width=cw; cv.height=ch; }
+  }catch(e){}
   $('ejs_game').style.width=cw+'px';
   $('ejs_game').style.height=ch+'px';
   $('tres').textContent=g.w+'×'+g.h+' · '+note;

@@ -99,11 +99,12 @@ def merge_game_table(source_text, publish_text):
     return merged, True
 
 
-def sync_file(src, dst, report):
+def sync_file(src, dst, report, apply=True):
     rel = os.path.relpath(src, SOURCE)
     if not os.path.exists(dst):
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        shutil.copy2(src, dst)
+        if apply:
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
         report.append(("NEW", rel))
         return True
 
@@ -116,12 +117,14 @@ def sync_file(src, dst, report):
         merged, table_replaced = merge_game_table(read_text(src), read_text(dst))
         if merged == read_text(dst):
             return False
-        write_text(dst, merged)
+        if apply:
+            write_text(dst, merged)
         note = "  (homebrew game table restored)" if table_replaced else ""
         report.append(("MERGED", rel + note))
         return True
 
-    shutil.copy2(src, dst)
+    if apply:
+        shutil.copy2(src, dst)
     report.append(("COPY", rel))
     return True
 
@@ -143,7 +146,7 @@ def main():
         if not os.path.isfile(src):
             continue
         dst = os.path.join(publish, rel)
-        if sync_file(src, dst, report):
+        if sync_file(src, dst, report, args.apply):
             pass
 
     for sub in SYNC_DIRS:
@@ -158,7 +161,7 @@ def main():
                 src = os.path.join(root, name)
                 rel = os.path.relpath(src, source)
                 dst = os.path.join(publish, rel)
-                if sync_file(src, dst, report):
+                if sync_file(src, dst, report, args.apply):
                     pass
 
     # Files removed from the working directory should disappear from the publish copy.
