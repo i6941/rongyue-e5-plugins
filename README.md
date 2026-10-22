@@ -158,6 +158,20 @@ python -m unittest discover -s tests -p 'test_*.py'
 | `tools/native-preview.py` | 在电脑上预览插件页面（可接真核心，也可造假帧） |
 | `tools/sync-to-publish.py` | 把工作目录同步到公开仓库（游戏表会被换回自制版） |
 
+`device-proxy.py` 有三种用法，设备地址用 `E5_HOST` 环境变量给（它按 MAC 派生，
+不能写进仓库）：
+
+```sh
+E5_HOST=<设备地址> python tools/device-proxy.py 18088            # 面板的 HTTP
+E5_HOST=<设备地址> python tools/device-proxy.py 9510 --tcp 9510  # 核心端口的裸隧道
+E5_HOST=<设备地址> python tools/device-proxy.py 18099 --rewrite 8089
+```
+
+最后一种把页面里写死的 `http://127.0.0.1:8089` 改成电脑上的端口，并给本地
+脚本加随机尾巴（浏览器会缓存改写前的版本）。配合 `--tcp` 隧道，就能在电脑
+浏览器里打开**真机上的**宿主页面，点开应用磁贴，让真机的那份插件页跑在
+iframe 里——不用有人去点设备屏幕。
+
 三个 SSH 工具会在运行时从 `.secrets/openwrt-access.json` 读设备密码，从
 `.secrets/openwrt-known-hosts` 读主机指纹。这两个文件不在仓库里，自己建一个：
 
