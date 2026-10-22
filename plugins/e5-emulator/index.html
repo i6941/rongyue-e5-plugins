@@ -153,15 +153,14 @@ body.ingame main{top:0;bottom:0}
       <div class="sfoot">↑↓ 选 · 确认 读档 · ← 存档 · 返回 关闭</div>
     </div></div>
     <div id="stall"><div class="stxt">画面卡住了</div><div class="srow">
-      <button id="sresume" type="button">重进（读回存档）</button>
-      <button id="slegacy" type="button">旧引擎重进</button></div></div>
+      <button id="sresume" type="button">重进（读回存档）</button></div></div>
   </div>
 </main>
 <footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　# 按键设置　确认 开始</footer>
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
-  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button></div>
+  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgengine" type="button">引擎 原生</button></div>
   <div id="cfgfoot"><button id="cfgdef" type="button">默认</button><button id="cfgnum" type="button">数字键</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
@@ -261,14 +260,15 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.11.0';
+var APP_VER='1.12.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
    wasm 抛陷阱、主循环停摆，反复开关还会把 WebGL2 上下文耗尽。所以 FC 游戏
    默认走原生：后端拉起 /usr/bin/e5emu，它把 RGB565 帧通过本机 WebSocket 推给
    这个页面，页面只负责把帧画出来、把按键位图发回去。
-   想退回旧路径：地址加 ?engine=ejs，或者点卡死面板里的“旧版核心重进”。 */
+   想退回旧路径：地址加 ?engine=ejs，或者在按键设置里把「引擎」切到运行库
+   （切换后从下一局开始生效，打游戏中途不会换引擎）。 */
 var ENGINE='native';
 (function(){
   try{
@@ -493,7 +493,7 @@ function nativeTick(){
     try{ $('status').textContent='运行中 · '+current.sys+' '+current.n; }catch(e){}
     if(selftestWant&&!selftestDone){ selftestDone=true; try{ runSelftest(); }catch(e){} }
   }
-  if(nat.frames===0&&now-t0>9000){ natFail('原生核心没有出帧'); }
+  if(nat.frames===0&&now-t0>9000){ natFail('原生核心没有出帧（设置里可切到运行库）'); }
   else if(nat.frames>0){ try{ $('tres').textContent=nat.w+'×'+nat.h+(nat.paused?' · 暂停':''); }catch(e){} }
   if(nat.paused){ nat.stallTicks=0; nat.seen=nat.frames; }
   else if(nat.seen===nat.frames){ nat.stallTicks++; } else { nat.stallTicks=0; nat.seen=nat.frames; }
@@ -685,12 +685,11 @@ function showStall(){
   try{ $('stall').classList.add('show'); }catch(e){}
   try{ $('tres').textContent='画面卡住'; $('tfps').innerHTML='<b>0</b> FPS'; }catch(e){}
 }
-/* 重进：先删掉可能残缺的核心缓存，再重载（删除完成之后才重载，
-   就不会再出现"重载把缓存写坏"的情况），存档会自动读回。 */
-function resumeGame(legacy){
-  try{ if(legacy) localStorage.setItem('e5engine','ejs'); if(current) localStorage.setItem('e5resume',current.n); }catch(e){}
-  /* 原生重进：收掉旧进程，刷新页面重新拉起（存档在服务端，会读回） */
-  if(nativeActive()&&!legacy){
+/* 重进：原生就重启会话，运行库就顺手清掉可能残缺的核心缓存再重载
+   （删除完成之后才重载，不会出现"重载把缓存写坏"的情况），存档会自动读回。
+   这里不再切换引擎：引擎在按键设置里选，开局时决定。 */
+function resumeGame(){
+  if(current&&nativeWanted(current)){
     try{ natStop(); }catch(e){}
     setTimeout(function(){ try{ location.reload(); }catch(e){} },350);
     return;
@@ -700,8 +699,7 @@ function resumeGame(legacy){
     setTimeout(function(){ try{ location.reload(); }catch(e){} },250);
   });
 }
-bindTap($('sresume'),function(){ resumeGame(false); });
-bindTap($('slegacy'),function(){ resumeGame(true); });
+bindTap($('sresume'),function(){ resumeGame(); });
 
 /* 核心缓存完整性自检。
    运行库把核心文件缓存在 IndexedDB 的 EmulatorJS-core 库里；如果写入过程被打断
@@ -758,7 +756,7 @@ function startStallRecovery(){
     if(left<=0){
       clearInterval(stallTimer); stallTimer=0;
       try{ localStorage.setItem('e5stallcount',String(stallCount+1)); }catch(e){}
-      resumeGame(false);
+      resumeGame();
       return;
     }
     try{ $('stall').querySelector('.stxt').textContent='画面卡住 '+left+'s 后自动重进'; }catch(e){}
@@ -1540,6 +1538,21 @@ function applyFx(){
 }
 bindTap($('cfgscan'),function(){ fxMode=FXS[(FXS.indexOf(fxMode)+1)%FXS.length]; applyFx(); });
 
+/* 引擎：原生核心 / 运行库。开局时决定走哪条路，打游戏中途不切换——
+   中途换引擎要重载页面，正是"进游戏以后才处理"那不稳定的来源。
+   改了之后从下一局开始生效。 */
+function applyEngine(){
+  var b=$('cfgengine');
+  if(b) b.textContent='引擎 '+(ENGINE==='native'?'原生':'运行库');
+}
+bindTap($('cfgengine'),function(){
+  ENGINE=(ENGINE==='native')?'ejs':'native';
+  try{ localStorage.setItem('e5engine',ENGINE); }catch(e){}
+  applyEngine();
+  var tip=$('cfgtip');
+  if(tip) tip.textContent=(running?'引擎已改为'+(ENGINE==='native'?'原生':'运行库')+'，下一局生效':'引擎：'+(ENGINE==='native'?'原生核心':'运行库'));
+});
+
 /* 同一源：可以给宿主页面注入样式。游戏期间把宿主自己的工具栏和底部主菜单藏掉，
    把整块竖向空间让给画面；退出时立刻恢复。宿主不需要改代码，也不改全局配置。 */
 var hostClass='e5-game-full', hostStyleInjected=false, hostWatchInjected=false;
@@ -2015,6 +2028,7 @@ try{
 
 applyFitMode();
 applyFx();
+applyEngine();
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 try{ hostChromeReset(); }catch(e){}
