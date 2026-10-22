@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>浏览器</title>
+<style>
+:root{--bg:#0d1117;--fg:#e6edf3;--dim:#8b949e;--accent:#58a6ff;--line:#21262d}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:14px/1.55 -apple-system,"Noto Sans CJK SC","Source Han Sans SC",sans-serif}
+body{display:flex;flex-direction:column}
+header{display:flex;gap:4px;padding:4px;border-bottom:1px solid var(--line)}
+header input{flex:1;min-width:0;background:#161b22;border:1px solid var(--line);
+  color:var(--fg);border-radius:6px;padding:7px 8px;font-size:13px}
+header button{background:#21262d;border:1px solid var(--line);color:var(--fg);
+  border-radius:6px;padding:0 10px;font-size:13px}
+header button:active{background:#30363d}
+#status{font-size:11px;color:var(--dim);padding:3px 9px;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis}
+main{flex:1;overflow:auto;padding:6px 10px 18px;-webkit-overflow-scrolling:touch}
+h1{font-size:16px;line-height:1.35;margin:2px 0 10px}
+p{margin:0 0 9px;word-wrap:break-word}
+.err{color:#ff7b72}
+.home a{display:block;padding:10px;border:1px solid var(--line);border-radius:8px;
+  margin:7px 0;color:var(--fg);text-decoration:none}
+.home a span{display:block;font-size:11px;color:var(--dim);margin-top:2px}
+.links{margin-top:12px;border-top:1px solid var(--line);padding-top:6px}
+.lh{font-size:11px;color:var(--dim);margin:2px 0 4px}
+.links div.item{padding:5px 0;border-bottom:1px solid #161b22;font-size:13px}
+.links a{color:var(--accent);text-decoration:none}
+</style>
+</head>
+<body>
+<header>
+  <button id="back" type="button" title="返回">‹</button>
+  <input id="url" type="text" placeholder="网址或搜索" autocomplete="off"
+         autocapitalize="off" spellcheck="false">
+  <button id="go" type="button">打开</button>
+</header>
+<div id="status"></div>
+<main id="doc"></main>
+<script>
+(function(){
+  var doc = document.getElementById('doc');
+  var statusEl = document.getElementById('status');
+  var input = document.getElementById('url');
+  var goBtn = document.getElementById('go');
+  var backBtn = document.getElementById('back');
+  var stack = [];
+  var busy = false;
+
+  var HOME = [
+    ['维基百科', 'https://zh.m.wikipedia.org/'],
+    ['Hacker News', 'https://news.ycombinator.com/'],
+    ['BBC News', 'https://www.bbc.com/news'],
+    ['搜索 OpenWrt', 'q:OpenWrt']
+  ];
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+
+  function home(){
+    var h = '<div class="home"><p style="color:#8b949e;font-size:12px;margin:2px 0 6px">' +
+            '输入网址，或输入关键词搜索</p>';
+    for (var i = 0; i < HOME.length; i++){
+      h += '<a href="#" data-href="' + esc(HOME[i][1]) + '">' + esc(HOME[i][0]) +
+           '<span>' + esc(HOME[i][1].replace(/^q:/, '搜索：')) + '</span></a>';
+    }
+    h += '</div>';
+    doc.innerHTML = h;
+    statusEl.textContent = '阅读器模式 · 只显示正文和链接';
+    input.value = '';
+    stack = [];
+  }
+
+  function setBusy(v){
+    busy = v;
+    goBtn.disabled = v;
+    goBtn.textContent = v ? '…' : '打开';
+  }
+
+  function render(d){
+    if (!d || !d.ok){
+      doc.innerHTML = '<p class="err">' + esc((d && d.error) || '加载失败') + '</p>';
+      statusEl.textContent = (d && d.url) || '';
+      return;
+    }
+    var h = '<h1>' + esc(d.title) + '</h1>';
+    for (var i = 0; i < d.text.length; i++) h += '<p>' + esc(d.text[i]) + '</p>';
+    if (d.links && d.links.length){
+      h += '<div class="links"><div class="lh">本页链接（' + d.links.length + '）</div>';
+      for (var k = 0; k < d.links.length; k++){
+        var l = d.links[k];
+        h += '<div class="item"><a href="#" data-href="' + esc(l.h) + '">' +
+             esc(l.t || l.h) + '</a></div>';
+      }
+      h += '</div>';
+    }
+    doc.innerHTML = h;
+    doc.scrollTop = 0;
+    statusEl.textContent = d.title + ' · ' + d.text.length + ' 段 · ' +
+      (d.links ? d.links.length : 0) + ' 链接 · ' + d.ms + 'ms';
+    input.value = d.url;
+  }
+
+  function target(q){
+    q = (q || '').trim();
+    if (!q) return '';
+    if (/^https?:\/\//i.test(q)) return q;
+    if (/^q:/i.test(q)) return 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q.slice(2));
+    if (/^[\w-]+(\.[\w-]+)+(\/[^\s]*)?$/.test(q)) return 'https://' + q;
+    return 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q);
+  }
+
+  function go(q, push){
+    var url = target(q);
+    if (!url || busy) return;
+    setBusy(true);
+    statusEl.textContent = '加载中…';
+    var t0 = Date.now();
+    fetch('/api/plugins/browser/browse?url=' + encodeURIComponent(url))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (push !== false && input.value && !/^q:/.test(input.value)) stack.push(input.value);
+        render(d);
+      })
+      .catch(function(e){
+        doc.innerHTML = '<p class="err">' + esc(String(e)) + '</p>';
+        statusEl.textContent = '请求失败';
+      })
+      .then(function(){ setBusy(false); });
+  }
+
+  doc.addEventListener('click', function(e){
+    var a = e.target.closest ? e.target.closest('a[data-href]') : null;
+    if (!a) return;
+    e.preventDefault();
+    var h = a.getAttribute('data-href');
+    if (!h) return;
+    if (h.indexOf('q:') === 0){ go(h, false); return; }
+    stack.push(input.value || '');
+    go(h, false);
+  });
+
+  goBtn.addEventListener('click', function(){ go(input.value, false); });
+  backBtn.addEventListener('click', function(){
+    var prev = stack.pop();
+    if (prev) go(prev, false); else home();
+  });
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); go(input.value, false); }
+  });
+
+  home();
+})();
+</script>
+</body>
+</html>

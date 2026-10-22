@@ -102,6 +102,7 @@ def merge_game_table(source_text, publish_text):
 def sync_file(src, dst, report):
     rel = os.path.relpath(src, SOURCE)
     if not os.path.exists(dst):
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy2(src, dst)
         report.append(("NEW", rel))
         return True

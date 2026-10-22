@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+# e5-browse: fetch one page and return a simplified reading view as JSON.
+# Only the Python standard library is used; the device has Python 3.13.
+import sys, json, re, time
+import urllib.request, urllib.parse, urllib.error
+from html.parser import HTMLParser
+
+UA = ('Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/605.1.15 '
+      '(KHTML, like Gecko) Version/17.0 Safari/605.1.15')
+TIMEOUT = 8
+MAX_BYTES = 2 * 1024 * 1024
+MAX_TEXT = 20000
+MAX_BLOCKS = 220
+MAX_LINKS = 120
+
+BLOCK = {'p', 'div', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'tr', 'br',
+         'article', 'section', 'blockquote', 'pre', 'td', 'th', 'dt', 'dd',
+         'figcaption', 'main', 'table', 'ul', 'ol'}
+SKIP = {'script', 'style', 'noscript', 'svg', 'canvas', 'iframe', 'template',
+        'select', 'option', 'button', 'nav', 'aside', 'footer', 'header',
+        'video', 'audio', 'object'}
+
+
+class Reader(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.title = []
+        self.blocks = []
+        self.main_blocks = []
+        self.main_depth = 0
+        self.links = []
+        self.buf = []
+        self.skip = 0
+        self.in_title = False
+        self.cur_a = None
+
+    def handle_starttag(self, tag, attrs):
+        if tag in SKIP:
+            self.skip += 1
+            return
+        if tag == 'title':
+            self.in_title = True
+            return
+        if tag == 'a':
+            href = dict(attrs).get('href')
+            if href:
+                self.cur_a = {'h': href, 't': []}
+        if tag in ('main', 'article'):
+            self.main_depth += 1
+        if tag in BLOCK:
+            self.flush()
+
+    def handle_endtag(self, tag):
+        if tag in SKIP:
+            if self.skip:
+                self.skip -= 1
+            return
+        if tag == 'title':
+            self.in_title = False
+            return
+        if tag == 'a' and self.cur_a is not None:
+            t = ' '.join(''.join(self.cur_a['t']).split())
+            if t and len(t) <= 160:
+                self.links.append({'t': t, 'h': self.cur_a['h']})
+            self.cur_a = None
+        if tag in BLOCK:
+            self.flush()
+        if tag in ('main', 'article') and self.main_depth:
+            self.main_depth -= 1
+
+    def handle_data(self, data):
+        if self.skip:
+            return
+        if self.in_title:
+            self.title.append(data)
+            return
+        if self.cur_a is not None:
+            self.cur_a['t'].append(data)
+        self.buf.append(data)
+
+    def flush(self):
+        t = ' '.join(''.join(self.buf).split())
+        self.buf = []
+        if len(t) >= 2:
+            self.blocks.append(t)
+            if self.main_depth > 0:
+                self.main_blocks.append(t)
+
+
+def decode(raw, ctype):
+    m = re.search(r'charset=([\w.:-]+)', ctype or '', re.I)
+    enc = m.group(1) if m else None
+    if not enc:
+        m = re.search(rb'<meta[^>]+charset=["\']?([\w.:-]+)', raw[:8192], re.I)
+        if m:
+            enc = m.group(1).decode('ascii', 'replace')
+    enc = (enc or 'utf-8').lower()
+    if enc in ('gb2312', 'gbk', 'gb18030'):
+        enc = 'gb18030'
+    try:
+        return raw.decode(enc, 'replace'), enc
+    except LookupError:
+        return raw.decode('utf-8', 'replace'), 'utf-8'
+
+
+def fetch(url):
+    req = urllib.request.Request(url, headers={
+        'User-Agent': UA,
+        'Accept': 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    })
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+        ctype = r.headers.get('Content-Type', '')
+        raw = r.read(MAX_BYTES)
+        final = r.geturl()
+    return raw, ctype, final
+
+
+def unwrap(u):
+    # DuckDuckGo lite links point at /l/?uddg=<real url>
+    try:
+        p = urllib.parse.urlsplit(u)
+        if p.netloc.endswith('duckduckgo.com') and p.path.startswith('/l/'):
+            q = urllib.parse.parse_qs(p.query)
+            if 'uddg' in q and q['uddg']:
+                return q['uddg'][0]
+    except Exception:
+        pass
+    return u
+
+
+def norm_links(links, base):
+    out, seen = [], set()
+    for l in links:
+        h = (l.get('h') or '').strip()
+        if not h or h.startswith(('#', 'javascript:', 'mailto:', 'tel:', 'data:')):
+            continue
+        try:
+            h = urllib.parse.urljoin(base, h)
+        except Exception:
+            continue
+        h = unwrap(h)
+        low = h.lower()
+        if not low.startswith(('http://', 'https://')):
+            continue
+        # wiki-style action links are noise in a reading view
+        if ('action=edit' in low or 'action=history' in low or
+                'veaction=' in low or 'special:' in low):
+            continue
+        txt = (l.get('t') or '').strip()
+        if txt in ('编辑', '编辑源代码', '历史', '查看历史',
+                   'Edit', 'Edit source', 'History'):
+            continue
+        if h in seen:
+            continue
+        seen.add(h)
+        out.append({'t': l.get('t', ''), 'h': h})
+        if len(out) >= MAX_LINKS:
+            break
+    return out
+
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False, separators=(',', ':')))
+
+
+def main():
+    q = (sys.argv[1] if len(sys.argv) > 1 else '').strip()
+    if not q:
+        emit({'ok': False, 'error': 'empty'})
+        return
+    if not q.lower().startswith(('http://', 'https://')):
+        q = 'https://lite.duckduckgo.com/lite/?q=' + urllib.parse.quote(q)
+    t0 = time.time()
+    try:
+        raw, ctype, final = fetch(q)
+    except urllib.error.HTTPError as e:
+        emit({'ok': False, 'error': 'HTTP %s' % e.code, 'url': q})
+        return
+    except Exception as e:
+        emit({'ok': False, 'error': str(e)[:200], 'url': q})
+        return
+    low = (ctype or '').lower()
+    if 'html' not in low and 'xml' not in low:
+        emit({'ok': False, 'error': 'not html: ' + ctype[:80], 'url': final})
+        return
+    html, enc = decode(raw, ctype)
+    p = Reader()
+    try:
+        p.feed(html)
+        p.close()
+    except Exception:
+        pass
+    source = p.main_blocks if len(' '.join(p.main_blocks)) > 200 else p.blocks
+    blocks, total = [], 0
+    for b in source:
+        if len(b) < 2:
+            continue
+        if total + len(b) > MAX_TEXT:
+            break
+        blocks.append(b)
+        total += len(b)
+        if len(blocks) >= MAX_BLOCKS:
+            break
+    title = ' '.join(''.join(p.title).split())[:200]
+    emit({
+        'ok': True,
+        'url': final,
+        'title': title or final,
+        'charset': enc,
+        'text': blocks,
+        'links': norm_links(p.links, final),
+        'ms': int((time.time() - t0) * 1000),
+    })
+
+
+if __name__ == '__main__':
+    main()

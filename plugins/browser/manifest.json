@@ -1,0 +1,15 @@
+{
+  "id": "browser",
+  "api_version": 2,
+  "version": "0.1.0",
+  "name": {
+    "zh": "浏览器",
+    "en": "Browser"
+  },
+  "description": {
+    "zh": "抓取网页正文，适合小屏阅读",
+    "en": "Reader-style web browser for the small screen"
+  },
+  "entry": "index.html",
+  "order": 40
+}
