@@ -1,15 +1,16 @@
 {
   "id": "e5-emulator",
   "api_version": 2,
-  "version": "1.0.0",
+  "version": "1.10.0",
   "name": {
     "zh": "复古游戏机",
     "en": "Retro console"
   },
   "description": {
-    "zh": "MD / GBA 模拟器（WebAssembly）",
-    "en": "MD and GBA emulators"
+    "zh": "FC / MD / GBA 模拟器（原生内核）",
+    "en": "FC, MD and GBA emulators (native cores)"
   },
   "entry": "index.html",
   "order": 45
 }
+

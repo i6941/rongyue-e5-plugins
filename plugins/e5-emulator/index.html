@@ -25,6 +25,8 @@ body.ingame #tabs{display:none}
 /* 机种 tab：上面一行，数字 1-4 直接切 */
 #tabs{position:absolute;top:24px;left:0;right:0;height:26px;z-index:5;display:flex;gap:4px;padding:3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden}
 #tabs button{flex:1 1 0;min-width:0;height:20px;padding:0 4px;font:inherit;font-size:11px;line-height:18px;color:#a8bad0;background:#141d2c;border:1px solid #223047;border-radius:10px;white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+#tabs button b{color:#65bdff;font-weight:700;margin-right:2px}
+#tabs button.on b{color:#04121f}
 #tabs button.on{color:#04121f;background:#65bdff;border-color:#65bdff;font-weight:600}
 /* 存档弹窗 */
 #slots{position:absolute;inset:0;z-index:19;display:none;align-items:center;justify-content:center;background:rgba(4,7,12,.82)}
@@ -109,6 +111,7 @@ body.ingame #bcfg{display:none}
 #cfgfoot button{flex:1 1 0;height:32px;font:inherit;font-size:13px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 #cfgfoot button:active{background:#31527f}
 footer{position:absolute;bottom:0;left:0;right:0;height:20px;z-index:6;padding:1px 6px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:10px;overflow:hidden;white-space:nowrap}
+#fver{float:right;color:#65bdff;font-weight:600;margin-left:6px}
 body.ingame footer{display:none}
 /* 进游戏后页头/页脚那些字没信息量，却白占竖向空间：藏掉，把画面让出来 */
 body.ingame header{display:none}
@@ -121,8 +124,8 @@ body.ingame main{top:0;bottom:0}
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
 <header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcfg" type="button">按键</button></header>
+<div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button></div>
 <main>
-  <div id="tabs"><button type="button" data-sys="ALL" class="on">全部</button><button type="button" data-sys="FC">FC</button><button type="button" data-sys="MD">MD</button><button type="button" data-sys="GBA">GBA</button></div>
   <div id="menu"></div>
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
@@ -142,7 +145,7 @@ body.ingame main{top:0;bottom:0}
       <button id="slegacy" type="button">旧引擎重进</button></div></div>
   </div>
 </main>
-<footer id="foot">↑↓←→ 选游戏　数字 1-4 切机种　确认 开始</footer>
+<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　确认 开始</footer>
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
@@ -242,6 +245,8 @@ try{
 }catch(e){}
 
 var BASE='/plugins/e5-emulator/';
+/* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
+var APP_VER='1.10.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1735,6 +1740,7 @@ drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 try{ hostChromeReset(); }catch(e){}
 try{ slotLabel(); }catch(e){}
+try{ $('fver').textContent='v'+APP_VER; }catch(e){}
 /* 启动时问一下后端原生二进制装了没有；没装就自动回落运行库，
    免得每次开游戏都弹“启动失败”。 */
 (function(){
