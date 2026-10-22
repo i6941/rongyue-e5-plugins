@@ -193,10 +193,17 @@ class Handler(SimpleHTTPRequestHandler):
 
 
 def main() -> int:
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 18080
+    argv = sys.argv[1:]
+    real = "--real" in argv
+    argv = [a for a in argv if not a.startswith("--")]
+    port = int(argv[0]) if argv else 18080
     missing = ROOT / "tools" / "native-preview-missing"
     missing.mkdir(exist_ok=True)
-    threading.Thread(target=serve_ws, daemon=True).start()
+    if real:
+        # --real：不造假帧服务，端口 9510 留给真的 e5emu（本机 x86 版本或设备上的）
+        print("using the real frame server on ws://127.0.0.1:9510", flush=True)
+    else:
+        threading.Thread(target=serve_ws, daemon=True).start()
     httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print("plugin page: http://127.0.0.1:%d/plugins/e5-emulator/index.html?preview=1&auto=0" % port, flush=True)
     try:

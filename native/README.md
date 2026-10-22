@@ -85,6 +85,26 @@ zig cc -target aarch64-linux-musl -O2 -static \
 and `src/input/*.c` as well. The result is a single static binary of
 about 8 MB.
 
+## Building and running it on a computer
+
+The same source builds for the host, which is how the UI is developed
+without the phone in hand:
+
+```sh
+zig cc -target x86_64-linux-musl -O2 -static ... e5emu.c <sources> -o e5emu-linux-x64
+wsl -d Ubuntu -- bash -lc "cd /mnt/d/workspace/Rongyue-E5/native && \
+  env -u http_proxy -u https_proxy setsid nohup ./e5emu-linux-x64 \
+  --serve /mnt/d/workspace/Rongyue-E5/.notes/game-port/roms/fc-contra.nes 9510 \
+  --log /tmp/e5emu-local.log >/dev/null 2>&1 &"
+python tools/native-preview.py 18080 --real
+```
+
+Then open `http://127.0.0.1:18080/plugins/e5-emulator/index.html?preview=1&auto=0`.
+The real core streams through the real page at 60 FPS; WSL2 forwards the
+port to the Windows side. For the device itself, `tools/device-shot.py`
+pulls /dev/fb0 and writes a PNG, so the phone screen can be looked at from
+anywhere.
+
 ## Status
 
 - Stage 1 (done): headless self-test, 59.5 FPS sustained.
