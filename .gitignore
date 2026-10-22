@@ -22,6 +22,8 @@ id_*
 !roms/**/*.gba
 !roms/**/*.gb
 !roms/**/*.nes
+# 商店的插件包：自己签名的公开产物，要能取到，所以放行
+!docs/packages/*.tar.gz
 
 # Log files can contain SSIDs, IPs and tokens
 *.log

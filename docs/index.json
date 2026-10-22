@@ -1,6 +1,6 @@
 {
  "api_version": 2,
- "generated": "2026-10-22T04:51:08Z",
+ "generated": "2026-10-22T04:52:45Z",
  "plugins": [
   {
    "id": "phone",
@@ -74,9 +74,9 @@
    "order": 45,
    "input_method": false,
    "backend": true,
-   "size": 36633,
-   "sha256": "05409a36d95fed4d7fbd6f986d78f6fdde5ec00a060f08bff886bab4efcedaa3",
-   "url": "https://i6941.github.io/rongyue-e5-plugins/packages/e5-emulator-1.10.0.tar.gz"
+   "size": 36641,
+   "sha256": "ebc9ff6f8c84be760ef54440ea68dd7c896347efe729d3b19ccd7d8a4cf83542",
+   "url": "https://raw.githubusercontent.com/i6941/rongyue-e5-plugins/main/docs/packages/e5-emulator-1.10.0.tar.gz"
   }
  ]
 }
