@@ -209,6 +209,9 @@ var ENGINE='native';
 })();
 var nat={ws:null,cvs:null,ctx:null,img:null,w:0,h:0,frames:0,lastFrames:0,fpsAt:0,open:false,
          err:'',paused:false,installed:null,mask:0,seen:-1,stallTicks:0,savedAgo:0,autoLoaded:false};
+/* 宿主把插件框架收起来（通知、来电、菜单键都会这样）时，先挂起而不是退出：
+   停掉进程省 CPU，框架回来再重新拉起并读回存档，游戏进度不会丢。 */
+var susp={on:false,count:0,at:0,why:'',ticks:0};
 function nativeActive(){ return ENGINE==='native'; }
 /* 现在只有 fceumm（FC）链进了 e5emu；MD/GBA 还没链核心，先留给旧路径 */
 function nativeWanted(g){ return nativeActive() && nat.installed!==false && !!g && g.core==='fceumm'; }
@@ -321,8 +324,27 @@ function natFail(msg){
        var st=$('stall'); if(st){ st.querySelector('.stxt').textContent=msg; } }catch(e){}
   showStall();
 }
+/* 挂起：宿主把框架藏起来（通知/来电/菜单键），先停进程，别让游戏白跑 */
+function nativeSuspend(why){
+  if(susp.on) return;
+  susp.on=true; susp.count++; susp.at=Date.now(); susp.why=why||'hidden';
+  phase='suspended';
+  try{ natCmd(1); }catch(e){}      /* 先把即时档落盘，回来能接着打 */
+  try{ natStop(); }catch(e){}
+  try{ $('status').textContent='已挂起（宿主切走了）'; }catch(e){}
+}
+/* 框架回来了：重新拉起进程，3 秒后自动读回上一次的即时存档 */
+function nativeResume(){
+  if(!susp.on||!running||!current) return;
+  susp.on=false; susp.ticks=0;
+  phase='loading'; nat.autoLoaded=false; nat.seen=-1; nat.stallTicks=0;
+  try{ $('status').textContent='恢复中…'; }catch(e){}
+  natApi('/emu/start',{rom:current.f}).then(function(){ natConnect(0); })
+    .catch(function(){ natConnect(0); });
+}
 /* 每秒一次的 native 侧维护：算帧率、补宿主样式、卡死检测、自动存档 */
 function nativeTick(){
+  if(susp.on) return;          /* 挂起期间不刷帧率、不续宿主心跳，让看门狗把菜单栏还回去 */
   fit();
   var now=Date.now();
   if(nat.fpsAt) window.__fps=(nat.frames-nat.lastFrames)*1000/Math.max(1,now-nat.fpsAt);
@@ -843,6 +865,7 @@ function reallyStart(i){
 }
 function leave(){
   running=false; phase='menu';
+  susp.on=false; susp.ticks=0;
   /* 原生：先让服务端把存档落盘再退出；进程由后端收掉 */
   try{ if(nativeActive()) natStop(); }catch(e){}
   try{ $('bpause').textContent='停'; }catch(e){}
@@ -927,6 +950,7 @@ function backIdOf(e){
   return 'k:'+(e.key||'');
 }
 function handleKey(kind,key,repeat,id,code){
+  try{ window.__kinds=((window.__kinds||'')+kind.charAt(0)).slice(-48); }catch(e){}
   if(cfgOpen) return cfgKey(kind,key,repeat,code);
   if(kind==='menu'||kind==='power'||kind==='call'||kind==='other') return false;
   keyCount++; keyLogPush('D:'+kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
@@ -1133,8 +1157,12 @@ var hostClass='e5-game-full', hostStyleInjected=false, hostWatchInjected=false;
 function hostChromeReset(){ hostChrome(false); }
 /* 焦点丢失（切到通知/来电）时把所有按下的键松开，避免"一直按住" */
 window.addEventListener('blur',function(){ releaseAll(); },true);
+document.addEventListener('visibilitychange',function(){
+  if(document.hidden){ try{ window.__hiddenAt=new Date().toISOString(); }catch(e){} releaseAll(); }
+});
 /* 插件页被关掉/刷新时，务必把宿主工具栏和底部主菜单放回去 */
 window.addEventListener('pagehide',function(){
+  try{ window.__pagehideAt=new Date().toISOString(); }catch(e){}
   hostChrome(false);
   /* 页面关掉就把原生进程收掉，别让它占着 ROM 和 CPU（服务端自己也会 120 秒超时退出） */
   try{ if(nativeActive()) natStop(); }catch(e){}
@@ -1203,14 +1231,20 @@ function fit(){
   $('tres').textContent=g.w+'×'+g.h+' · '+note;
 }
 
-var lastFrame=null, lastAt=0, detachedTicks=0;
+var lastFrame=null, lastAt=0;
 setInterval(function(){
-  /* 宿主把插件框架摘掉后，页面本身还活着（innerWidth 变成 0，实测遇到过）：
-     两秒内没恢复就当作"被宿主关掉了"，把宿主菜单栏还回去、收掉原生进程。 */
+  /* 宿主把插件框架藏起来（通知、来电、菜单键导致的 closeApp）时 iframe 尺寸会变成 0。
+     原生路线：挂起等它回来，游戏进度不丢；旧路线没法恢复，仍按原来的方式退出。 */
   if(running&&!window.innerWidth){
-    detachedTicks++;
-    if(detachedTicks>=2){ detachedTicks=0; try{ leave(); }catch(e){} }
-  }else detachedTicks=0;
+    susp.ticks++;
+    if(susp.ticks>=2){
+      if(nativeWanted(current)) nativeSuspend('innerWidth0');
+      else { susp.ticks=0; try{ leave(); }catch(e){} }
+    }
+  }else if(susp.ticks){
+    susp.ticks=0;
+    if(susp.on) nativeResume();
+  }
   if(running&&nativeWanted(current)){ nativeTick(); post(); return; }
   if(running){
     fit();
@@ -1298,6 +1332,9 @@ function snapshot(){
   s.scrollX=window.scrollX; s.scrollY=window.scrollY;
   s.fitMode=fitMode; s.keymap=JSON.stringify(keymap); s.cfgOpen=cfgOpen;
   s.engine=ENGINE;
+  s.susp={on:susp.on,count:susp.count,why:susp.why,ticks:susp.ticks,at:susp.at?new Date(susp.at).toISOString():''};
+  s.kinds=window.__kinds||'';
+  s.pagehideAt=window.__pagehideAt||''; s.hiddenAt=window.__hiddenAt||'';
   try{ s.nat={w:nat.w,h:nat.h,frames:nat.frames,open:nat.open,err:(nat.err||'').slice(0,80),mask:nat.mask,paused:nat.paused,installed:nat.installed}; }catch(e){}
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
   return s;
