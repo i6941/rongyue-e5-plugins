@@ -26,6 +26,7 @@
 #include <sys/uio.h>
 #include <poll.h>
 #include <signal.h>
+#include <pthread.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
@@ -93,8 +94,104 @@ static void video_cb(const void *data, unsigned width, unsigned height, size_t p
     frame_counter++;
 }
 
-static void audio_sample_cb(int16_t left, int16_t right) { (void)left; (void)right; }
-static size_t audio_batch_cb(const int16_t *data, size_t frames) { (void)data; return frames; }
+static void audio_sample_cb(int16_t left, int16_t right);
+static size_t audio_batch_cb(const int16_t *data, size_t frames);
+
+/* ---------------- 音频 ----------------
+   设备的声音由 PulseAudio 统一管音量（/usr/libexec/e5-volume，16 级）。
+   直接写 ALSA 会绕过它（实测音量只开一格也照样很大声），所以这里把
+   44.1kHz 立体声 PCM 喂给 paplay，音量就跟着系统走。paplay 不在时退回 aplay。 */
+
+#define AUDCAP (44100 * 2 * 2)          /* 约 2 秒立体声 */
+static FILE *aud_pipe = NULL;
+static pthread_t aud_thread;
+static volatile int aud_run = 0;
+static volatile int aud_started = 0;
+static int16_t aud_buf[AUDCAP];
+static volatile size_t aud_head = 0, aud_tail = 0;
+static pthread_mutex_t aud_lock = PTHREAD_MUTEX_INITIALIZER;
+static char aud_cmd[320];
+
+static void *aud_writer(void *arg)
+{
+    (void)arg;
+    static int16_t tmp[4096];
+    while (aud_run) {
+        size_t n = 0;
+        pthread_mutex_lock(&aud_lock);
+        size_t avail = (aud_tail + AUDCAP - aud_head) % AUDCAP;
+        if (avail > 0) {
+            n = avail > (sizeof(tmp) / sizeof(tmp[0])) ? (sizeof(tmp) / sizeof(tmp[0])) : avail;
+            for (size_t i = 0; i < n; i++) tmp[i] = aud_buf[(aud_head + i) % AUDCAP];
+            aud_head = (aud_head + n) % AUDCAP;
+        }
+        pthread_mutex_unlock(&aud_lock);
+        if (n) {
+            if (aud_pipe && fwrite(tmp, sizeof(int16_t), n, aud_pipe) != n) {
+                /* 播放器没了：别再往里写，静音继续跑 */
+                aud_run = 0;
+                break;
+            }
+        } else {
+            usleep(2000);
+        }
+    }
+    return NULL;
+}
+
+static void audio_start(double rate)
+{
+    if (aud_started) return;
+    aud_started = 1;
+    int r = (rate >= 8000 && rate <= 96000) ? (int)(rate + 0.5) : 44100;
+    snprintf(aud_cmd, sizeof(aud_cmd),
+             "paplay --raw --format=s16le --rate=%d --channels=2 --latency-msec=80"
+             " --client-name=e5emu --stream-name=game 2>>/tmp/e5emu-audio.log", r);
+    aud_pipe = popen(aud_cmd, "w");
+    if (!aud_pipe) {
+        snprintf(aud_cmd, sizeof(aud_cmd),
+                 "aplay -q -f S16_LE -c 2 -r %d -t raw 2>>/tmp/e5emu-audio.log", r);
+        aud_pipe = popen(aud_cmd, "w");
+    }
+    if (!aud_pipe) { fprintf(stderr, "E5EMU audio: no player, running silent\n"); return; }
+    aud_run = 1;
+    pthread_create(&aud_thread, NULL, aud_writer, NULL);
+    fprintf(stderr, "E5EMU audio: %s\n", aud_cmd);
+}
+
+static void audio_stop(void)
+{
+    if (!aud_started) return;
+    aud_run = 0;
+    pthread_join(aud_thread, NULL);
+    if (aud_pipe) { pclose(aud_pipe); aud_pipe = NULL; }
+    aud_started = 0;
+}
+
+static void aud_push(const int16_t *data, size_t samples)
+{
+    if (!aud_run) return;
+    pthread_mutex_lock(&aud_lock);
+    for (size_t i = 0; i < samples; i++) {
+        size_t next = (aud_tail + 1) % AUDCAP;
+        if (next == aud_head) break;          /* 满了就丢，宁可掉音也不要卡画面 */
+        aud_buf[aud_tail] = data[i];
+        aud_tail = next;
+    }
+    pthread_mutex_unlock(&aud_lock);
+}
+
+static void audio_sample_cb(int16_t left, int16_t right)
+{
+    int16_t pair[2] = { left, right };
+    aud_push(pair, 2);
+}
+
+static size_t audio_batch_cb(const int16_t *data, size_t frames)
+{
+    aud_push(data, frames * 2);
+    return frames;
+}
 static void input_poll_cb(void) { }
 
 static int16_t input_state_cb(unsigned port, unsigned device, unsigned index, unsigned id)
@@ -250,8 +347,8 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
 }
 
 /* 存档相关（定义在后面）：按键处理里要能直接触发存/读档 */
-static bool state_save(void);
-static bool state_load(void);
+static bool state_save(int slot);
+static bool state_load(int slot);
 static void sram_sync(bool force);
 
 /* 读客户端来的按键位图（4 字节，带掩码） */
@@ -275,10 +372,18 @@ static int ws_read_buttons(int fd)
     if ((h[0] & 0x0f) >= 0x8) return 0;
     if (len == 1) {
         /* 单字节命令：1=存即时档 2=读即时档 3=立刻把电池存档落盘 4=暂停/继续 */
-        if (payload[0] == 1) state_save();
-        else if (payload[0] == 2) state_load();
+        if (payload[0] == 1) state_save(0);
+        else if (payload[0] == 2) state_load(0);
         else if (payload[0] == 3) sram_sync(true);
         else if (payload[0] == 4) paused = !paused;
+        return 0;
+    }
+    if (len == 2) {
+        /* 2 字节命令：cmd + 槽位（0 = 自动续玩槽，1..3 = 手动槽） */
+        int slot = payload[1];
+        if (slot < 0 || slot > 3) slot = 0;
+        if (payload[0] == 1) state_save(slot);
+        else if (payload[0] == 2) state_load(slot);
         return 0;
     }
     if (len >= 4) {
@@ -330,6 +435,13 @@ static void sleep_ms(double ms)
 static char save_base[512];
 static char sram_path[600];
 static char state_path[600];
+
+/* 槽位 0 = 自动续玩，1..3 = 手动存档 */
+static void state_path_for(int slot, char *out, size_t cap)
+{
+    if (slot < 0 || slot > 3) slot = 0;
+    snprintf(out, cap, "%s.st%d", save_base, slot);
+}
 static uint8_t *sram = NULL;
 static size_t sram_size = 0;
 static uint8_t *sram_shadow = NULL;
@@ -367,8 +479,9 @@ static void sram_sync(bool force)
     fprintf(stderr, "E5EMU sram %s %s (%zu bytes)\n", ok ? "saved" : "failed", sram_path, sram_size);
 }
 
-static bool state_save(void)
+static bool state_save(int slot)
 {
+    state_path_for(slot, state_path, sizeof(state_path));
     size_t sz = retro_serialize_size();
     if (!sz) { fprintf(stderr, "E5EMU state save: core reports no serialize support\n"); return false; }
     void *buf = malloc(sz);
@@ -379,8 +492,9 @@ static bool state_save(void)
     return ok;
 }
 
-static bool state_load(void)
+static bool state_load(int slot)
 {
+    state_path_for(slot, state_path, sizeof(state_path));
     size_t sz = 0;
     void *buf = read_file(state_path, &sz);
     if (!buf) { fprintf(stderr, "E5EMU state load: no %s\n", state_path); return false; }
@@ -496,6 +610,7 @@ static int run_server(const char *rom_path, int port)
         if (do_handshake(cfd) != 0) { close(cfd); continue; }
         printf("E5EMU client connected\n");
         fflush(stdout);
+        audio_start((double)av.timing.sample_rate);
 
         while (1) {
             double t0 = now_ms();
@@ -529,6 +644,7 @@ static int run_server(const char *rom_path, int port)
         buttons = 0;
     }
     sram_sync(true);
+    audio_stop();
     retro_unload_game();
     retro_deinit();
     close(ls);

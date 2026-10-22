@@ -54,6 +54,9 @@ Starting the binary is immediate; there is no unpack or compile step.
   (bit 0 = B, 2 = SELECT, 3 = START, 4-7 = d-pad, 8 = A, 10 = L, 11 = R).
 - Client to server, 1 byte: command. 1 = save a state, 2 = load it,
   3 = flush the battery save, 4 = pause or resume.
+- Client to server, 2 bytes: command and slot. Slots 1 to 3 are manual;
+  slot 0 is the automatic one the emulator writes every 30 seconds, on exit
+  and before it suspends, so a manual save is never overwritten.
 
 ## Saves
 
@@ -97,3 +100,4 @@ about 8 MB.
 - Only fceumm (NES) is linked in. MD and GBA games still take the old
   browser path, so linking genesis_plus_gx and mgba is the next step if
   those systems matter.
+

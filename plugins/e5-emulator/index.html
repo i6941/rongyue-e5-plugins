@@ -107,7 +107,8 @@ body.ingame main{top:0;bottom:0}
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
     <div id="hud"><span class="sp"></span>
-      <button id="bview" type="button">画面</button><button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
+      <button id="bview" type="button">铺</button><button id="bslot" type="button">槽1</button>
+      <button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
       <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
     <div id="hint"></div>
     <div id="loadtip">存档读取中…</div>
@@ -316,6 +317,16 @@ function natSendInput(){
   a[0]=mask&255; a[1]=(mask>>8)&255; a[2]=(mask>>16)&255; a[3]=(mask>>24)&255;
   try{ ws.send(a); }catch(e){}
 }
+/* 存档槽：0 = 自动续玩（退出、挂起、每 30 秒写一次），1..3 = 手动槽。
+   自动存档只写自己的槽，不会覆盖你手动存的进度。 */
+var slot=1;
+try{ var s0=parseInt(localStorage.getItem('e5slot')||'1',10); if(s0>=1&&s0<=3) slot=s0; }catch(e){}
+function slotLabel(){ try{ $('bslot').textContent='槽'+slot; }catch(e){} }
+function natCmd2(cmd,sl){
+  var ws=nat.ws;
+  if(!ws||ws.readyState!==1) return false;
+  try{ ws.send(new Uint8Array([cmd&255,sl&255])); return true; }catch(e){ return false; }
+}
 /* 单字节命令：1=存即时档 2=读即时档 3=电池存档落盘 4=暂停/继续 */
 function natCmd(c){
   var ws=nat.ws;
@@ -349,7 +360,7 @@ function nativeSuspend(why){
   if(susp.on) return;
   susp.on=true; susp.count++; susp.at=Date.now(); susp.why=why||'hidden';
   phase='suspended';
-  try{ natCmd(1); }catch(e){}      /* 先把即时档落盘，回来能接着打 */
+  try{ natCmd2(1,0); }catch(e){}      /* 先把自动槽落盘，回来能接着打 */
   try{ natStop(); }catch(e){}
   try{ $('status').textContent='已挂起（宿主切走了）'; }catch(e){}
 }
@@ -382,10 +393,10 @@ function nativeTick(){
   /* 进游戏 3 秒后读回上次的即时档；之后每 30 秒存一次 */
   if(!nat.autoLoaded&&nat.frames>0&&now-t0>3000){
     nat.autoLoaded=true;
-    if(nat.hasState&&natCmd(2)){ lastSave='已读回上次进度'; loadTip(true,'存档读取中…',1400); }
+    if(nat.hasState&&natCmd2(2,0)){ lastSave='已读回上次进度'; loadTip(true,'存档读取中…',1400); }
   }
   nat.savedAgo++;
-  if(nat.savedAgo>=30&&nat.frames>0){ nat.savedAgo=0; if(natCmd(1)) lastSave='自动存档 '+new Date().toLocaleTimeString(); }
+  if(nat.savedAgo>=30&&nat.frames>0){ nat.savedAgo=0; if(natCmd2(1,0)) lastSave='自动存档 '+new Date().toLocaleTimeString(); }
   hostChrome(true);
 } 
 
@@ -628,6 +639,7 @@ function applyKeymap(){
     /* 运行库自己的键盘通道也按当前配置填一遍（它每个按钮只能记一个键码，取最后一个） */
     for(var i=0;i<ACTIONS.length;i++){
       var a=ACTIONS[i], ks=keymap[a.id]||[];
+      if(a.btn===undefined) continue;   /* 斜方向是组合动作，运行库没有对应控件 */
       for(var j=0;j<ks.length;j++){
         var code=codeOf(ks[j]);
         if(code!==null && c[a.btn]) c[a.btn].value=code;
@@ -652,18 +664,30 @@ function coreFn(n){ try{ var g=gm(); return g&&g.functions&&g.functions[n]; }cat
 var ACTIONS=[
   {id:'up',name:'上',btn:4},{id:'down',name:'下',btn:5},
   {id:'left',name:'左',btn:6},{id:'right',name:'右',btn:7},
+  /* 斜方向是"一次按两个按钮"：核心只认上下左右，斜着走靠同时置两位。
+     数字键一次只能压一个键，靠这四个动作凑出八方向。 */
+  {id:'upleft',name:'左上',btns:[4,6]},{id:'upright',name:'右上',btns:[4,7]},
+  {id:'downleft',name:'左下',btns:[5,6]},{id:'downright',name:'右下',btns:[5,7]},
   {id:'a',name:'A',btn:8},{id:'b',name:'B',btn:0},
   {id:'start',name:'START',btn:3},{id:'select',name:'SELECT',btn:2},
   {id:'l',name:'L',btn:10},{id:'r',name:'R',btn:11}
 ];
+function btnsOf(id){
+  for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btns||[ACTIONS[i].btn];
+  return [];
+}
 /* 默认键位：方向用物理方向键；A=确认键或3；B=6；START=#；SELECT=*。
    两个侧键（呼叫/返回）不参与游戏输入，返回键只保留"长按退出游戏"。 */
 var DEFAULT_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
                   a:['Enter','3'],b:['6','0'],start:['#'],select:['*'],l:[],r:[]};
 /* 数字键方案：2/4/6/8 当第二套方向键（和十字键并存），5 跳，0 射击。
    这是老式按键手机跑模拟器的常见分工（numpad 当摇杆），适合十字键不顺手的人。 */
-var NUMPAD_KEYS={up:['ArrowUp','2'],down:['ArrowDown','8'],left:['ArrowLeft','4'],right:['ArrowRight','6'],
+var NUMPAD_KEYS={up:['ArrowUp','2'],down:['ArrowDown','8'],
+                 left:['ArrowLeft','4'],right:['ArrowRight','6'],
+                 upleft:['7'],upright:['9'],downleft:['1'],downright:['3'],
                  a:['Enter','5'],b:['0'],start:['#'],select:['*'],l:[],r:[]};
+/* 数字键没法像十字键那样一次压两个方向，所以四个角单独给键：
+   7=左上 9=右上 1=左下 3=右下 —— 老式按键手机跑模拟器就是这么凑出八方向的。 */
 var keymap=loadKeymap();
 function loadKeymap(){
   var m=null;
@@ -890,6 +914,7 @@ function leave(){
   running=false; phase='menu';
   susp.on=false; susp.ticks=0;
   /* 原生：先让服务端把存档落盘再退出；进程由后端收掉 */
+  try{ if(nativeActive()) natCmd2(1,0); }catch(e){}
   try{ if(nativeActive()) natStop(); }catch(e){}
   try{ $('bpause').textContent='停'; }catch(e){}
   try{ localStorage.removeItem('e5resume'); }catch(e){}   /* 主动退出就别再自动重进了 */
@@ -926,14 +951,27 @@ function leave(){
 var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
 bindTap($('bsave'),function(){
-  if(running&&nativeWanted(current)){ lastSave=natCmd(1)?'已存即时档':'存档失败'; return; }
+  if(running&&nativeWanted(current)){
+    lastSave=natCmd2(1,slot)?('已存到槽'+slot):'存档失败';
+    loadTip(true,lastSave,900); return;
+  }
   try{ var f=coreFn('saveSaveFiles'); if(f){ f(); lastSave='savefiles'; } }catch(e){ lastSave='save-err '+e; }
   try{ gm().quickSave('1'); }catch(e){}
 });
 bindTap($('bload'),function(){
-  if(running&&nativeWanted(current)){ lastSave=natCmd(2)?'已读回即时档':'没有可读的存档'; return; }
+  if(running&&nativeWanted(current)){
+    lastSave=natCmd2(2,slot)?('已读回槽'+slot):'这个槽还没有存档';
+    loadTip(true,lastSave,1100); return;
+  }
   try{ var f=coreFn('loadSaveFiles'); if(f){ f(); lastSave='loadfiles'; } }catch(e){ lastSave='load-err '+e; }
   try{ gm().quickLoad('1'); }catch(e){}
+});
+/* 点一下换槽：1→2→3→1 */
+bindTap($('bslot'),function(){
+  slot=slot>=3?1:slot+1;
+  try{ localStorage.setItem('e5slot',String(slot)); }catch(e){}
+  slotLabel();
+  loadTip(true,'切到槽'+slot,900);
 });
 bindTap($('bpause'),function(){
   if(running&&nativeWanted(current)){
@@ -1028,7 +1066,10 @@ function handleKey(kind,key,repeat,id,code){
   }
   var acts=actsOf(key||('code:'+(code||0)));
   if(acts.length){
-    for(var i=0;i<acts.length;i++){ var b=btnOf(acts[i]); if(b!==undefined) pressBtn(b); }
+    for(var i=0;i<acts.length;i++){
+      var bs=btnsOf(acts[i]);
+      for(var j=0;j<bs.length;j++) if(bs[j]!==undefined) pressBtn(bs[j]);
+    }
     return true;
   }
   return false;
@@ -1047,7 +1088,10 @@ window.addEventListener('keyup',function(e){
     return;
   }
   var acts=actsOf(e.key||('code:'+(e.keyCode||0)));
-  for(var i=0;i<acts.length;i++){ var b=btnOf(acts[i]); if(b!==undefined) releaseBtn(b); }
+  for(var i=0;i<acts.length;i++){
+    var bs=btnsOf(acts[i]);
+    for(var j=0;j<bs.length;j++) if(bs[j]!==undefined) releaseBtn(bs[j]);
+  }
 },true);
 /* SDK 回调只负责告诉宿主"这个键插件收了"（否则宿主会把返回键当退出应用），
    真正的处理在上面的 window 监听里。返回键在菜单态必须放行：
@@ -1147,7 +1191,7 @@ bindTap($('cfgdef'),function(){
 bindTap($('cfgnum'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(NUMPAD_KEYS[ACTIONS[i].id]||[]).slice();
   saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='数字键方案：2/4/6/8 方向，5 跳，0 射击（十字键照样能用）';
+  $('cfgtip').textContent='数字键方案：2/4/6/8 方向，1/3/7/9 斜角，5 跳，0 射击';
 });
 /* 核心版本切换（WebGL2 / 旧版）+ 清掉运行库缓存的核心文件 */
 function coreLabel(){ try{ return localStorage.getItem('e5legacy')==='1'?'旧版':'WebGL2'; }catch(e){ return 'WebGL2'; } }
@@ -1173,7 +1217,7 @@ function applyFitMode(){
   try{ localStorage.setItem('e5fit',fitMode); }catch(e){}
   document.body.classList.toggle('fitfull',fitMode==='full');
   var b=$('bview');
-  if(b){ b.textContent=(fitMode==='wide'?'宽铺':'全拉'); b.title=fitMode==='wide'?'画面：左右铺满，不拉伸':'画面：上下也拉满'; }
+  if(b){ b.textContent=(fitMode==='wide'?'铺':'拉'); b.title=fitMode==='wide'?'画面：左右铺满，不拉伸':'画面：上下也拉满'; }
 }
 bindTap($('bview'),function(){
   fitMode=(fitMode==='wide'?'full':'wide');
