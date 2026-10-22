@@ -6,8 +6,8 @@
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;overflow:hidden}
 body{margin:0;background:#0b111b;color:#edf3fc;font:12px "Noto Sans CJK SC",sans-serif;position:relative;min-height:100%}
-header{position:absolute;top:0;left:0;right:0;height:24px;z-index:5;padding:2px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;white-space:nowrap}
-h1{font-size:12px;margin:0;display:inline-block;max-width:46%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;max-width:52%;vertical-align:middle}
+header{position:absolute;top:0;left:0;right:0;height:24px;z-index:5;padding:2px 4px 2px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;display:flex;align-items:center;gap:6px}
+h1{font-size:12px;margin:0;display:inline-block;flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;flex:1 1 auto;vertical-align:middle}
 main{position:absolute;top:24px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
 #menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 42px}
 .cell{position:relative;display:block;width:100%;padding:0 0 4px;background:#141d2c;color:inherit;border:1px solid #223047;border-radius:6px;font:inherit;overflow:hidden}
@@ -17,6 +17,9 @@ main{position:absolute;top:24px;bottom:20px;left:0;right:0;overflow-y:auto;overf
 .cell .cap{display:block;padding:2px 4px 0;font-size:11px;line-height:1.2;height:28px;overflow:hidden;text-align:left}
 .cell .num{position:absolute;left:3px;top:3px;z-index:2;min-width:16px;height:16px;line-height:16px;padding:0 3px;text-align:center;background:#0b111b;border:1px solid #2f4463;border-radius:4px;color:#9fc6ef;font-size:10px}
 .cell.sel .num{background:#65bdff;color:#04121f;border-color:#65bdff}
+/* 每个格子右上角标出它属于哪个机种（FC/MD/GBA） */
+.cell .sys{position:absolute;right:3px;top:3px;z-index:2;padding:0 4px;height:14px;line-height:14px;
+  background:rgba(11,17,27,.85);border:1px solid #2f4463;border-radius:3px;color:#9fc6ef;font-size:9px}
 #stage{display:none;position:absolute;inset:0;background:#000}
 #stage.on{display:flex;align-items:center;justify-content:center}
 /* 顶部条（游戏名/分辨率/帧率）+ 底部 HUD 各自占一条，画面在中间那块 */
@@ -65,8 +68,8 @@ body.ingame #hint.show{display:block}
 #stall .srow{display:flex;gap:10px}
 #stall button{height:42px;padding:0 14px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:8px}
 /* ---- 按键设置面板 ---- */
-#bcfg{position:absolute;right:6px;bottom:26px;z-index:9;height:30px;padding:0 12px;font:inherit;font-size:13px;
-  color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:15px;
+#bcfg{flex:0 0 auto;height:19px;padding:0 8px;font:inherit;font-size:11px;line-height:17px;
+  color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:10px;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #bcfg:active{background:#31527f}
 body.ingame #bcfg{display:none}
@@ -101,7 +104,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
-<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div></header>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcfg" type="button">按键</button></header>
 <main>
   <div id="menu"></div>
   <div id="stage"><div id="ejs_game"></div>
@@ -118,7 +121,6 @@ body.ingame main{top:0;bottom:0}
   </div>
 </main>
 <footer id="foot">↑↓←→ 选游戏　数字 直达　确认 开始</footer>
-<button id="bcfg" type="button">按键</button>
 <div id="cfg">
   <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
@@ -128,22 +130,41 @@ body.ingame main{top:0;bottom:0}
 <script>
 'use strict';
 var $=function(id){return document.getElementById(id)};
-/* 这台机器的触摸不一定合成 click 事件，所以按钮直接绑 touchstart；
-   同时保留 mousedown/click（鼠标或辅助输入），用时间窗去重，一次点击只执行一遍。 */
+/* 这台机器的触摸不一定合成 click 事件，所以按钮直接绑触摸事件；
+   同时保留 mousedown/click（鼠标或辅助输入），用时间窗去重，一次点击只执行一遍。
+   列表要能滚动：手指按下先不触发，抬起时若位移超过阈值就当滚动，不进游戏。 */
 function bindTap(el,fn){
   if(!el) return;
-  var last=0;
-  function run(e){
-    if(e){ try{ e.preventDefault(); }catch(x){} }
-    var now=Date.now();
-    if(now-last<400) return;
-    last=now;
+  var sx=0,sy=0,moved=false,armed=false,last=0;
+  function pos(e){
+    var t=(e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0])||e;
+    return {x:t.clientX||0,y:t.clientY||0};
+  }
+  el.addEventListener('touchstart',function(e){
+    if(e.touches&&e.touches.length>1){ armed=false; return; }
+    var p=pos(e); sx=p.x; sy=p.y; moved=false; armed=true;
+  },{passive:true});
+  el.addEventListener('touchmove',function(e){
+    if(!armed) return;
+    var p=pos(e);
+    if(Math.abs(p.x-sx)>12||Math.abs(p.y-sy)>12) moved=true;
+  },{passive:true});
+  el.addEventListener('touchend',function(e){
+    if(!armed) return; armed=false;
+    if(moved) return;                       /* 这一下是在滚动列表 */
+    var now=Date.now(); if(now-last<400) return; last=now;
     try{ el.classList.add('hit'); setTimeout(function(){ el.classList.remove('hit'); },180); }catch(x){}
     try{ fn(e); }catch(x){}
-  }
-  el.addEventListener('touchstart',function(e){ run(e); },{passive:false});
-  el.addEventListener('mousedown',function(e){ run(e); });
-  el.addEventListener('click',function(e){ run(e); });
+  },{passive:true});
+  el.addEventListener('touchcancel',function(){ armed=false; });
+  el.addEventListener('mousedown',function(e){
+    var now=Date.now(); if(now-last<400) return; last=now;
+    try{ fn(e); }catch(x){}
+  });
+  el.addEventListener('click',function(e){
+    var now=Date.now(); if(now-last<400) return; last=now;
+    try{ fn(e); }catch(x){}
+  });
 }
 /* 抓 fetch 失败：WebKit 的未处理拒绝只报一句 "Load failed"，看不出是哪个 URL */
 (function(){
@@ -264,6 +285,8 @@ function natBegin(g){
     try{
       if(r&&r.ok===false){ logs.push('emu/start '+(r.error||'fail')); nat.err=r.error||'start fail'; }
       nat.hasState=!!(r&&r.state);
+      nat.slots=(r&&r.slots)||[];
+      nat.startedAt=Date.now();
     }catch(e){}
     natConnect(0);
   }).catch(function(e){ logs.push('emu/start 拒绝 '+e); natConnect(0); });
@@ -514,8 +537,9 @@ function drawMenu(){
     img.src='/roms/art/'+g.key+'.jpg';
     art.appendChild(img);
     var num=document.createElement('span'); num.className='num';
+    var sys=document.createElement('span'); sys.className='sys'; sys.textContent=g.sys;
     var cap=document.createElement('span'); cap.className='cap'; cap.textContent=g.n;
-    b.append(art,num,cap);
+    b.append(art,num,sys,cap);
     bindTap(b,function(){ start(i); });
     m.appendChild(b);
     cells.push(b);
@@ -967,26 +991,38 @@ var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
 bindTap($('bsave'),function(){
   if(running&&nativeWanted(current)){
-    lastSave=natCmd2(1,slot)?('已存到槽'+slot):'存档失败';
-    loadTip(true,lastSave,900); return;
+    var ok=natCmd2(1,slot);
+    if(ok&&nat.slots&&nat.slots.indexOf(slot)<0) nat.slots.push(slot);
+    lastSave=ok?('已存到槽'+slot):'存档失败';
+    loadTip(true,lastSave+(ok?' · 本局'+playedMin()+'分钟':''),1200); return;
   }
   try{ var f=coreFn('saveSaveFiles'); if(f){ f(); lastSave='savefiles'; } }catch(e){ lastSave='save-err '+e; }
   try{ gm().quickSave('1'); }catch(e){}
 });
 bindTap($('bload'),function(){
   if(running&&nativeWanted(current)){
-    lastSave=natCmd2(2,slot)?('已读回槽'+slot):'这个槽还没有存档';
-    loadTip(true,lastSave,1100); return;
+    if(!(nat.slots&&nat.slots.indexOf(slot)>=0)){
+      lastSave='槽'+slot+' 是空的';
+      loadTip(true,lastSave,1400); return;
+    }
+    lastSave=natCmd2(2,slot)?('已读回槽'+slot):'读取失败';
+    loadTip(true,lastSave,1200); return;
   }
   try{ var f=coreFn('loadSaveFiles'); if(f){ f(); lastSave='loadfiles'; } }catch(e){ lastSave='load-err '+e; }
   try{ gm().quickLoad('1'); }catch(e){}
 });
-/* 点一下换槽：1→2→3→1 */
+/* 本局已经玩了多少分钟：切槽和存档提示里用 */
+function playedMin(){
+  var ms=nat.startedAt?Date.now()-nat.startedAt:0;
+  return Math.max(0,Math.floor(ms/60000));
+}
+/* 点一下换槽：1→2→3→1；切过去就告诉这个槽有没有东西 */
 bindTap($('bslot'),function(){
   slot=slot>=3?1:slot+1;
   try{ localStorage.setItem('e5slot',String(slot)); }catch(e){}
   slotLabel();
-  loadTip(true,'切到槽'+slot,900);
+  var has=nat.slots&&nat.slots.indexOf(slot)>=0;
+  loadTip(true,'槽'+slot+(has?(' 有存档 · 本局'+playedMin()+'分钟'):' 是空槽'),1500);
 });
 bindTap($('bpause'),function(){
   if(running&&nativeWanted(current)){
@@ -1612,6 +1648,7 @@ applyFitMode();
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 try{ hostChromeReset(); }catch(e){}
+try{ slotLabel(); }catch(e){}
 /* 启动时问一下后端原生二进制装了没有；没装就自动回落运行库，
    免得每次开游戏都弹“启动失败”。 */
 (function(){

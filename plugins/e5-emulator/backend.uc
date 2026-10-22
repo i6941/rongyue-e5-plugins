@@ -153,7 +153,15 @@ return function (ctx) {
                 let s = ctx.sh('[ -f ' + ROMDIR + '/' + base + '.st0 ] && echo yes');
                 hasState = index(`${s ?? ''}`, 'yes') !== null;
             } catch (e) { }
-            return { ok: length(pid) > 0, pid: pid, rom: romfile, state: hasState, out: out };
+            /* 哪些槽已经有存档：前端切槽时据此提示"空槽"，不用再跑一次请求 */
+            let slots = [];
+            for (let k = 0; k <= 3; k++) {
+                try {
+                    let s2 = ctx.sh('[ -f ' + ROMDIR + '/' + base + '.st' + k + ' ] && echo yes');
+                    if (index(`${s2 ?? ''}`, 'yes') !== null) push(slots, k);
+                } catch (e) { }
+            }
+            return { ok: length(pid) > 0, pid: pid, rom: romfile, state: hasState, slots: slots, out: out };
         },
         'POST /emu/stop': function () {
             let out = ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
@@ -161,7 +169,11 @@ return function (ctx) {
         },
         'GET /emu/status': function () {
             function has(p) {
-                try { return index(`${ctx.sh('[ -x ' + p + ' ] && echo yes') ?? ''}`, 'yes') !== null; } catch (e) { return false; }
+                try {
+                    /* 只取退出码：以前用 "&& echo yes" 判断，结果缺失时也返回 yes */
+                    let out = trim(`${ctx.sh('[ -x ' + p + ' ]; echo $?') ?? ''}`);
+                    return out === '0';
+                } catch (e) { return false; }
             }
             let bins = { nes: has('/usr/bin/e5emu'), md: has('/usr/bin/e5emu-genesis'), gba: has('/usr/bin/e5emu-gba') };
             let pid = read_text('/var/run/e5emu.pid');
