@@ -4,7 +4,7 @@
 const ROMDIR = '/etc/e5-infoscreen/roms';
 const ROMLINK = '/usr/share/e5-infoscreen/www/roms';
 /* 三个原生核心二进制：FC / MD / GBA（GB） */
-const CORE_BINS = ['/usr/bin/e5emu', '/usr/bin/e5emu-genesis', '/usr/bin/e5emu-gba'];
+const CORE_BINS = ['/usr/bin/e5emu', '/usr/bin/e5emu-genesis', '/usr/bin/e5emu-gba', '/usr/bin/e5emu-arcade'];
 import { open } from 'fs';
 
 // 前端把状态（帧率、核心、错误）POST 过来，写进 /tmp 供 SSH 侧读取。
@@ -184,13 +184,17 @@ return function (ctx) {
         'POST /emu/start': function (req) {
             let b = req.body ?? {};
             let raw = `${b.rom ?? ''}`;
-            let allowed = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-';
+            /* 街机 ROM 在 roms/arc/ 子目录，所以要允许 '/'，但不能出现 '..'
+               或绝对路径，否则拼路径时可以跳出去。 */
+            let allowed = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/';
             let clean = '';
             for (let i = 0; i < length(raw); i++) {
                 let ch = substr(raw, i, 1);
-                if (index(allowed, ch) !== null) clean += ch;
+                /* ucode 的 index() 找不到时返回 -1（不是 null），别写 !== null */
+                if (index(allowed, ch) >= 0) clean += ch;
             }
-            if (length(clean) < 5 || substr(clean, 0, 1) === '.') {
+            if (length(clean) < 5 || substr(clean, 0, 1) === '.' || substr(clean, 0, 1) === '/'
+                || index(clean, '..') >= 0) {
                 return { ok: false, error: 'bad rom name' };
             }
             /* 按扩展名挑内核：每个内核编成一个独立二进制，互不干扰 */
@@ -200,6 +204,7 @@ return function (ctx) {
             if (tail4 === '.nes') bin = '/usr/bin/e5emu';
             else if (tail3 === '.md') bin = '/usr/bin/e5emu-genesis';
             else if (tail4 === '.gba') bin = '/usr/bin/e5emu-gba';
+            else if (tail3 === 'zip') bin = '/usr/bin/e5emu-arcade';   /* 街机：FBNeo，ROM 是 .zip */
             if (bin === '') return { ok: false, error: 'unsupported rom' };
 
             try {
