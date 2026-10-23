@@ -1,0 +1,15 @@
+{
+  "id": "hipda",
+  "api_version": 2,
+  "version": "0.1.0",
+  "name": {
+    "zh": "嗨PDA",
+    "en": "Hi!PDA"
+  },
+  "description": {
+    "zh": "4D4Y 论坛（整页浏览，站点在 Cloudflare 后面，只能由设备浏览器直接打开）",
+    "en": "4D4Y forum in a full-screen frame; the site sits behind Cloudflare, so only the device browser can render it"
+  },
+  "entry": "index.html",
+  "order": 42
+}

@@ -32,6 +32,8 @@ p{margin:0 0 9px;word-wrap:break-word}
 .lh{font-size:11px;color:var(--dim);margin:2px 0 4px}
 .links div.item{padding:5px 0;border-bottom:1px solid #161b22;font-size:13px}
 .links a{color:var(--accent);text-decoration:none}
+.fallback{display:inline-block;padding:9px 12px;border:1px solid var(--accent);border-radius:8px;
+  color:var(--accent);text-decoration:none;font-size:13px}
 </style>
 </head>
 <body>
@@ -127,8 +129,11 @@ p{margin:0 0 9px;word-wrap:break-word}
 
   function render(d){
     if (!d || !d.ok){
-      doc.innerHTML = '<p class="err">' + esc((d && d.error) || '加载失败') + '</p>';
-      statusEl.textContent = (d && d.url) || '';
+      /* 抓不到正文时给出两条出路：直接看原文，或换搜索引擎 */
+      var bad = (d && d.url) || input.value || '';
+      doc.innerHTML = '<p class="err">' + esc((d && d.error) || '加载失败') + '</p>' +
+        (bad ? '<p><a href="#" class="fallback" data-web="' + esc(bad) + '">用原文模式打开这个地址</a></p>' : '');
+      statusEl.textContent = bad;
       return;
     }
     var h = '<h1>' + esc(d.title) + '</h1>';
@@ -179,6 +184,14 @@ p{margin:0 0 9px;word-wrap:break-word}
   }
 
   doc.addEventListener('click', function(e){
+    var w = e.target.closest ? e.target.closest('a[data-web]') : null;
+    if (w){
+      e.preventDefault();
+      var u = w.getAttribute('data-web');
+      input.value = u;
+      showWeb(u);
+      return;
+    }
     var a = e.target.closest ? e.target.closest('a[data-href]') : null;
     if (!a) return;
     e.preventDefault();

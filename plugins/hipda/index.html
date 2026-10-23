@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>嗨PDA</title>
+<style>
+:root{--bg:#0f141b;--fg:#e6edf3;--dim:#8b949e;--line:#222c38;--accent:#58a6ff;--card:#151c25}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:13px/1.5 -apple-system,"Noto Sans CJK SC","Source Han Sans SC",sans-serif;
+  overflow:hidden}
+body{display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:5px;padding:4px 5px;border-bottom:1px solid var(--line);
+  background:#0b1017;flex:none}
+header button{height:26px;padding:0 9px;font:inherit;font-size:12px;color:var(--fg);
+  background:#1b2532;border:1px solid var(--line);border-radius:5px;flex:none}
+header button:active{background:#26323f}
+#title{flex:1;min-width:0;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
+.row{padding:8px 10px;border-bottom:1px solid #17202b}
+.row:active{background:#182230}
+.row b{display:block;font-weight:400;font-size:13px;line-height:1.35;word-break:break-word}
+.row span{display:block;font-size:11px;color:var(--dim);margin-top:2px}
+.post{padding:8px 10px;border-bottom:1px solid #17202b}
+.post .who{font-size:11px;color:var(--accent);margin-bottom:3px}
+.post .txt{font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.pager{display:flex;gap:6px;padding:9px 10px 2px}
+.pager button{flex:1;height:30px;font:inherit;font-size:12px;color:var(--fg);
+  background:#1b2532;border:1px solid var(--line);border-radius:5px}
+.pager button[disabled]{opacity:.35}
+.tip{padding:10px;color:var(--dim);font-size:12px}
+.err{padding:10px;color:#ff7b72;font-size:12px;word-break:break-word}
+#login{display:none;flex-direction:column;gap:7px;padding:12px 12px 0}
+#login.on{display:flex}
+#login label{font-size:11px;color:var(--dim)}
+#login input,#login select{height:32px;padding:0 8px;font:inherit;font-size:13px;color:var(--fg);
+  background:#161f2a;border:1px solid var(--line);border-radius:5px;width:100%}
+#login button{height:34px;margin-top:4px;font:inherit;font-size:13px;color:#fff;
+  background:#1f6feb;border:0;border-radius:6px}
+#login .note{font-size:11px;color:var(--dim);line-height:1.45}
+#qbox{display:none}
+#qbox.on{display:block}
+</style>
+</head>
+<body>
+<header>
+  <button id="back" type="button">‹</button>
+  <div id="title">嗨PDA</div>
+  <button id="acc" type="button">登录</button>
+</header>
+<main id="main"></main>
+<script>
+(function(){
+  var main = document.getElementById('main');
+  var titleEl = document.getElementById('title');
+  var accBtn = document.getElementById('acc');
+  var backBtn = document.getElementById('back');
+
+  var view = 'boards';       /* boards | threads | thread */
+  var fid = 0, tid = 0, page = 1, pages = 1;
+  var boardName = '', threadName = '';
+  var logged = false;
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+  function setTitle(t){ titleEl.textContent = t || '嗨PDA'; }
+
+  function api(path){
+    return fetch('/api/plugins/hipda/' + path).then(function(r){ return r.json(); });
+  }
+
+  function fail(msg){
+    main.innerHTML = '<div class="err">' + esc(msg) + '</div>' +
+      '<div class="pager"><button type="button" data-rel="1">重试</button></div>';
+  }
+
+  /* ---------- 登录 ---------- */
+  function showLogin(){
+    logged = false;
+    accBtn.textContent = '登录';
+    setTitle('登录 4D4Y');
+    main.innerHTML =
+      '<div id="login" class="on">' +
+      '<label>用户名</label><input id="lu" autocapitalize="off" autocorrect="off" spellcheck="false">' +
+      '<label>密码</label><input id="lp" type="password">' +
+      '<label>安全提问</label><select id="lq">' +
+      '<option value="0">没有设置安全提问</option>' +
+      '<option value="1">母亲的名字</option>' +
+      '<option value="2">爷爷的名字</option>' +
+      '<option value="3">父亲出生的城市</option>' +
+      '<option value="4">您其中一位老师的名字</option>' +
+      '<option value="5">您个人计算机的型号</option>' +
+      '<option value="6">您最喜欢的餐馆名称</option>' +
+      '<option value="7">驾驶执照的最后四位数字</option>' +
+      '</select>' +
+      '<div id="qbox"><label>答案</label><input id="la" autocapitalize="off" spellcheck="false"></div>' +
+      '<button id="dologin" type="button">登录</button>' +
+      '<div class="note">账号密码只提交给 4d4y.com，cookie 存在设备上（权限 600）。' +
+      '没设安全提问就选第一项。</div></div>';
+    document.getElementById('lq').addEventListener('change', function(){
+      document.getElementById('qbox').classList.toggle('on', this.value !== '0');
+    });
+    document.getElementById('dologin').addEventListener('click', doLogin);
+  }
+
+  function doLogin(){
+    var u = document.getElementById('lu').value.trim();
+    var p = document.getElementById('lp').value;
+    var q = document.getElementById('lq').value;
+    var a = document.getElementById('la') ? document.getElementById('la').value : '';
+    if (!u || !p){ main.insertAdjacentHTML('beforeend', '<div class="err">用户名和密码都要填</div>'); return; }
+    var btn = document.getElementById('dologin');
+    btn.disabled = true; btn.textContent = '登录中…';
+    fetch('/api/plugins/hipda/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({u: u, p: p, q: q, a: a})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok){ showLogin(); main.insertAdjacentHTML('beforeend',
+        '<div class="err">' + esc((d && d.error) || '登录失败') + '</div>'); return; }
+      logged = true;
+      accBtn.textContent = (d.uname || '已登录').slice(0, 6);
+      loadBoards();
+    }).catch(function(e){
+      btn.disabled = false; btn.textContent = '登录';
+      main.insertAdjacentHTML('beforeend', '<div class="err">' + esc(String(e)) + '</div>');
+    });
+  }
+
+  /* ---------- 版块 ---------- */
+  function loadBoards(){
+    view = 'boards'; setTitle('版块');
+    main.innerHTML = '<div class="tip">加载版块…</div>';
+    api('boards').then(function(d){
+      if (!d || !d.ok){ fail((d && d.error) || '加载失败'); return; }
+      var h = '';
+      for (var i = 0; i < d.list.length; i++){
+        h += '<div class="row" data-fid="' + d.list[i].fid + '"><b>' + esc(d.list[i].name) + '</b></div>';
+      }
+      main.innerHTML = h || '<div class="tip">没有版块</div>';
+    }).catch(function(e){ fail(String(e)); });
+  }
+
+  /* ---------- 帖子列表 ---------- */
+  function loadThreads(f, name, p){
+    view = 'threads'; fid = f; boardName = name || boardName; page = p || 1;
+    setTitle(boardName + ' · 第 ' + page + ' 页');
+    main.innerHTML = '<div class="tip">加载帖子…</div>';
+    api('threads?fid=' + fid + '&page=' + page).then(function(d){
+      if (!d || !d.ok){
+        if (d && d.need_login){ showLogin(); return; }
+        fail((d && d.error) || '加载失败'); return;
+      }
+      pages = d.pages || 1;
+      var h = '';
+      for (var i = 0; i < d.list.length; i++){
+        h += '<div class="row" data-tid="' + d.list[i].tid + '"><b>' + esc(d.list[i].title) + '</b></div>';
+      }
+      h += pager();
+      main.innerHTML = h;
+      main.scrollTop = 0;
+    }).catch(function(e){ fail(String(e)); });
+  }
+
+  /* ---------- 帖子内容 ---------- */
+  function loadThread(t, name, p){
+    view = 'thread'; tid = t; threadName = name || ''; page = p || 1;
+    setTitle((threadName || '帖子') + ' · ' + page + '/' + pages);
+    main.innerHTML = '<div class="tip">加载内容…</div>';
+    api('thread?tid=' + tid + '&page=' + page).then(function(d){
+      if (!d || !d.ok){
+        if (d && d.need_login){ showLogin(); return; }
+        fail((d && d.error) || '加载失败'); return;
+      }
+      if (d.title) threadName = d.title;
+      pages = d.pages || 1;
+      setTitle(threadName + ' · ' + page + '/' + pages);
+      var h = '';
+      for (var i = 0; i < d.list.length; i++){
+        var po = d.list[i];
+        h += '<div class="post">' +
+             (po.author ? '<div class="who">' + esc(po.author) + '</div>' : '') +
+             '<div class="txt">' + esc(po.text) + '</div></div>';
+      }
+      h += pager();
+      main.innerHTML = h;
+      main.scrollTop = 0;
+    }).catch(function(e){ fail(String(e)); });
+  }
+
+  function pager(){
+    return '<div class="pager">' +
+      '<button type="button" data-page="' + (page - 1) + '"' + (page <= 1 ? ' disabled' : '') + '>上一页</button>' +
+      '<button type="button" data-page="' + (page + 1) + '"' + (page >= pages ? ' disabled' : '') + '>下一页</button>' +
+      '</div>';
+  }
+
+  /* ---------- 事件 ---------- */
+  main.addEventListener('click', function(e){
+    var row = e.target.closest('.row');
+    if (row){
+      if (row.dataset.fid) { boardName = row.textContent.trim(); loadThreads(+row.dataset.fid, boardName, 1); return; }
+      if (row.dataset.tid) { threadName = row.querySelector('b').textContent; loadThread(+row.dataset.tid, threadName, 1); return; }
+    }
+    var pg = e.target.closest('button[data-page]');
+    if (pg && !pg.disabled){
+      var p = +pg.dataset.page;
+      if (view === 'threads') loadThreads(fid, boardName, p);
+      else if (view === 'thread') loadThread(tid, threadName, p);
+      return;
+    }
+    var rel = e.target.closest('button[data-rel]');
+    if (rel){
+      if (view === 'boards') loadBoards();
+      else if (view === 'threads') loadThreads(fid, boardName, page);
+      else loadThread(tid, threadName, page);
+    }
+  });
+
+  backBtn.addEventListener('click', function(){
+    if (view === 'thread') loadThreads(fid, boardName, page);
+    else if (view === 'threads') loadBoards();
+    else loadBoards();
+  });
+
+  accBtn.addEventListener('click', function(){
+    if (!logged) { showLogin(); return; }
+    if (!confirm('退出登录？')) return;
+    fetch('/api/plugins/hipda/state').then(function(){ loadBoards(); });
+    logged = false;
+    accBtn.textContent = '登录';
+    showLogin();
+  });
+
+  /* ---------- 启动 ---------- */
+  api('state').then(function(d){
+    if (d && d.logged){ logged = true; accBtn.textContent = (d.uname || '已登录').slice(0, 6); loadBoards(); }
+    else showLogin();
+  }).catch(function(){ showLogin(); });
+})();
+</script>
+</body>
+</html>
