@@ -144,7 +144,8 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     q.make();
     var n = q.getModuleCount();
     var cv = qrImg;
-    var scale = Math.max(2, Math.floor(190 / (n + 4)));
+    /* 320 像素宽的屏幕上尽量画大一点，159px 的二维码手机不好对焦 */
+    var scale = Math.max(2, Math.floor(282 / (n + 4)));
     var px = scale * (n + 4);
     cv.width = px; cv.height = px;
     cv.style.width = px + 'px'; cv.style.height = px + 'px';
