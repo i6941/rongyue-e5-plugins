@@ -163,13 +163,28 @@ def cmd_threads(argv):
     if '您还未登录' in html:
         return {'ok': False, 'error': '未登录', 'need_login': True}
     out, seen = [], set()
-    # Discuz 7.2: each thread row has <a href="viewthread.php?tid=NNN...">title</a>
-    for m in re.finditer(r'<a href="viewthread\.php\?tid=(\d+)[^"]*"[^>]*>(.*?)</a>', html, re.S):
-        tid, title = m.group(1), strip_html(m.group(2)).strip()
-        if not title or tid in seen or title.startswith('本版'):
+    # Discuz 7.2 的帖子行是 <tbody id="normalthread_NNN">，先按行解析，拿不到再退回整页扫链接
+    for row in re.finditer(r'<tbody id="normalthread_(\d+)"(.*?)</tbody>', html, re.S):
+        tid, body = row.group(1), row.group(2)
+        link = re.search(r'<a href="viewthread\.php\?tid=\d+[^"]*"[^>]*>(.*?)</a>', body, re.S)
+        if not link:
+            continue
+        title = strip_html(link.group(1)).strip()
+        if not title or tid in seen:
             continue
         seen.add(tid)
-        out.append({'tid': int(tid), 'title': title})
+        replies = re.search(r'<cite>.*?</cite>\s*<em>(\d+)</em>', body, re.S)
+        author = re.search(r'class="author"[^>]*>.*?space\.php\?uid=\d+"[^>]*>([^<]+)</a>', body, re.S)
+        out.append({'tid': int(tid), 'title': title,
+                    'author': strip_html(author.group(1)).strip() if author else '',
+                    'replies': int(replies.group(1)) if replies else 0})
+    if not out:
+        for m in re.finditer(r'<a href="viewthread\.php\?tid=(\d+)[^"]*"[^>]*>(.*?)</a>', html, re.S):
+            tid, title = m.group(1), strip_html(m.group(2)).strip()
+            if not title or tid in seen or title.startswith('本版'):
+                continue
+            seen.add(tid)
+            out.append({'tid': int(tid), 'title': title})
     pages = 1
     pm = re.findall(r'page=(\d+)', html)
     if pm:
@@ -210,13 +225,22 @@ def cmd_thread(argv):
     return {'ok': True, 'title': title, 'list': posts, 'page': page, 'pages': min(pages, 500)}
 
 
+def cmd_debug(argv):
+    """抓一个页面并返回去掉标签后的前 1200 字，用来核对解析是否符合实际结构。"""
+    url = argv[0] if argv else ''
+    if not url.startswith('http'):
+        return {'ok': False, 'error': 'need url'}
+    html, final = fetch(url)
+    return {'ok': True, 'url': final, 'charset': 'gb18030', 'text': strip_html(html)[:1200]}
+
+
 def main():
     if len(sys.argv) < 2:
         print(json.dumps({'ok': False, 'error': 'usage'}))
         return
     cmd, argv = sys.argv[1], sys.argv[2:]
     fn = {'login': cmd_login, 'state': cmd_state, 'boards': cmd_boards,
-          'threads': cmd_threads, 'thread': cmd_thread}.get(cmd)
+          'threads': cmd_threads, 'thread': cmd_thread, 'debug': cmd_debug}.get(cmd)
     if not fn:
         print(json.dumps({'ok': False, 'error': 'unknown cmd'}))
         return

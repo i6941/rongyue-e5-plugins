@@ -48,6 +48,7 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
 <header>
   <button id="back" type="button">‹</button>
   <div id="title">嗨PDA</div>
+  <button id="web" type="button">网页</button>
   <button id="acc" type="button">登录</button>
 </header>
 <main id="main"></main>
@@ -57,6 +58,8 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
   var titleEl = document.getElementById('title');
   var accBtn = document.getElementById('acc');
   var backBtn = document.getElementById('back');
+  var webBtn = document.getElementById('web');
+  var curPageUrl = 'https://www.4d4y.com/forum/forumdisplay.php?fid=2';
 
   var view = 'boards';       /* boards | threads | thread */
   var fid = 0, tid = 0, page = 1, pages = 1;
@@ -149,6 +152,7 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
   /* ---------- 帖子列表 ---------- */
   function loadThreads(f, name, p){
     view = 'threads'; fid = f; boardName = name || boardName; page = p || 1;
+    curPageUrl = 'https://www.4d4y.com/forum/forumdisplay.php?fid=' + fid + '&page=' + page;
     setTitle(boardName + ' · 第 ' + page + ' 页');
     main.innerHTML = '<div class="tip">加载帖子…</div>';
     api('threads?fid=' + fid + '&page=' + page).then(function(d){
@@ -170,6 +174,7 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
   /* ---------- 帖子内容 ---------- */
   function loadThread(t, name, p){
     view = 'thread'; tid = t; threadName = name || ''; page = p || 1;
+    curPageUrl = 'https://www.4d4y.com/forum/viewthread.php?tid=' + tid + '&page=' + page;
     setTitle((threadName || '帖子') + ' · ' + page + '/' + pages);
     main.innerHTML = '<div class="tip">加载内容…</div>';
     api('thread?tid=' + tid + '&page=' + page).then(function(d){
@@ -226,6 +231,11 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
     if (view === 'thread') loadThreads(fid, boardName, page);
     else if (view === 'threads') loadBoards();
     else loadBoards();
+  });
+
+  /* 兜底：帖子解析万一不准，直接用浏览器插件看网页版 */
+  webBtn.addEventListener('click', function(){
+    location.href = '/plugins/browser/index.html?web=1&url=' + encodeURIComponent(curPageUrl);
   });
 
   accBtn.addEventListener('click', function(){

@@ -53,6 +53,14 @@ return function (ctx) {
             if (!fid) return { ok: false, error: 'bad fid' };
             return run('threads ' + fid + ' ' + (page ? page : 1));
         },
+        /* 诊断用：抓指定页面返回纯文本，只允许本站路径 */
+        'GET /debug': function (req) {
+            let u = `${req.query?.url ?? ''}`;
+            if (index(u, 'https://www.4d4y.com/forum/') !== 0) return { ok: false, error: 'bad url' };
+            let q = u;
+            if (index(q, "'") >= 0) return { ok: false, error: 'bad url' };
+            return run("debug '" + q + "'");
+        },
         'GET /thread': function (req) {
             let tid = posint(req.query?.tid);
             let page = posint(req.query?.page);
