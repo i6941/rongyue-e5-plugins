@@ -110,7 +110,9 @@ p{margin:0 0 9px;word-wrap:break-word}
     applyZoom();
     modeState = 'web';
     modeBtn.textContent = '代理';
-    statusEl.textContent = '原文模式 · ' + url;
+    /* 原文模式是跨域 iframe，界面读不到里面的导航：
+       这里只能如实说明「站内点击不进历史」，不要假装前进后退是准的 */
+    statusEl.textContent = '原文 · 站内点击不进历史 · ' + url;
     /* onload 必须先挂再设 src，否则加载快的页面会错过回调 */
     var done = false;
     frame.onload = function(){ done = true; probe('loaded', frame.src); };
