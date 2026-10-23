@@ -166,18 +166,25 @@ def cmd_threads(argv):
     # Discuz 7.2 的帖子行是 <tbody id="normalthread_NNN">，先按行解析，拿不到再退回整页扫链接
     for row in re.finditer(r'<tbody id="normalthread_(\d+)"(.*?)</tbody>', html, re.S):
         tid, body = row.group(1), row.group(2)
-        link = re.search(r'<a href="viewthread\.php\?tid=\d+[^"]*"[^>]*>(.*?)</a>', body, re.S)
-        if not link:
-            continue
-        title = strip_html(link.group(1)).strip()
+        # 行里第一个 viewthread 链接是文件夹图标，标题在后面那个带文字的链接上
+        title = ''
+        for lm in re.finditer(r'<a href="viewthread\.php\?tid=\d+[^"]*"[^>]*>(.*?)</a>', body, re.S):
+            cand = strip_html(lm.group(1)).strip()
+            if cand:
+                title = cand
+                break
         if not title or tid in seen:
             continue
         seen.add(tid)
-        replies = re.search(r'<cite>.*?</cite>\s*<em>(\d+)</em>', body, re.S)
-        author = re.search(r'class="author"[^>]*>.*?space\.php\?uid=\d+"[^>]*>([^<]+)</a>', body, re.S)
+        author = re.search(r'class="author".*?space\.php\?uid=\d+"[^>]*>([^<]{1,24})</a>', body, re.S)
+        nums = re.search(r'class="nums"[^>]*>(.*?)</td>', body, re.S)
+        rep = 0
+        if nums:
+            d = re.search(r'(\d+)', strip_html(nums.group(1)))
+            rep = int(d.group(1)) if d else 0
         out.append({'tid': int(tid), 'title': title,
                     'author': strip_html(author.group(1)).strip() if author else '',
-                    'replies': int(replies.group(1)) if replies else 0})
+                    'replies': rep})
     if not out:
         for m in re.finditer(r'<a href="viewthread\.php\?tid=(\d+)[^"]*"[^>]*>(.*?)</a>', html, re.S):
             tid, title = m.group(1), strip_html(m.group(2)).strip()
@@ -196,28 +203,39 @@ def cmd_thread(argv):
     tid = int(argv[0])
     page = int(argv[1]) if len(argv) > 1 else 1
     html, _ = fetch('viewthread.php?tid=%d&page=%d' % (tid, page))
-    if '您还未登录' in html:
+    if is_guest(html):
         return {'ok': False, 'error': '未登录', 'need_login': True}
     title = ''
     m = re.search(r'<title>(.*?)</title>', html, re.S)
     if m:
         title = strip_html(m.group(1)).replace('- 4D4Y', '').strip()
     posts = []
-    # posts: <div class="postmessage" id="postmessage_NNN"> ... </div>
-    for m in re.finditer(r'<div class="postmessage"[^>]*id="postmessage_(\d+)"[^>]*>(.*?)</div>', html, re.S):
-        body = strip_html(m.group(2))
-        if body:
-            posts.append({'pid': int(m.group(1)), 'text': body[:4000]})
-    if not posts:
-        for m in re.finditer(r'id="postmessage_(\d+)"[^>]*>(.*?)</td>', html, re.S):
-            body = strip_html(m.group(2))
-            if body:
-                posts.append({'pid': int(m.group(1)), 'text': body[:4000]})
-    # authors, in document order
-    names = [strip_html(x).strip() for x in
-             re.findall(r'class="authi"[^>]*>.*?space\.php\?uid=\d+"[^>]*>([^<]+)</a>', html, re.S)]
-    for i, p in enumerate(posts):
-        p['author'] = names[i] if i < len(names) else ''
+    # 这套模板的正文是 <td class="t_msgfont" id="postmessage_NNN">，
+    # 同页还有 <div class="postmessage firstpost"> 只是外层容器（没有 id）。
+    marks = list(re.finditer(r'id="postmessage_(\d+)"[^>]*>', html))
+    for idx, mk in enumerate(marks):
+        pid = int(mk.group(1))
+        start = mk.end()
+        nxt = marks[idx + 1].start() if idx + 1 < len(marks) else len(html)
+        stop = html.find('</td>', start)
+        if stop < 0 or stop > nxt:
+            stop = nxt
+        body = strip_html(html[start:stop])[:3000]
+        if not body:
+            continue
+        # 第一帖前面还隔着标题栏，窗口放大一些，否则楼主的名字取不到
+        prev = html[max(0, mk.start() - 12000):mk.start()]
+        # 作者在正文前最近的一个 space.php 链接；优先认 postauthor 区块，避免拿到页头的当前用户
+        author = ''
+        pa = re.findall(r'class="postauthor".*?space\.php\?uid=\d+"[^>]*>([^<]{1,24})</a>', prev, re.S)
+        if pa:
+            author = pa[-1].strip()
+        else:
+            names = re.findall(r'space\.php\?uid=\d+"[^>]*>([^<]{1,24})</a>', prev)
+            author = names[-1].strip() if names else ''
+        tm = re.search(r'发表于 ([0-9]{4}-[0-9]{1,2}-[0-9]{1,2}[ 0-9:]*)', prev)
+        posts.append({'pid': pid, 'author': author,
+                      'time': tm.group(1).strip() if tm else '', 'text': body})
     pages = 1
     pm = re.findall(r'page=(\d+)', html)
     if pm:

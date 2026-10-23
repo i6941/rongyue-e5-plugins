@@ -163,7 +163,12 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
       pages = d.pages || 1;
       var h = '';
       for (var i = 0; i < d.list.length; i++){
-        h += '<div class="row" data-tid="' + d.list[i].tid + '"><b>' + esc(d.list[i].title) + '</b></div>';
+        var it = d.list[i];
+        var sub = [];
+        if (it.author) sub.push(it.author);
+        if (it.replies) sub.push(it.replies + ' 回复');
+        h += '<div class="row" data-tid="' + it.tid + '"><b>' + esc(it.title) + '</b>' +
+             (sub.length ? '<span>' + esc(sub.join(' · ')) + '</span>' : '') + '</div>';
       }
       h += pager();
       main.innerHTML = h;
