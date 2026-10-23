@@ -32,6 +32,19 @@ return function (ctx) {
                 return { ok: true };
             } catch (e) { return { ok: false, error: `${e}` }; }
         },
+        /* 同源代理：把外站 HTML 取回来、链接改写成 /proxy?url=…，
+           页面就和插件同源了，界面才能读标题、地址并接管点击。 */
+        'GET /proxy': function (req) {
+            let url = clean_url(req.query?.url ?? '');
+            if (url === null)
+                return { status: 400, type: 'text/html; charset=utf-8',
+                         body: '<p style="font:13px sans-serif;color:#c00">网址不合法</p>' };
+            let out = ctx.sh("python3 /etc/e5-infoscreen/plugins/browser/e5-proxy '" + url + "'");
+            if (type(out) != 'string' || length(out) == 0)
+                return { status: 502, type: 'text/html; charset=utf-8',
+                         body: '<p style="font:13px sans-serif;color:#c00">代理抓取失败</p>' };
+            return { status: 200, type: 'text/html; charset=utf-8', body: out };
+        },
         'GET /browse': function (req) {
             let url = clean_url(req.query?.url ?? '');
             if (url === null) return { ok: false, error: 'bad url' };

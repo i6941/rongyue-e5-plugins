@@ -108,7 +108,8 @@ p{margin:0 0 9px;word-wrap:break-word}
     curUrl = url;
     document.body.classList.add('web');
     applyZoom();
-    modeBtn.textContent = '阅读';
+    modeState = 'web';
+    modeBtn.textContent = '代理';
     statusEl.textContent = '原文模式 · ' + url;
     /* onload 必须先挂再设 src，否则加载快的页面会错过回调 */
     var done = false;
@@ -117,8 +118,40 @@ p{margin:0 0 9px;word-wrap:break-word}
     probe('start', url);
     setTimeout(function(){ if(!done) probe('timeout', frame.src); }, 12000);
   }
+  /* 同源代理模式：页面从本地地址加载，于是能读标题、能接管链接点击 */
+  function proxySrc(url){
+    return '/api/plugins/browser/proxy?url=' + encodeURIComponent(url);
+  }
+  function showProxy(url){
+    webMode = true;
+    modeState = 'proxy';
+    document.body.classList.add('web');
+    modeBtn.textContent = '阅读';
+    curUrl = url;
+    input.value = url;
+    frame.onload = function(){
+      try {
+        var t = frame.contentDocument && frame.contentDocument.title;
+        if (t) statusEl.textContent = '同源代理 · ' + t + ' · ' + url;
+        var doc2 = frame.contentDocument;
+        if (doc2 && !doc2.__e5bound){
+          doc2.__e5bound = true;
+          doc2.addEventListener('click', function(ev){
+            var a = ev.target.closest && ev.target.closest('a[href]');
+            if (!a) return;
+            var href = a.getAttribute('href') || '';
+            if (href.indexOf('/api/plugins/browser/proxy?') === 0) return; /* 已改写，照常导航 */
+          });
+        }
+      } catch(e){}
+    };
+    frame.src = proxySrc(url);
+    applyZoom();
+  }
+
   function showReader(){
     webMode = false;
+    modeState = 'reader';
     document.body.classList.remove('web');
     modeBtn.textContent = '原文';
     frame.src = 'about:blank';
@@ -253,9 +286,20 @@ p{margin:0 0 9px;word-wrap:break-word}
     applyZoom();
     if (!webMode && input.value){ showWeb(target(input.value)); }
   });
+  /* 三种模式循环：阅读 → 原文 → 同源代理 → 阅读 */
+  var modeState = 'reader';
   modeBtn.addEventListener('click', function(){
-    if (webMode) { showReader(); if (input.value) go(input.value, false); }
-    else { var u = target(input.value); if (u) openUrl(u); }
+    var u = target(input.value) || curUrl;
+    if (modeState === 'reader'){
+      if (!u) return;
+      modeState = 'web'; showWeb(u); modeBtn.textContent = '代理';
+    } else if (modeState === 'web'){
+      if (!u) return;
+      modeState = 'proxy'; showProxy(u); modeBtn.textContent = '阅读';
+    } else {
+      modeState = 'reader'; showReader(); modeBtn.textContent = '原文';
+      if (u) go(u, false);
+    }
   });
   /* 浏览器的前进/后退：只记录我们自己打开的地址。站内点链接属于跨域导航，
      同源策略下拿不到新地址，所以那种跳转不会进历史栈。 */

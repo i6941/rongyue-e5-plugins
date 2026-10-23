@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+# e5-proxy: fetch one HTML page and rewrite its links so it can be loaded from
+# 127.0.0.1 (same origin as the browser plugin). That is what makes the address
+# bar, history and click interception work like a real browser.
+import re
+import sys
+import urllib.parse
+
+sys.path.insert(0, '/etc/e5-infoscreen/plugins/browser')
+
+
+def main():
+    url = sys.argv[1]
+    from importlib.machinery import SourceFileLoader
+    mod = SourceFileLoader('e5browse', '/etc/e5-infoscreen/plugins/browser/e5-browse').load_module()
+    raw, ctype, final = mod.fetch(url)
+    html, enc = mod.decode(raw, ctype)
+    base = final or url
+
+    # 只改 href/src/action 这三类属性，其它原样保留
+    def repl(m):
+        attr, quote, val = m.group(1), m.group(2), m.group(3)
+        if val.startswith(('data:', 'javascript:', 'mailto:', 'tel:', '#')):
+            return m.group(0)
+        absu = urllib.parse.urljoin(base, val)
+        if not absu.lower().startswith(('http://', 'https://')):
+            return m.group(0)
+        q = urllib.parse.urlencode({'url': absu})
+        return '%s=%s/api/plugins/browser/proxy?%s%s' % (attr, quote, q, quote)
+
+    html = re.sub(r'(?i)\b(href|src|action)\s*=\s*(["\'])([^"\']*)\2', repl, html)
+
+    # 在页面里加一个提示条，说明这是经由本地代理加载的
+    inject = ('<div style="position:fixed;left:0;right:0;bottom:0;z-index:2147483647;'
+              'font:11px/1.4 sans-serif;color:#ddd;background:rgba(0,0,0,.72);padding:2px 6px">'
+              '同源代理 · %s</div>' % (base[:80]))
+    if '</body>' in html.lower():
+        html = re.sub(r'(?i)</body>', inject + '</body>', html, count=1)
+    else:
+        html += inject
+
+    out = html.encode('utf-8')
+    sys.stdout.buffer.write(out)
+
+
+if __name__ == '__main__':
+    main()
