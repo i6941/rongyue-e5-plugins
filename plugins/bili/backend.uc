@@ -101,7 +101,31 @@ return function (ctx) {
         if (length(s) !== 12 || substr(s, 0, 2) !== 'BV') return true;
         let alnum = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
         for (let i = 2; i < 12; i++) if (index(alnum, substr(s, i, 1)) < 0) return true;
-        return false;
+    return false;
+    }
+
+    /* 停播放器要确认进程真的没了：只发信号就走，下一次播放会和旧实例抢端口 */
+    function stop_player() {
+        let pid = trim(`${ctx.sh('cat /var/run/e5play.pid 2>/dev/null') ?? ''}`);
+        if (length(pid) > 0) {
+            let cmd = `${ctx.sh('tr "\\0" " " < /proc/' + pid + '/cmdline 2>/dev/null') ?? ''}`;
+            if (index(cmd, 'e5play') !== null) {
+                ctx.sh('kill -TERM ' + pid + ' 2>/dev/null');
+                let i = 0;
+                while (i < 20) {
+                    if (trim(`${ctx.sh('kill -0 ' + pid + ' 2>/dev/null && echo yes') ?? ''}`) !== 'yes')
+                        break;
+                    ctx.sh('/opt/e5/bin/busybox sleep 0.1');
+                    i++;
+                }
+                if (trim(`${ctx.sh('kill -0 ' + pid + ' 2>/dev/null && echo yes') ?? ''}`) === 'yes') {
+                    ctx.sh('kill -KILL ' + pid + ' 2>/dev/null');
+                    ctx.sh('/opt/e5/bin/busybox sleep 0.2');
+                }
+            }
+        }
+        ctx.sh('rm -f /var/run/e5play.pid 2>/dev/null');
+        return length(trim(`${ctx.sh('pidof e5play 2>/dev/null') ?? ''}`)) == 0;
     }
 
     return {
@@ -215,7 +239,7 @@ return function (ctx) {
                 return { ok: true, state: 'cached', size: have, cid: cid };
             ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' +
                    res + ' ' + tmp);
-            let script = "curl -s --max-time 180 --max-filesize 300000000 -A '" + UA +
+            let script = "curl -s --max-time 1800 --retry 3 --retry-delay 2 --max-filesize 300000000 -A '" + UA +
                          "' -H 'Referer: " + REFERER + "'" + cookie_hdr() + " -o " + tmp +
                          " -w '%{http_code} %{size_download}' '" + u + "' > " + res;
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- -c "' +
@@ -235,7 +259,17 @@ return function (ctx) {
                     if (have > 1048576)
                         return { ok: true, ready: true, cached: true, size: have };
                 }
-                return { ok: true, ready: false, state: 'downloading' };
+                /* 下载进程没了、结果文件又是空的，说明 curl 被中断（超时或被换片杀掉）。
+                   以前这里一律回「下载中」，页面就永远等下去——现在改成明确失败，
+                   并带上已经下了多少字节，界面能显示进度。 */
+                let pidf = trim(`${ctx.sh('cat /var/run/bili-dl.pid 2>/dev/null') ?? ''}`);
+                let alive = 'no';
+                if (length(pidf) > 0)
+                    alive = trim(`${ctx.sh('kill -0 ' + pidf + ' 2>/dev/null && echo yes') ?? ''}`);
+                let bytes = num(`${ctx.sh('wc -c < /tmp/bili-dl.mp4 2>/dev/null') ?? '0'}`);
+                if (alive !== 'yes')
+                    return { ok: true, ready: false, state: 'failed', code: 'interrupted', bytes: bytes };
+                return { ok: true, ready: false, state: 'downloading', bytes: bytes };
             }
             let parts = split(r, ' ');
             let code = `${parts[0] ?? '0'}`;
@@ -275,15 +309,14 @@ return function (ctx) {
                 return { ok: false, error: 'no player binary' };
             if (trim(`${ctx.sh('test -s ' + mp4 + ' && echo yes') ?? ''}`) !== 'yes')
                 return { ok: false, error: 'no cached video' };
-            ctx.sh('start-stop-daemon -K -q -p /var/run/e5play.pid; rm -f /var/run/e5play.pid');
+            if (!stop_player()) return { ok: false, error: '旧播放器没退出' };
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/e5play.pid -x ' + bin +
                    ' -- --serve ' + mp4 + ' 9511');
             return { ok: true, port: 9511 };
         },
         /* 退出播放时一定要停掉：一个插件目录里只常驻一个解码进程 */
         'GET /player-stop': function () {
-            ctx.sh('start-stop-daemon -K -q -p /var/run/e5play.pid; rm -f /var/run/e5play.pid');
-            return { ok: true };
+            return { ok: true, stopped: stop_player() };
         },
         /* 封面代理：同样的 Referer 问题 */
         'GET /img': function (req) {

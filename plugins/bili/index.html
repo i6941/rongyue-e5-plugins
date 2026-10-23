@@ -28,6 +28,9 @@ header button svg{display:block}
 .card .m{font-size:10px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #player{display:none;flex:1 1 auto;flex-direction:column;background:#000}
 #player.on{display:flex}
+#qbtn{position:absolute;right:8px;top:8px;z-index:5;height:24px;padding:0 8px;font:inherit;
+  font-size:11px;color:#fff;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.35);
+  border-radius:12px}
 #screen{flex:1 1 auto;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
 #screen canvas{width:100%;height:auto;max-height:100%;background:#000;display:block}
 #pinfo{font-size:11px;color:var(--dim);padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -78,6 +81,7 @@ header button svg{display:block}
 </div>
 <div id="player">
   <div id="screen"><canvas id="cv" width="320" height="180"></canvas></div>
+  <button id="qbtn" type="button" title="切换画质">720P</button>
   <div id="pinfo"></div>
 </div>
 <script src="/sdk/e5.js"></script>
@@ -517,6 +521,7 @@ header button svg{display:block}
       if (my !== undefined && my !== playToken) return null;
       if (d && d.ready) return d;
       if (d && d.state === 'failed'){ probe('dl-failed', String(d.code)); return null; }
+      if (d && d.state === 'downloading' && d.bytes) statusEl.textContent = '下载中… ' + Math.round(d.bytes / 1048576) + 'MB';
       if (n > 150) return null;
       statusEl.textContent = '下载中… ' + n + 's';
       return new Promise(function(res){ setTimeout(function(){ res(waitReady(n + 1, my)); }, 1000); });
@@ -536,6 +541,7 @@ header button svg{display:block}
   function play(i){
     var it = items[i];
     if (!it) return;
+    curIndex = i;
     var my = ++playToken;
     /* 先把上一个播放器收掉：不停就开下一个，端口和缓存文件都被占着，
        第二个视频会一直卡在加载。 */
@@ -677,8 +683,8 @@ header button svg{display:block}
   });
 
   window.addEventListener('pagehide', function(){
-    /* 开了后台播放就不收播放器，让声音继续 */
-    if (!bgAudio){ try { (new Image()).src = '/api/plugins/bili/player-stop?t=' + Date.now(); } catch(e){} }
+    /* 页面被关掉（宿主退出应用）也要停播，和后台播放开关无关 */
+    try { (new Image()).src = '/api/plugins/bili/player-stop?t=' + Date.now(); } catch(e){}
   });
 
   /* ---------- 全屏 / 键盘 ---------- */
@@ -737,7 +743,7 @@ header button svg{display:block}
     }catch(e){}
   }
 
-  var selIdx = -1;
+  var selIdx = -1, curIndex = 0;
   function cards(){ return [].slice.call(listEl.querySelectorAll('.card')); }
   function selectCard(i){
     var cs = cards();
@@ -750,10 +756,10 @@ header button svg{display:block}
   }
 
   function exitApp(){
-    /* 退出前把播放器收掉，否则声音会跟着跑到别的应用里。
-       用图片请求而不是 fetch：页面马上被销毁，fetch 可能来不及发出去。 */
+    /* 退出应用一定停播——「后台播放」只管在应用内返回列表，不应该让声音跟着
+       跑到桌面。用图片请求而不是 fetch：页面马上被销毁，fetch 可能来不及发出去。 */
     try{
-      if (!bgAudio) (new Image()).src = '/api/plugins/bili/player-stop?t=' + Date.now();
+      (new Image()).src = '/api/plugins/bili/player-stop?t=' + Date.now();
     }catch(e){}
     try{
       if (window.parent !== window && typeof e5 !== 'undefined' && e5.exit){ e5.exit(); return; }
@@ -809,6 +815,8 @@ header button svg{display:block}
   function syncQn(){
     var b = document.getElementById('setqn');
     if (b) b.textContent = QN_NAME[qnPref] || (qnPref + 'P');
+    var q = document.getElementById('qbtn');
+    if (q) q.textContent = QN_NAME[qnPref] || (qnPref + 'P');
   }
   var setQnBtn = document.getElementById('setqn');
   if (setQnBtn) setQnBtn.addEventListener('click', function(){
