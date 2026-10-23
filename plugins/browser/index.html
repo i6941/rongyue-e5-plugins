@@ -10,11 +10,14 @@
 html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
   font:14px/1.55 -apple-system,"Noto Sans CJK SC","Source Han Sans SC",sans-serif}
 body{display:flex;flex-direction:column}
-header{display:flex;gap:4px;padding:4px;border-bottom:1px solid var(--line)}
+header{display:flex;flex-direction:column;gap:3px;padding:4px;border-bottom:1px solid var(--line)}
+header .bar1,header .bar2{display:flex;gap:4px}
+header .bar2 button{flex:1;height:22px;padding:0;font-size:11px}
 header input{flex:1;min-width:0;background:#161b22;border:1px solid var(--line);
   color:var(--fg);border-radius:6px;padding:7px 8px;font-size:13px}
 header button{background:#21262d;border:1px solid var(--line);color:var(--fg);
-  border-radius:6px;padding:0 10px;font-size:13px}
+  border-radius:6px;padding:0 9px;font-size:13px}
+header button.on{color:#f0b429;border-color:#5a4415}
 header button:active{background:#30363d}
 #status{font-size:11px;color:var(--dim);padding:3px 9px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
@@ -38,12 +41,20 @@ p{margin:0 0 9px;word-wrap:break-word}
 </head>
 <body>
 <header>
-  <button id="back" type="button" title="返回">‹</button>
-  <input id="url" type="text" placeholder="网址或搜索" autocomplete="off"
-         autocapitalize="off" spellcheck="false">
-  <button id="go" type="button">打开</button>
-  <button id="zoom" type="button">1:1</button>
-  <button id="mode" type="button">原文</button>
+  <div class="bar1">
+    <button id="back" type="button" title="返回">‹</button>
+    <button id="fwd" type="button" title="前进">›</button>
+    <input id="url" type="text" placeholder="网址或搜索" autocomplete="off"
+           autocapitalize="off" spellcheck="false">
+    <button id="go" type="button">打开</button>
+  </div>
+  <div class="bar2">
+    <button id="zoom" type="button">1:1</button>
+    <button id="mode" type="button">原文</button>
+    <button id="reload" type="button">刷新</button>
+    <button id="mark" type="button">☆</button>
+    <button id="home2" type="button">首页</button>
+  </div>
 </header>
 <div id="status"></div>
 <main id="doc"></main>
@@ -55,6 +66,11 @@ p{margin:0 0 9px;word-wrap:break-word}
   var input = document.getElementById('url');
   var goBtn = document.getElementById('go');
   var backBtn = document.getElementById('back');
+  var fwdBtn = document.getElementById('fwd');
+  var reloadBtn = document.getElementById('reload');
+  var markBtn = document.getElementById('mark');
+  var homeBtn = document.getElementById('home2');
+  var histBack = [], histFwd = [], curUrl = '';
   var stack = [];
   var busy = false;
   var webMode = false;
@@ -89,6 +105,7 @@ p{margin:0 0 9px;word-wrap:break-word}
 
   function showWeb(url){
     webMode = true;
+    curUrl = url;
     document.body.classList.add('web');
     applyZoom();
     modeBtn.textContent = '阅读';
@@ -109,8 +126,14 @@ p{margin:0 0 9px;word-wrap:break-word}
   }
 
   function home(){
+    curUrl = '';
     var h = '<div class="home"><p style="color:#8b949e;font-size:12px;margin:2px 0 6px">' +
             '输入网址，或输入关键词搜索</p>';
+    var ms = marks();
+    for (var mi = 0; mi < ms.length; mi++){
+      h += '<a href="#" data-href="' + esc(ms[mi].u) + '" data-mode="web">★ ' +
+           esc(ms[mi].t || ms[mi].u) + '<span>' + esc(ms[mi].u) + '</span></a>';
+    }
     for (var i = 0; i < HOME.length; i++){
       h += '<a href="#" data-href="' + esc(HOME[i][1]) + '" data-mode="' + esc(HOME[i][2]) + '">' +
            esc(HOME[i][0]) + '<span>' + esc(HOME[i][1].replace(/^q:/, '搜索：')) +
@@ -181,14 +204,14 @@ p{margin:0 0 9px;word-wrap:break-word}
     var url = target(q);
     if (!url || busy) return;
     if (webMode){ showWeb(url); input.value = url; return; }
+    curUrl = url;
     setBusy(true);
     statusEl.textContent = '加载中…';
     var t0 = Date.now();
     fetch('/api/plugins/browser/browse?url=' + encodeURIComponent(url) + (via ? '&via=' + via : ''))
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if (push !== false && input.value && !/^q:/.test(input.value)) stack.push(input.value);
-        render(d);
+            render(d);
       })
       .catch(function(e){
         doc.innerHTML = '<p class="err">' + esc(String(e)) + '</p>';
@@ -219,13 +242,12 @@ p{margin:0 0 9px;word-wrap:break-word}
     e.preventDefault();
     var h = a.getAttribute('data-href');
     if (!h) return;
-    if (a.getAttribute('data-mode') === 'web'){ showWeb(target(h)); input.value = target(h); return; }
+    if (a.getAttribute('data-mode') === 'web'){ openUrl(target(h)); return; }
     if (h.indexOf('q:') === 0){ go(h, false); return; }
-    stack.push(input.value || '');
-    go(h, false);
+    openUrl(target(h));
   });
 
-  goBtn.addEventListener('click', function(){ go(input.value, false); });
+  goBtn.addEventListener('click', function(){ openUrl(target(input.value)); });
   document.getElementById('zoom').addEventListener('click', function(){
     zoomIdx = (zoomIdx + 1) % ZOOMS.length;
     applyZoom();
@@ -233,14 +255,62 @@ p{margin:0 0 9px;word-wrap:break-word}
   });
   modeBtn.addEventListener('click', function(){
     if (webMode) { showReader(); if (input.value) go(input.value, false); }
-    else { var u = target(input.value); if (u) showWeb(u); }
+    else { var u = target(input.value); if (u) openUrl(u); }
   });
+  /* 浏览器的前进/后退：只记录我们自己打开的地址。站内点链接属于跨域导航，
+     同源策略下拿不到新地址，所以那种跳转不会进历史栈。 */
+  function openUrl(u, keepHist){
+    if (!keepHist){ if (curUrl && curUrl !== u) histBack.push(curUrl); histFwd.length = 0; }
+    curUrl = u;
+    input.value = u;
+    if (webMode) showWeb(u); else go(u, false);
+    syncMark();
+  }
   backBtn.addEventListener('click', function(){
-    var prev = stack.pop();
-    if (prev) go(prev, false); else home();
+    if (!histBack.length){ home(); return; }
+    histFwd.push(curUrl);
+    var u = histBack.pop();
+    curUrl = u; input.value = u;
+    if (webMode) showWeb(u); else go(u, false);
+    syncMark();
+  });
+  fwdBtn.addEventListener('click', function(){
+    if (!histFwd.length) return;
+    histBack.push(curUrl);
+    var u = histFwd.pop();
+    curUrl = u; input.value = u;
+    if (webMode) showWeb(u); else go(u, false);
+    syncMark();
+  });
+  reloadBtn.addEventListener('click', function(){
+    var u = curUrl || input.value;
+    if (!u) return;
+    if (webMode) showWeb(u); else go(u, false);
+  });
+  homeBtn.addEventListener('click', home);
+
+  /* 书签存在 localStorage，首页列出 */
+  function marks(){
+    try { return JSON.parse(localStorage.getItem('browser.marks') || '[]'); } catch(e){ return []; }
+  }
+  function syncMark(){
+    var on = marks().some(function(m){ return m.u === curUrl; });
+    markBtn.textContent = on ? '★' : '☆';
+    markBtn.classList.toggle('on', on);
+  }
+  markBtn.addEventListener('click', function(){
+    var u = curUrl || input.value;
+    if (!u) return;
+    var list = marks();
+    var i = list.findIndex(function(m){ return m.u === u; });
+    if (i >= 0) list.splice(i, 1);
+    else list.unshift({u: u, t: (statusEl.textContent || u).split(' · ')[0].slice(0, 24)});
+    try { localStorage.setItem('browser.marks', JSON.stringify(list.slice(0, 30))); } catch(e){}
+    syncMark();
+    if (!webMode) home();
   });
   input.addEventListener('keydown', function(e){
-    if (e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); go(input.value, false); }
+    if (e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); openUrl(target(input.value)); }
   });
 
   home();
