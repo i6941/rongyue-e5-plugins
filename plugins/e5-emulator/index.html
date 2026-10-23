@@ -73,6 +73,10 @@ body.fx-lcd #fx{display:block;background:repeating-linear-gradient(to right,rgba
   line-height:30px;text-align:center;background:#22304a;color:#dce8f8;border:1px solid #3a4c6b;border-radius:6px;
   white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #hud button:active{background:#31527f;color:#fff;border-color:#5b7fb0}
+#foot{display:flex;align-items:center;gap:6px}
+#foot .sp{flex:1 1 auto}
+#foot button{height:16px;min-width:46px;padding:0 8px;font:inherit;font-size:11px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:4px}
+#foot button:active{background:#31527f;color:#fff}
 #hud button.hit{background:#3a5f96;color:#fff;border-color:#7fa6dd}
 /* 开局提示条：把这一版的按键分工直接写在屏幕上，玩一会儿就消失 */
 #hint{position:absolute;left:6px;right:6px;top:50%;transform:translateY(-50%);z-index:7;display:none;
@@ -92,11 +96,11 @@ body.ingame #hint.show{display:block}
 #stall .srow{display:flex;gap:10px}
 #stall button{height:42px;padding:0 14px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:8px}
 /* ---- 按键设置面板 ---- */
-#bcfg{flex:0 0 auto;height:28px;min-width:64px;padding:0 10px;font:inherit;font-size:13px;font-weight:600;line-height:26px;
+
   color:#eaf4ff;background:#2b4a72;border:1px solid #4a6f9f;border-radius:8px;
   touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-#bcfg:active{background:#31527f}
-body.ingame #bcfg{display:none}
+
+
 #cfg{position:absolute;inset:0;z-index:20;display:none;flex-direction:column;background:#0b111b}
 #cfg.open{display:flex}
 /* 打开后的头 450ms 不吃点击：手指还按在「# 按键」上，合成 click 会落到
@@ -136,7 +140,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_big_screen,.ejs_virtual,.ejs_dpad_bar,.ejs_dpad_main,.ejs_volume_parent,.ejs_threads,.ejs_option_row,
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
-<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button><button id="bcfg" type="button"># 按键</button></header>
+<header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button></header>
 <div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button><button type="button" data-sys="ARC"><b>5</b> 街机</button></div>
 <main>
   <div id="menu"></div>
@@ -157,7 +161,7 @@ body.ingame main{top:0;bottom:0}
       <button id="sresume" type="button">重进（读回存档）</button></div></div>
   </div>
 </main>
-<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　# 设置　确认 开始</footer>
+<footer id="foot"><span id="fver"></span><span class="sp"></span><button id="fset" type="button">设置</button><button id="fexit" type="button">返回</button></footer>
 <div id="cfg">
   <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
@@ -261,7 +265,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.15.0';
+var APP_VER='1.16.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1126,7 +1130,7 @@ function leave(){
   $('stage').style.display='none';
   $('stage').classList.remove('on');
   document.body.classList.remove('ingame');
-  hostChrome(false);
+  hostChrome(true);
   releaseAll();
   $('menu').style.display='grid';
   $('title').textContent='复古游戏机';
@@ -1139,6 +1143,19 @@ function leave(){
 }
 var reloadTimer=0;
 bindTap($('quit'),function(){ leave(); });
+/* 列表页底栏：设置走同一个面板；返回才是真的退出插件（交给宿主 closeApp） */
+bindTap($('fset'),function(){ openCfg(); });
+bindTap($('fexit'),function(){
+  try{ hostChrome(false); }catch(e){}
+  try{ window.parent.postMessage({ e5: 'exit' }, '*'); }catch(e){}
+});
+/* 宿主那个看门狗 5 秒收不到心跳就会把系统栏加回来，垫在我们的按钮下面，
+   所以插件开着的时候一直续心跳（列表页也要续，不能只在游戏里续）。 */
+(function(){
+  function keep(){ try{ hostChrome(true); }catch(e){} }
+  keep();
+  setInterval(keep, 2000);
+})();
 bindTap($('bsave'),function(){
   if(running&&nativeWanted(current)){
     var ok=natCmd2(1,slot);
@@ -1294,7 +1311,6 @@ function handleKey(kind,key,repeat,id,code){
     }
     /* 菜单里按 # 进按键设置；9 作为备用。
        # 在 WPE 上可能没有 key 名、只有 keyCode 51，见 keyKindOf。 */
-    if(kind==='digit'&&(key==='#'||key==='9'||((!key||key==='Unidentified')&&code===51))){ openCfg(); return true; }
     return false;
   }
   /* 按下第一个键就收起开局提示 */
@@ -1505,7 +1521,6 @@ function closeCfg(){
   }catch(e){}
   cfgPausedNative=false;
 }
-bindTap($('bcfg'),function(){ openCfg(); });
 /* 游戏内打开设置的唯一入口：HUD 上的「设」。键盘上的 # 留给游戏自己用。 */
 bindTap($('bset'),function(){ openCfg(); });
 try{ bindTap($('bcore'),function(){ coreInstall(); }); }catch(e){}
@@ -2073,7 +2088,9 @@ applyFx();
 applyEngine();
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
-try{ hostChromeReset(); }catch(e){}
+/* 插件整个生命周期都藏起宿主的工具栏与底部导航：列表页也藏，
+   否则那排系统菜单会垫在我们自己的按钮下面，点「退」会点到它。 */
+try{ hostChrome(true); }catch(e){}
 try{ hostKeyForward(); }catch(e){}
 try{ grabFocus(); }catch(e){}
 try{ slotLabel(); }catch(e){}
