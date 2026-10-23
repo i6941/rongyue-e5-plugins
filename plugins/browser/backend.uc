@@ -35,7 +35,8 @@ return function (ctx) {
         'GET /browse': function (req) {
             let url = clean_url(req.query?.url ?? '');
             if (url === null) return { ok: false, error: 'bad url' };
-            let out = ctx.sh("python3 /usr/share/e5-infoscreen/www/plugins/browser/e5-browse '" + url + "'");
+            let via = `${req.query?.via ?? ''}` === 'jina' ? ' jina' : '';
+            let out = ctx.sh("python3 /usr/share/e5-infoscreen/www/plugins/browser/e5-browse '" + url + "'" + via);
             if (type(out) != 'string' || length(out) == 0)
                 return { ok: false, error: 'browse failed' };
             return { status: 200, type: 'application/json', body: out };

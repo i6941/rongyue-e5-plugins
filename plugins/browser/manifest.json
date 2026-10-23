@@ -1,13 +1,13 @@
 {
   "id": "browser",
   "api_version": 2,
-  "version": "0.2.1",
+  "version": "0.3.0",
   "name": {
     "zh": "浏览器",
     "en": "Browser"
   },
   "description": {
-    "zh": "抓取网页正文，适合小屏阅读",
+    "zh": "阅读器 + 原文缩放，被 Cloudflare 拦时可在头条走在线抽取",
     "en": "Reader-style web browser for the small screen"
   },
   "entry": "index.html",

@@ -19,7 +19,7 @@ header button:active{background:#30363d}
 #status{font-size:11px;color:var(--dim);padding:3px 9px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 main{flex:1;overflow:auto;padding:6px 10px 18px;-webkit-overflow-scrolling:touch}
-#frame{flex:1;width:100%;border:0;background:#fff;display:none}
+#frame{flex:1;width:100%;border:0;background:#fff;display:none;transform-origin:0 0}
 body.web main{display:none}
 body.web #frame{display:block}
 h1{font-size:16px;line-height:1.35;margin:2px 0 10px}
@@ -42,6 +42,7 @@ p{margin:0 0 9px;word-wrap:break-word}
   <input id="url" type="text" placeholder="网址或搜索" autocomplete="off"
          autocapitalize="off" spellcheck="false">
   <button id="go" type="button">打开</button>
+  <button id="zoom" type="button">1:1</button>
   <button id="mode" type="button">原文</button>
 </header>
 <div id="status"></div>
@@ -89,6 +90,7 @@ p{margin:0 0 9px;word-wrap:break-word}
   function showWeb(url){
     webMode = true;
     document.body.classList.add('web');
+    applyZoom();
     modeBtn.textContent = '阅读';
     statusEl.textContent = '原文模式 · ' + url;
     /* onload 必须先挂再设 src，否则加载快的页面会错过回调 */
@@ -132,7 +134,8 @@ p{margin:0 0 9px;word-wrap:break-word}
       /* 抓不到正文时给出两条出路：直接看原文，或换搜索引擎 */
       var bad = (d && d.url) || input.value || '';
       doc.innerHTML = '<p class="err">' + esc((d && d.error) || '加载失败') + '</p>' +
-        (bad ? '<p><a href="#" class="fallback" data-web="' + esc(bad) + '">用原文模式打开这个地址</a></p>' : '');
+        (bad ? '<p><a href="#" class="fallback" data-web="' + esc(bad) + '">用原文模式打开这个地址</a></p>' : '') +
+        (bad ? '<p><a href="#" class="fallback" data-jina="' + esc(bad) + '">用在线抽取再试一次（公开页面）</a></p>' : '');
       statusEl.textContent = bad;
       return;
     }
@@ -163,14 +166,25 @@ p{margin:0 0 9px;word-wrap:break-word}
     return 'https://lite.duckduckgo.com/lite/?q=' + encodeURIComponent(q);
   }
 
-  function go(q, push){
+  /* 原文模式默认按桌面宽度渲染，再整体缩小，320 宽的屏幕上也能看清版面 */
+  var ZOOMS = [1, 0.75, 0.6, 0.45], zoomIdx = 0;
+  function applyZoom(){
+    var z = ZOOMS[zoomIdx];
+    document.getElementById('zoom').textContent = z === 1 ? '1:1' : Math.round(z * 100) + '%';
+    if (!webMode){ frame.style.transform = ''; frame.style.width = '100%'; frame.style.height = '100%'; return; }
+    frame.style.width = (100 / z) + '%';
+    frame.style.height = (100 / z) + '%';
+    frame.style.transform = 'scale(' + z + ')';
+  }
+
+  function go(q, push, via){
     var url = target(q);
     if (!url || busy) return;
     if (webMode){ showWeb(url); input.value = url; return; }
     setBusy(true);
     statusEl.textContent = '加载中…';
     var t0 = Date.now();
-    fetch('/api/plugins/browser/browse?url=' + encodeURIComponent(url))
+    fetch('/api/plugins/browser/browse?url=' + encodeURIComponent(url) + (via ? '&via=' + via : ''))
       .then(function(r){ return r.json(); })
       .then(function(d){
         if (push !== false && input.value && !/^q:/.test(input.value)) stack.push(input.value);
@@ -192,6 +206,14 @@ p{margin:0 0 9px;word-wrap:break-word}
       showWeb(u);
       return;
     }
+    var jn = e.target.closest ? e.target.closest('a[data-jina]') : null;
+    if (jn){
+      e.preventDefault();
+      var uj = jn.getAttribute('data-jina');
+      input.value = uj;
+      go(uj, false, 'jina');
+      return;
+    }
     var a = e.target.closest ? e.target.closest('a[data-href]') : null;
     if (!a) return;
     e.preventDefault();
@@ -204,6 +226,11 @@ p{margin:0 0 9px;word-wrap:break-word}
   });
 
   goBtn.addEventListener('click', function(){ go(input.value, false); });
+  document.getElementById('zoom').addEventListener('click', function(){
+    zoomIdx = (zoomIdx + 1) % ZOOMS.length;
+    applyZoom();
+    if (!webMode && input.value){ showWeb(target(input.value)); }
+  });
   modeBtn.addEventListener('click', function(){
     if (webMode) { showReader(); if (input.value) go(input.value, false); }
     else { var u = target(input.value); if (u) showWeb(u); }

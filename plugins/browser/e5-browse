@@ -168,7 +168,40 @@ def emit(obj):
     sys.stdout.write(json.dumps(obj, ensure_ascii=False, separators=(',', ':')))
 
 
+def via_jina(url):
+    """用 r.jina.ai 抽正文：它自带浏览器，能过 Cloudflare 的 JS 挑战。
+    只发公开页面；需要登录的页面不要走这条路，内容会交给第三方。"""
+    import urllib.request as u2
+    req = u2.Request('https://r.jina.ai/' + url, headers={
+        'User-Agent': UA, 'Accept': 'text/plain'})
+    with u2.urlopen(req, timeout=25) as r:
+        raw = r.read(MAX_BYTES)
+    text = raw.decode('utf-8', 'replace')
+    title = ''
+    for ln in text.splitlines():
+        if ln.startswith('Title:'):
+            title = ln[6:].strip()
+            break
+    body = text.split('Markdown Content:', 1)[-1]
+    lines = []
+    for ln in body.splitlines():
+        ln = re.sub(r'^[#>*\-\s]+', '', ln).strip()
+        if not ln:
+            continue
+        lines.append(ln)
+        if len(lines) >= MAX_BLOCKS:
+            break
+    return {'ok': True, 'url': url, 'title': title, 'charset': 'utf-8',
+            'text': lines, 'links': [], 'ms': 0, 'via': 'jina'}
+
+
 def main():
+    if len(sys.argv) > 2 and sys.argv[2] == 'jina':
+        try:
+            emit(via_jina(sys.argv[1]))
+        except Exception as e:
+            emit({'ok': False, 'error': 'jina: ' + str(e)[:120], 'url': sys.argv[1]})
+        return
     q = (sys.argv[1] if len(sys.argv) > 1 else '').strip()
     if not q:
         emit({'ok': False, 'error': 'empty'})
