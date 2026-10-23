@@ -48,9 +48,22 @@ return function (ctx) {
         }
         return '';
     }
+    /* 登录态 Cookie：SESSDATA/bili_jct/DedeUserID，存在插件目录里（600）。
+       只用于向 B 站官方接口证明身份，不上传、不进仓库。 */
+    const COOKIE_FILE = '/etc/e5-infoscreen/plugins/bili/cookies.txt';
+    function user_cookie() {
+        let c = '';
+        try { c = trim(`${ctx.sh('cat ' + COOKIE_FILE + ' 2>/dev/null') ?? ''}`); } catch (e) { }
+        if (index(c, '\n') >= 0) c = substr(c, 0, index(c, '\n'));
+        return c;
+    }
     function cookie_hdr() {
+        let parts = '';
         let b = buvid3();
-        return b === '' ? '' : " -H 'Cookie: buvid3=" + b + "'";
+        if (b !== '') parts = 'buvid3=' + b;
+        let u = user_cookie();
+        if (u !== '') parts = parts === '' ? u : parts + '; ' + u;
+        return parts === '' ? '' : " -H 'Cookie: " + parts + "'";
     }
     function api_get(path) {
         return ctx.sh("curl -s --max-time 15 -A '" + UA + "'" + cookie_hdr() +
@@ -149,7 +162,7 @@ return function (ctx) {
                 if (!pj || num(pj.code) !== 0 || !pj.data || !pj.data[0]) return { ok: false, error: 'pagelist' };
                 cid = num(pj.data[0].cid);
             }
-            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=32&fnval=0&platform=html5');
+            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=80&fnval=0&platform=pc&fourk=1');
             let j = null;
             try { j = json(q); } catch (e) { return { ok: false, error: 'playurl json' }; }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'playurl ' + (j ? j.code : '?') };
@@ -172,7 +185,7 @@ return function (ctx) {
                     return { ok: false, error: 'pagelist' };
                 cid = num(pj.data[0].cid);
             }
-            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=32&fnval=0&platform=html5');
+            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=80&fnval=0&platform=pc&fourk=1');
             let j = null;
             try { j = json(q); } catch (e) { }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'playurl' };
@@ -185,10 +198,17 @@ return function (ctx) {
             let out = dir + '/cache.mp4';
             let tmp = '/tmp/bili-dl.mp4';
             let res = '/tmp/bili-dl.res';
+            /* 同一个视频已经缓存过就直接用，别每次重下几十上百 MB */
+            let id = bvid + ' ' + cid;
+            let cached = trim(`${ctx.sh('cat /tmp/bili-cache-id 2>/dev/null') ?? ''}`);
+            let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
+            ctx.sh("echo '" + id + "' > /tmp/bili-req");
+            if (cached === id && have > 1048576)
+                return { ok: true, state: 'cached', size: have };
             ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' +
                    res + ' ' + tmp);
-            let script = "curl -s --max-time 180 --max-filesize 200000000 -A '" + UA +
-                         "' -H 'Referer: " + REFERER + "' -o " + tmp +
+            let script = "curl -s --max-time 180 --max-filesize 300000000 -A '" + UA +
+                         "' -H 'Referer: " + REFERER + "'" + cookie_hdr() + " -o " + tmp +
                          " -w '%{http_code} %{size_download}' '" + u + "' > " + res;
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- -c "' +
                    script + '"');
@@ -198,13 +218,24 @@ return function (ctx) {
         'GET /ready': function () {
             let out = '/etc/e5-infoscreen/plugins/bili/cache.mp4';
             let r = trim(`${ctx.sh('cat /tmp/bili-dl.res 2>/dev/null') ?? ''}`);
-            if (r === '') return { ok: true, ready: false, state: 'downloading' };
+            if (r === '') {
+                /* 缓存命中时不会有下载结果文件，直接按标记回答 */
+                let req = trim(`${ctx.sh('cat /tmp/bili-req 2>/dev/null') ?? ''}`);
+                let cached = trim(`${ctx.sh('cat /tmp/bili-cache-id 2>/dev/null') ?? ''}`);
+                if (req !== '' && req === cached) {
+                    let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
+                    if (have > 1048576)
+                        return { ok: true, ready: true, cached: true, size: have };
+                }
+                return { ok: true, ready: false, state: 'downloading' };
+            }
             let parts = split(r, ' ');
             let code = `${parts[0] ?? '0'}`;
             let size = num(parts[1]);
             if (code !== '200' || size < 1024)
                 return { ok: true, ready: false, state: 'failed', code: code };
-            ctx.sh('mv -f /tmp/bili-dl.mp4 ' + out + '; rm -f /tmp/bili-dl.res');
+            ctx.sh('mv -f /tmp/bili-dl.mp4 ' + out + '; rm -f /tmp/bili-dl.res; ' +
+                   'cat /tmp/bili-req 2>/dev/null > /tmp/bili-cache-id');
             return { ok: true, ready: true, file: '/plugins/bili/cache.mp4?v=' + time(), size: size };
         },
         /* 视频流代理：upos 要求 Referer，前端 <video> 没法自己加 */
@@ -276,6 +307,110 @@ return function (ctx) {
                 f.close();
                 return { ok: true };
             } catch (e) { return { ok: false, error: `${e}` }; }
+        },
+        /* ---------- 扫码登录 ---------- */
+        /* 生成二维码：拿到 url 和 qrcode_key，二维码由设备上的 qrencode 画成 PNG，
+           再把 base64 交给页面显示（插件路由返回二进制不方便）。 */
+        'GET /login-qr': function () {
+            let raw = ctx.sh("curl -s --max-time 15 -A '" + UA +
+                             "' -H 'Referer: " + REFERER +
+                             "' 'https://passport.bilibili.com/x/passport-login/web/qrcode/generate'");
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let url = `${j.data?.url ?? ''}`;
+            let key = `${j.data?.qrcode_key ?? ''}`;
+            if (length(url) < 10 || length(url) > 400 || length(key) < 10) return { ok: false, error: 'bad data' };
+            let hex = '0123456789abcdefABCDEF';
+            for (let i = 0; i < length(key); i++)
+                if (index(hex, substr(key, i, 1)) < 0) return { ok: false, error: 'bad key' };
+            if (index(url, "'") >= 0 || substr(url, 0, 5) !== 'https') return { ok: false, error: 'bad url' };
+            ctx.sh("printf %s '" + key + "' > /tmp/bili-qr-key");
+            /* 设备上的 qrencode 没编 PNG 输出，二维码改由页面用 JS 画，
+               这里只把登录地址和 key 交给前端。 */
+            return { ok: true, url: url };
+        },
+        /* 轮询扫码结果。data.code：86101 未扫、86090 已扫待确认、0 成功、86038 过期。
+           成功时从响应头里取 Set-Cookie，落到 600 权限的本地文件。 */
+        'GET /login-poll': function () {
+            let key = trim(`${ctx.sh('cat /tmp/bili-qr-key 2>/dev/null') ?? ''}`);
+            if (length(key) < 10) return { ok: false, error: 'no qr' };
+            let hdr = '/tmp/bili-login-hdr';
+            let body = '/tmp/bili-login-body';
+            ctx.sh("curl -s --max-time 15 -D " + hdr + " -o " + body + " -A '" + UA +
+                   "' -H 'Referer: " + REFERER +
+                   "' 'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + key + "'");
+            let raw = `${ctx.sh('cat ' + body + ' 2>/dev/null') ?? ''}`;
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let code = num(j.data?.code);
+            if (code === 86101) return { ok: true, state: 'waiting' };
+            if (code === 86090) return { ok: true, state: 'scanned' };
+            if (code === 86038) return { ok: true, state: 'expired' };
+            if (code !== 0) return { ok: true, state: 'pending' };
+
+            let h = `${ctx.sh('cat ' + hdr + ' 2>/dev/null') ?? ''}`;
+            let names = ['SESSDATA', 'bili_jct', 'DedeUserID'];
+            let vals = [];
+            for (let n in names) {
+                let k = names[n] + '=';
+                let at = index(h, k);
+                let v = '';
+                if (at >= 0) {
+                    let rest = substr(h, at + length(k));
+                    let semi = index(rest, ';');
+                    v = semi < 0 ? rest : substr(rest, 0, semi);
+                    let nl = index(v, '\n');
+                    if (nl >= 0) v = substr(v, 0, nl);
+                    let cr = index(v, '\r');
+                    if (cr >= 0) v = substr(v, 0, cr);
+                    v = trim(v);
+                }
+                push(vals, v);
+            }
+            if (length(vals[0]) < 10 || length(vals[1]) < 10) return { ok: true, state: 'nocookie' };
+            let cookie = 'SESSDATA=' + vals[0] + '; bili_jct=' + vals[1] + '; DedeUserID=' + vals[2];
+            if (index(cookie, "'") >= 0) return { ok: false, error: 'bad cookie' };
+            ctx.sh("umask 077; printf %s '" + cookie + "' > " + COOKIE_FILE +
+                   "; chmod 600 " + COOKIE_FILE);
+            ctx.sh('rm -f /tmp/bili-qr-key /tmp/bili-qr.png');
+            let nav = api_get('/x/web-interface/nav');
+            let nj = null;
+            try { nj = json(nav); } catch (e) { }
+            let uname = `${nj?.data?.uname ?? ''}`;
+            return { ok: true, state: 'ok', uname: uname, vip: num(nj?.data?.vipStatus) };
+        },
+        /* 页面进来时问一次：现在是不是已登录、叫什么名字 */
+        'GET /login-state': function () {
+            if (user_cookie() === '') return { ok: true, logged: false };
+            let raw = api_get('/x/web-interface/nav');
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: true, logged: false }; }
+            if (num(j?.code) !== 0 || num(j?.data?.isLogin) !== 1) return { ok: true, logged: false };
+            return { ok: true, logged: true, uname: `${j.data.uname ?? ''}`,
+                     vip: num(j.data.vipStatus), level: num(j.data.level_info?.current_level) };
+        },
+        'GET /logout': function () {
+            ctx.sh('rm -f ' + COOKIE_FILE);
+            return { ok: true };
+        },
+        /* 跳过广告：用 BilibiliSponsorBlock 社区库（PiliPlus 用的也是这套）。
+           返回 [{cat,a,b}]，单位秒；没有数据时返回空数组，前端就不用管。 */
+        'GET /segments': function (req) {
+            let bvid = `${req.query?.bvid ?? ''}`;
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            let r = ctx.sh("curl -s --max-time 12 'https://bsbsb.top/api/skipSegments?service=bilibili&categories=%5B%22sponsor%22%2C%22selfpromo%22%2C%22intro%22%2C%22outro%22%2C%22interaction%22%5D&videoID=" + bvid + "'");
+            let j = null;
+            try { j = json(r); } catch (e) { return { ok: true, list: [] }; }
+            if (type(j) !== 'array') return { ok: true, list: [] };
+            let out = [];
+            for (let s in j) {
+                let seg = s.segment ?? [];
+                if (length(seg) < 2) continue;
+                push(out, { cat: `${s.category ?? ''}`, a: num(seg[0]), b: num(seg[1]) });
+            }
+            return { ok: true, list: out };
         },
         /* 播放状态探针，方便在没有截图的情况下确认视频真的在播 */
         'POST /probe': function (req) {

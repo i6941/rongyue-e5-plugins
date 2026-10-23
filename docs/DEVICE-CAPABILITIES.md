@@ -83,6 +83,21 @@ The package index cache is empty, so `apk search` prints
 update` has run. That needs network access and writes to the cache, so it is not
 something the plugins do on their own.
 
+
+## Media playback on this device
+
+Measured while building the `bili` plugin.
+
+| Item | Result |
+|---|---|
+| H.264 hardware decode | **no** — `h264_v4l2m2m` reports "Could not find a valid device", so ffmpeg cannot decode video in hardware. The `bili` plugin ships its own software decoder (`native/e5play.c`, OpenH264) and pushes RGB565 frames over WebSocket |
+| 1280×720 software decode | works, ~91 fps on a 400-frame test, so 720P is comfortable |
+| AAC decode | ffmpeg has the native `aac` decoder `ffmpeg -i x.mp4 -vn -f s16le -ac 2 -ar 48000 -` |
+| Audio output | PulseAudio 35, sink `speaker` (s16le 2ch 48000Hz), `paplay` present; default volume 5/16 (-28.9 dB), change with `/usr/libexec/e5-volume set N` |
+| Audio verification | `parec --device=speaker.monitor` records the sink; a normal playback peaks around 900-1000 (s16le full scale 32767) |
+| Bilibili 720P | `platform=pc&qn=80&fnval=0&fourk=1` returns `quality: 64` even without login, as a progressive MP4 (`durl`), so no DASH demuxer is needed |
+| `qrencode` | installed, but **built without PNG output** ("PNG output is disabled at compile time") and there is no `base64` command; QR codes are drawn in the page with a JS encoder instead |
+
 ## WPE runtime capabilities
 
 Probed with the `wpe-capability` plugin and the standalone capability page:

@@ -109,6 +109,7 @@ scp mygame.nes root@192.168.9.1:/etc/e5-infoscreen/roms/
 | `nikki-control` | Nikki 代理服务的本地控制面板（不返回任何凭据） |
 | `wifi-control` | 扫描 Wi-Fi 并切换 USB 上行，失败自动回滚 |
 | `wpe-capability` | 报告这台设备的 WPE 运行时到底支持什么 |
+| `bili` | 哔哩哔哩：排行榜/搜索、720P 播放、声音、自动跳广告、扫码登录 |
 
 ## 六、给开发者
 

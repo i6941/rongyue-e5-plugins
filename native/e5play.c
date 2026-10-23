@@ -30,6 +30,9 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
+#include <sys/wait.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 
 #include "wels/codec_api.h"
 
@@ -176,9 +179,9 @@ static int do_handshake(int fd)
     return send(fd, resp, (size_t)n, 0) == n ? 0 : -3;
 }
 
-static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, size_t bytes)
+static int ws_send_frame(int fd, const uint8_t *hdr, size_t hdr_len, const uint8_t *pixels, size_t bytes)
 {
-    size_t total = bytes + 4;
+    size_t total = bytes + hdr_len;
     uint8_t head[10];
     size_t hlen;
     head[0] = 0x82;
@@ -191,9 +194,9 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
     }
     struct iovec iov[3];
     iov[0].iov_base = head; iov[0].iov_len = hlen;
-    iov[1].iov_base = (void *)hdr4; iov[1].iov_len = 4;
+    iov[1].iov_base = (void *)hdr; iov[1].iov_len = hdr_len;
     iov[2].iov_base = (void *)pixels; iov[2].iov_len = bytes;
-    size_t want = hlen + 4 + bytes;
+    size_t want = hlen + hdr_len + bytes;
     size_t done = 0;
     while (done < want) {
         ssize_t r = writev(fd, iov, 3);
@@ -201,8 +204,8 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
         done += (size_t)r;
         if (done >= want) break;
         size_t left = want - done;
-        uint8_t *base[3] = { head, (uint8_t *)hdr4, (uint8_t *)pixels };
-        size_t len[3] = { hlen, 4, bytes };
+        uint8_t *base[3] = { head, (uint8_t *)hdr, (uint8_t *)pixels };
+        size_t len[3] = { hlen, hdr_len, bytes };
         int k = 0;
         for (int i = 0; i < 3; i++) {
             if (left >= len[i]) { base[i] += len[i]; left -= len[i]; }
@@ -215,6 +218,7 @@ static int ws_send_frame(int fd, const uint8_t *hdr4, const uint8_t *pixels, siz
 }
 
 static bool paused = false;
+static volatile int g_seek_ms = -1;   /* >=0 表示待处理的跳转目标（毫秒） */
 
 /* 读客户端命令；返回 -1 表示连接断了 */
 static int ws_poll_cmd(int fd)
@@ -245,12 +249,18 @@ static int ws_poll_cmd(int fd)
     if (op == 0x8) return -1;
     if (op >= 0x8) return 0;
     if (len >= 1 && payload[0] == 4) paused = !paused;   /* 和模拟器一致：4 = 暂停/继续 */
+    if (len >= 5 && payload[0] == 5) {
+        /* 5 = 跳到指定毫秒：u32 小端 */
+        g_seek_ms = (int)((uint32_t)payload[1] | ((uint32_t)payload[2] << 8) |
+                          ((uint32_t)payload[3] << 16) | ((uint32_t)payload[4] << 24));
+    }
     return 0;
 }
 
 /* ---------------- MP4 解复用 ---------------- */
 
 typedef struct {
+    char path[512];
     FILE *f;
     int64_t size;
     MP4D_demux_t mp4;
@@ -267,6 +277,12 @@ typedef struct {
     size_t sample_cap;
     uint8_t *annexb;
     size_t annexb_cap;
+    /* 打开时把每个样本的时间戳/偏移/长度一次性取出来：
+       MP4D_frame_offset 内部有顺序访问的缓存，随机 seek 不能直接反复调它。 */
+    uint32_t *ts_ms;
+    MP4D_file_offset_t *offs;
+    uint32_t *sizes;
+    unsigned base_ts;
 } play_t;
 
 static int mp4_read_cb(int64_t offset, void *buffer, size_t size, void *token)
@@ -314,6 +330,7 @@ static void parse_avcc(play_t *p)
 static bool play_open(play_t *p, const char *path)
 {
     memset(p, 0, sizeof(*p));
+    snprintf(p->path, sizeof(p->path), "%s", path);
     p->f = fopen(path, "rb");
     if (!p->f) { fprintf(stderr, "e5play: open %s failed\n", path); return false; }
 #ifdef _WIN32
@@ -339,6 +356,19 @@ static bool play_open(play_t *p, const char *path)
     p->height = t->SampleDescription.video.height;
     parse_avcc(p);
     if (p->nal_len_size <= 0) p->nal_len_size = 4;
+
+    p->ts_ms = (uint32_t *)calloc(p->frames ? p->frames : 1, sizeof(uint32_t));
+    p->offs = (MP4D_file_offset_t *)calloc(p->frames ? p->frames : 1, sizeof(MP4D_file_offset_t));
+    p->sizes = (uint32_t *)calloc(p->frames ? p->frames : 1, sizeof(uint32_t));
+    if (!p->ts_ms || !p->offs || !p->sizes) return false;
+    for (unsigned i = 0; i < p->frames; i++) {
+        unsigned bytes = 0, ts = 0, dur = 0;
+        MP4D_file_offset_t off = MP4D_frame_offset(&p->mp4, (unsigned)p->vtrack, i, &bytes, &ts, &dur);
+        p->offs[i] = off;
+        p->sizes[i] = bytes;
+        p->ts_ms[i] = (uint32_t)((uint64_t)ts * 1000 / p->timescale);
+    }
+    p->base_ts = p->frames ? (unsigned)((uint64_t)p->ts_ms[0] * p->timescale / 1000) : 0;
     return true;
 }
 
@@ -350,6 +380,9 @@ static void play_close(play_t *p)
     free(p->pps);
     free(p->sample);
     free(p->annexb);
+    free(p->ts_ms);
+    free(p->offs);
+    free(p->sizes);
 }
 
 /* 把 AVCC（长度前缀）样本转成 Annex-B，并按需在 IDR 前补 SPS/PPS */
@@ -401,6 +434,66 @@ static bool sample_is_idr(const uint8_t *src, size_t n, int ls)
         i += ln;
     }
     return false;
+}
+
+/* ---------------- 音频（ffmpeg 解码 → 管道 → PulseAudio） ---------------- */
+
+/* 设备上的 ffmpeg 有 aac 解码器，PulseAudio 在跑，paplay 可用。
+   视频由我们自己解码，音频交给 ffmpeg：解成 48kHz 双声道 s16le，
+   通过匿名管道直接喂给 paplay（用命名管道会在某个进程退出时把两边都卡住）。
+   暂停/停止直接对这两个子进程发信号，声音和画面就能同时开始、同时停。 */
+static pid_t g_audio_in = 0, g_audio_out = 0;
+static bool g_audio_paused = false;
+
+static void audio_stop(void)
+{
+    if (g_audio_in > 0) { kill(g_audio_in, SIGKILL); waitpid(g_audio_in, NULL, 0); g_audio_in = 0; }
+    if (g_audio_out > 0) { kill(g_audio_out, SIGKILL); waitpid(g_audio_out, NULL, 0); g_audio_out = 0; }
+    g_audio_paused = false;
+}
+
+static void audio_start(const char *path, double start_sec)
+{
+    audio_stop();
+    int fds[2];
+    if (pipe(fds) != 0) return;
+    char ss[32];
+    snprintf(ss, sizeof(ss), "%.3f", start_sec < 0 ? 0.0 : start_sec);
+
+    pid_t out = fork();
+    if (out == 0) {
+        dup2(fds[0], 0);
+        close(fds[0]); close(fds[1]);
+        int nfd = open("/dev/null", O_WRONLY);
+        if (nfd >= 0) { dup2(nfd, 1); dup2(nfd, 2); }
+        execl("/usr/bin/paplay", "paplay", "--raw", "--format=s16le",
+              "--rate=48000", "--channels=2", (char *)NULL);
+        _exit(127);
+    }
+    pid_t in = fork();
+    if (in == 0) {
+        dup2(fds[1], 1);
+        close(fds[0]); close(fds[1]);
+        int nfd = open("/dev/null", O_WRONLY);
+        if (nfd >= 0) dup2(nfd, 2);
+        execl("/usr/bin/ffmpeg", "ffmpeg", "-v", "error", "-ss", ss, "-i", path,
+              "-map", "0:a:0", "-vn", "-sn", "-dn", "-f", "s16le",
+              "-ac", "2", "-ar", "48000", "-", (char *)NULL);
+        _exit(127);
+    }
+    close(fds[0]);
+    close(fds[1]);
+    if (out > 0) g_audio_out = out;
+    if (in > 0) g_audio_in = in;
+}
+
+static void audio_set_paused(bool p)
+{
+    if (!g_audio_in || g_audio_paused == p) return;
+    g_audio_paused = p;
+    int sig = p ? SIGSTOP : SIGCONT;
+    if (g_audio_in > 0) kill(g_audio_in, sig);
+    if (g_audio_out > 0) kill(g_audio_out, sig);
 }
 
 /* ---------------- YUV420 -> RGB565（带缩放） ---------------- */
@@ -494,11 +587,12 @@ static bool player_open(player_t *pl, play_t *p, int max_w, int max_h)
 }
 
 /* 解码一个样本；返回 0 表示正常。有新帧时通过 out 拿 RGB565 与小尺寸 */
-static int player_decode_sample(player_t *pl, unsigned idx, const uint8_t **rgb, int *ow, int *oh)
+static int player_decode_sample(player_t *pl, unsigned idx, const uint8_t **rgb, int *ow, int *oh, double *pts_ms)
 {
     play_t *p = pl->p;
-    unsigned frame_bytes = 0, ts = 0, dur = 0;
-    MP4D_file_offset_t off = MP4D_frame_offset(&p->mp4, (unsigned)p->vtrack, idx, &frame_bytes, &ts, &dur);
+    if (idx >= p->frames) return 6;
+    unsigned frame_bytes = p->sizes[idx];
+    MP4D_file_offset_t off = p->offs[idx];
     if (!frame_bytes) return 1;
     if (frame_bytes > p->sample_cap) {
         uint8_t *q = (uint8_t *)realloc(p->sample, frame_bytes);
@@ -535,11 +629,28 @@ static int player_decode_sample(player_t *pl, unsigned idx, const uint8_t **rgb,
                 *ow = pl->sc.ow;
                 *oh = pl->sc.oh;
                 pl->frame_no++;
+                if (pts_ms) *pts_ms = (double)p->ts_ms[idx];
                 return 0;
             }
         }
     }
     return 5;
+}
+
+/* 跳转后必须重建解码器：旧的状态里还留着上一段的参考帧 */
+static bool player_reset(player_t *pl)
+{
+    if (pl->dec) {
+        pl->dec->Uninitialize();
+        WelsDestroyDecoder(pl->dec);
+        pl->dec = NULL;
+    }
+    if (WelsCreateDecoder(&pl->dec) != 0 || !pl->dec) return false;
+    SDecodingParam dp;
+    memset(&dp, 0, sizeof(dp));
+    dp.sVideoProperty.eVideoBsType = VIDEO_BITSTREAM_AVC;
+    dp.eEcActiveIdc = ERROR_CON_SLICE_COPY;
+    return pl->dec->Initialize(&dp) == 0;
 }
 
 static void player_close(player_t *pl)
@@ -570,7 +681,7 @@ static int run_selftest(const char *path, long frames)
     for (unsigned i = 0; i < p.frames && done < frames; i++, done++) {
         const uint8_t *rgb = NULL;
         int ow = 0, oh = 0;
-        int rc = player_decode_sample(&pl, i, &rgb, &ow, &oh);
+        int rc = player_decode_sample(&pl, i, &rgb, &ow, &oh, NULL);
         if (rc == 0 && rgb) produced++;
     }
     double ms = now_ms() - t0;
@@ -584,6 +695,35 @@ static int run_selftest(const char *path, long frames)
 /* ---------------- 服务模式 ---------------- */
 
 static const char *g_bind_addr = "127.0.0.1";
+
+/* 从目标样本往前找最近的 IDR：解码器必须从关键帧重新开始才不会有花块 */
+static unsigned find_idr_at_or_before(play_t *p, unsigned idx)
+{
+    unsigned lo = idx > 900 ? idx - 900 : 0;
+    for (unsigned i = idx + 1; i-- > lo; ) {
+        if (!p->sizes[i]) continue;
+        if (p->sizes[i] > p->sample_cap) {
+            uint8_t *q = (uint8_t *)realloc(p->sample, p->sizes[i]);
+            if (!q) return idx;
+            p->sample = q;
+            p->sample_cap = p->sizes[i];
+        }
+        if (mp4_read_cb((int64_t)p->offs[i], p->sample, p->sizes[i], p->f) != 0) continue;
+        if (sample_is_idr(p->sample, p->sizes[i], p->nal_len_size)) return i;
+    }
+    return idx;
+}
+
+/* 时间（毫秒）→ 样本序号，二分查找 */
+static unsigned sample_for_ms(const play_t *p, unsigned ms)
+{
+    unsigned lo = 0, hi = p->frames;
+    while (lo < hi) {
+        unsigned mid = lo + (hi - lo) / 2;
+        if (p->ts_ms[mid] < ms) lo = mid + 1; else hi = mid;
+    }
+    return lo < p->frames ? lo : (p->frames ? p->frames - 1 : 0);
+}
 
 static int run_server(const char *path, int port)
 {
@@ -628,40 +768,59 @@ static int run_server(const char *path, int port)
         player_t pl;
         if (!player_open(&pl, &p, 320, 480)) { close(cfd); break; }
         paused = false;
+        g_seek_ms = -1;
 
         double start = now_ms();
         unsigned idx = 0;
-        unsigned ts0 = 0;
-        bool first = true;
+        double seek_until = 0.0;
         unsigned long sent = 0;
+        audio_start(p.path, 0.0);
 
         while (1) {
             if (ws_poll_cmd(cfd) < 0) break;
+            audio_set_paused(paused);
+
+            if (g_seek_ms >= 0) {
+                unsigned target_ms = (unsigned)g_seek_ms;
+                g_seek_ms = -1;
+                if (target_ms >= p.ts_ms[p.frames - 1]) break;   /* 跳到结尾 */
+                idx = find_idr_at_or_before(&p, sample_for_ms(&p, target_ms));
+                player_reset(&pl);
+                seek_until = (double)target_ms;
+                start = now_ms() - (double)target_ms;
+                audio_stop();
+                audio_start(p.path, (double)target_ms / 1000.0);
+                printf("E5PLAY seek %ums sample=%u\n", target_ms, idx);
+                fflush(stdout);
+            }
+
             if (paused) { sleep_ms(20); continue; }
 
-            unsigned frame_bytes = 0, ts = 0, dur = 0;
-            MP4D_frame_offset(&p.mp4, (unsigned)p.vtrack, idx, &frame_bytes, &ts, &dur);
-            if (first) { ts0 = ts; first = false; }
-
-            double target = (double)(ts - ts0) * 1000.0 / (double)p.timescale;
+            double target = (double)p.ts_ms[idx];
             double wait = start + target - now_ms();
             if (wait > 0) sleep_ms(wait > 100 ? 100 : wait);
 
             const uint8_t *rgb = NULL;
             int ow = 0, oh = 0;
-            player_decode_sample(&pl, idx, &rgb, &ow, &oh);
-            if (rgb && ow > 0 && oh > 0) {
-                uint8_t hdr[4] = { (uint8_t)(ow & 0xff), (uint8_t)(ow >> 8),
-                                   (uint8_t)(oh & 0xff), (uint8_t)(oh >> 8) };
-                if (ws_send_frame(cfd, hdr, rgb, (size_t)ow * (size_t)oh * 2) != 0) break;
+            double pts = 0.0;
+            player_decode_sample(&pl, idx, &rgb, &ow, &oh, &pts);
+            if (rgb && ow > 0 && oh > 0 && pts + 1.0 >= seek_until) {
+                unsigned ms = (unsigned)(pts + 0.5);
+                uint8_t hdr[8] = { (uint8_t)(ow & 0xff), (uint8_t)(ow >> 8),
+                                   (uint8_t)(oh & 0xff), (uint8_t)(oh >> 8),
+                                   (uint8_t)(ms & 0xff), (uint8_t)((ms >> 8) & 0xff),
+                                   (uint8_t)((ms >> 16) & 0xff), (uint8_t)((ms >> 24) & 0xff) };
+                if (ws_send_frame(cfd, hdr, sizeof(hdr), rgb, (size_t)ow * (size_t)oh * 2) != 0) break;
                 sent++;
+                seek_until = 0.0;
             }
             idx++;
-            if (idx >= p.frames) break;   /* 放完就结束，页面会显示“重播” */
+            if (idx >= p.frames) break;   /* 放完就结束 */
         }
 
         printf("E5PLAY client disconnected, frames=%lu\n", sent);
         fflush(stdout);
+        audio_stop();
         player_close(&pl);
         close(cfd);
     }
@@ -685,7 +844,13 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--serve")) serve = true;
         else if (!strcmp(argv[i], "--bind") && i + 1 < argc) g_bind_addr = argv[++i];
         else if (!path) path = argv[i];
-        else { long v = atol(argv[i]); if (v > 100) frames = v; else if (v > 0) port = (int)v; }
+        else {
+            /* 两种模式共用位置参数：自测模式是帧数，服务模式是端口。
+               之前统一按“>100 就是帧数”判断，导致 --serve 传端口被吃掉。 */
+            long v = atol(argv[i]);
+            if (v <= 0 || v > 65535) continue;
+            if (serve) port = (int)v; else frames = v;
+        }
     }
     if (!path || (!selftest && !serve)) {
         fprintf(stderr,
