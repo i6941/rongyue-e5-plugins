@@ -105,6 +105,7 @@ body.ingame #bcfg{display:none}
 #cfghead{flex:0 0 auto;display:flex;align-items:center;gap:6px;padding:4px 6px;background:#101827;border-bottom:1px solid #29354a;font-size:12px}
 #cfghead .sp{flex:1 1 auto}
 #cfgtip{font-size:10px;color:#ffd479;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;max-width:62%}
+#cfgsys{font-size:10px;padding:1px 5px;border:1px solid #3a4c6b;border-radius:4px;color:#9fc6ef;background:#16202f}
 #cfghead button{font:inherit;font-size:13px;height:30px;padding:0 11px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:5px}
 #cfgrid{flex:1 1 auto;display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:5px 6px 8px;align-content:start;overflow-y:auto}
 .cfgcell{position:relative;height:52px;padding:5px 8px;background:#141d2c;border:1px solid #223047;border-radius:6px;text-align:left}
@@ -156,9 +157,9 @@ body.ingame main{top:0;bottom:0}
       <button id="sresume" type="button">重进（读回存档）</button></div></div>
   </div>
 </main>
-<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　# 按键设置　确认 开始</footer>
+<footer id="foot"><span id="fver"></span>↑↓←→ 选游戏　数字 1-4 切机种　# 设置　确认 开始</footer>
 <div id="cfg">
-  <div id="cfghead"><b>按键设置</b><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
+  <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
   <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgengine" type="button">引擎 原生</button></div>
   <div id="cfgfoot"><button id="cfgdef" type="button">默认</button><button id="cfgnum" type="button">数字键</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
@@ -260,7 +261,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.12.0';
+var APP_VER='1.13.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -833,16 +834,26 @@ var NUMPAD_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['Ar
    （上一轮调试时留下的"数字键方案"）会让新默认不生效，所以版本对不上
    就整份丢掉，重新用默认。用户自己改过之后版本会更新，不会被顶掉。 */
 var KEYMAP_VERSION=2;
-var keymap=loadKeymap();
-function loadKeymap(){
+/* 键位按机种分开存：FC / MD / GBA 各有各的一套，互不影响。
+   旧版只有一份全局 e5keymap，第一次按机种拆开时沿用它（不丢用户改过的键位）。 */
+var keymapSys='FC';
+var keymap=loadKeymap(keymapSys);
+function keymapKey(sys){ return 'e5keymap-'+sys; }
+function loadKeymap(sys){
   var m=null;
   try{
-    var ver=localStorage.getItem('e5keymapver');
+    var ver=localStorage.getItem('e5keymapver-'+sys);
     if(ver===String(KEYMAP_VERSION)){
-      var s=localStorage.getItem('e5keymap'); if(s) m=JSON.parse(s);
+      var s=localStorage.getItem(keymapKey(sys)); if(s) m=JSON.parse(s);
     }else{
-      localStorage.removeItem('e5keymap');
-      localStorage.setItem('e5keymapver',String(KEYMAP_VERSION));
+      localStorage.removeItem(keymapKey(sys));
+      localStorage.setItem('e5keymapver-'+sys,String(KEYMAP_VERSION));
+      /* 只沿用版本号对得上的旧全局键位：过期版本的调试残留不继承。 */
+      var lv=localStorage.getItem('e5keymapver');
+      if(lv===String(KEYMAP_VERSION)){
+        var legacy=localStorage.getItem('e5keymap');
+        if(legacy){ try{ m=JSON.parse(legacy); }catch(e){} }
+      }
     }
   }catch(e){}
   var out={};
@@ -850,13 +861,28 @@ function loadKeymap(){
     var id=ACTIONS[i].id, v=(m&&Array.isArray(m[id]))?m[id]:(DEFAULT_KEYS[id]||[]);
     out[id]=v.filter(function(x){ return typeof x==='string'&&x; });
   }
+  /* 第一次按机种拆开（或迁移旧全局键位）时立刻落盘：否则用户没编辑就重载，
+     下次会以为没有自定义键位而退回默认值。 */
+  try{
+    if(!localStorage.getItem(keymapKey(sys)))
+      localStorage.setItem(keymapKey(sys),JSON.stringify(out));
+  }catch(e){}
   return out;
 }
 function saveKeymap(){
   try{
-    localStorage.setItem('e5keymap',JSON.stringify(keymap));
-    localStorage.setItem('e5keymapver',String(KEYMAP_VERSION));
+    localStorage.setItem(keymapKey(keymapSys),JSON.stringify(keymap));
+    localStorage.setItem('e5keymapver-'+keymapSys,String(KEYMAP_VERSION));
   }catch(e){}
+}
+/* 切到某个机种的键位：先把当前这套存回自己的槽，再载入目标机种的。 */
+function useKeymapFor(sys){
+  if(!sys||sys===keymapSys) return;
+  saveKeymap();
+  keymapSys=sys;
+  keymap=loadKeymap(sys);
+  try{ refreshCfg(); }catch(e){}
+  try{ var b=$('cfgsys'); if(b) b.textContent=sys; }catch(e){}
 }
 function btnOf(id){ for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btn; return undefined; }
 /* 一个键可以同时绑多个动作 */
@@ -1009,6 +1035,8 @@ function reallyStart(i){
   stallShown=false;
   try{ $('stall').classList.remove('show'); }catch(e){}
   current=g; running=true; phase='loading'; logs=[]; lastErr=''; marks={}; t0=Date.now(); simCalls=0;
+  /* 每个机种一套键位：开局就切成这个机种的 */
+  useKeymapFor(g.sys);
   autoLoaded=false; autoTick=0; lastSave='';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
@@ -1442,7 +1470,12 @@ function cfgKey(kind,key,repeat,code){
 }
 var cfgPausedNative=false;
 function openCfg(){
-  cfgOpen=true; cfgSel=0; cfgListen=false; buildCfg(); $('cfg').classList.add('open');
+  cfgOpen=true; cfgSel=0; cfgListen=false;
+  /* 面板里编辑的是「当前机种」的键位：在游戏里就是正在玩的机种，
+     在列表里就是当前选中的机种页（全部时沿用上一次的）。 */
+  useKeymapFor((running&&current&&current.sys)||(tabSys!=='ALL'?tabSys:keymapSys));
+  buildCfg(); $('cfg').classList.add('open');
+  try{ var b=$('cfgsys'); if(b) b.textContent=keymapSys; }catch(e){}
   $('cfgtip').textContent='选一项，再按一个键';
   /* 挡住这一次按压的合成点击（否则会点到「关闭」） */
   try{
@@ -1837,7 +1870,7 @@ function snapshot(){
   s.active=document.activeElement?(document.activeElement.id||document.activeElement.tagName):'';
   s.sel=sel; s.items=cells.length; s.first=window.__first||0; s.keyCount=keyCount; s.keyLog=keyLog.join(','); s.keyTest=window.__keytest||''; s.simCalls=simCalls; s.simErr=window.__simErr||''; s.lastBtn=(window.__lastBtn===undefined?null:window.__lastBtn); s.lastVal=(window.__lastVal===undefined?null:window.__lastVal); s.lastSave=lastSave; s.backTaken=(window.__backTaken===undefined?null:window.__backTaken);
   s.scrollX=window.scrollX; s.scrollY=window.scrollY;
-  s.fitMode=fitMode; s.keymap=JSON.stringify(keymap); s.cfgOpen=cfgOpen;
+  s.fitMode=fitMode; s.keymapSys=keymapSys; s.keymap=JSON.stringify(keymap); s.cfgOpen=cfgOpen;
   s.engine=ENGINE;
   s.susp={on:susp.on,count:susp.count,why:susp.why,ticks:susp.ticks,at:susp.at?new Date(susp.at).toISOString():''};
   s.kinds=window.__kinds||'';
