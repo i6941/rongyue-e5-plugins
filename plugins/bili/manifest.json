@@ -1,14 +1,14 @@
-﻿{
+{
   "id": "bili",
   "api_version": 2,
   "version": "0.3.1",
   "name": {
-    "zh": "鍝斿摡鍝斿摡",
+    "zh": "哔哩哔哩",
     "en": "Bilibili"
   },
   "description": {
-    "zh": "鎺掕姒滀笌鎾斁锛?20P銆佸０闊炽€佸脊骞曘€佽烦骞垮憡銆佹壂鐮佺櫥褰曪級",
-    "en": "Ranking and playback (720p, audio, ad skip, QR login)"
+    "zh": "排行榜与播放（720P、声音、弹幕、跳广告、扫码登录）",
+    "en": "Ranking and playback (720p, audio, danmaku, ad skip, QR login)"
   },
   "entry": "index.html",
   "order": 41
