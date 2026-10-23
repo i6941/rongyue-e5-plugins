@@ -162,7 +162,10 @@ return function (ctx) {
                 if (!pj || num(pj.code) !== 0 || !pj.data || !pj.data[0]) return { ok: false, error: 'pagelist' };
                 cid = num(pj.data[0].cid);
             }
-            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=80&fnval=0&platform=pc&fourk=1');
+            let qn = num(req.query?.qn);
+            if (qn !== 16 && qn !== 32 && qn !== 64 && qn !== 80 && qn !== 112) qn = 80;
+            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=' + qn +
+                            '&fnval=0&platform=pc&fourk=1');
             let j = null;
             try { j = json(q); } catch (e) { return { ok: false, error: 'playurl json' }; }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'playurl ' + (j ? j.code : '?') };
@@ -204,7 +207,7 @@ return function (ctx) {
             let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
             ctx.sh("echo '" + id + "' > /tmp/bili-req");
             if (cached === id && have > 1048576)
-                return { ok: true, state: 'cached', size: have };
+                return { ok: true, state: 'cached', size: have, cid: cid };
             ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' +
                    res + ' ' + tmp);
             let script = "curl -s --max-time 180 --max-filesize 300000000 -A '" + UA +
@@ -212,7 +215,7 @@ return function (ctx) {
                          " -w '%{http_code} %{size_download}' '" + u + "' > " + res;
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- -c "' +
                    script + '"');
-            return { ok: true, state: 'downloading', quality: num(j.data.quality) };
+            return { ok: true, state: 'downloading', quality: num(j.data.quality), cid: cid };
         },
         /* 前端每秒问一次：下载完了没有 */
         'GET /ready': function () {
@@ -307,6 +310,46 @@ return function (ctx) {
                 f.close();
                 return { ok: true };
             } catch (e) { return { ok: false, error: `${e}` }; }
+        },
+        /* 弹幕：官方 XML 接口（list.so）返回整段的 deflate 压缩 XML，
+           这里解压后按 <d p="...">文本</d> 拆开，只留下前端画弹幕要用的字段。 */
+        'GET /danmaku': function (req) {
+            let cid = num(req.query?.cid);
+            if (!cid || cid < 1 || cid > 99999999999999) return { ok: false, error: 'bad cid' };
+            ctx.sh("curl -s --compressed --max-time 25 -A '" + UA +
+                   "' -H 'Referer: " + REFERER + "' -o /tmp/bili-dm.xml" +
+                   " 'https://api.bilibili.com/x/v1/dm/list.so?oid=" + cid + "'");
+            let s = `${ctx.sh('cat /tmp/bili-dm.xml 2>/dev/null') ?? ''}`;
+            if (length(s) < 100) return { ok: false, error: 'no xml' };
+            let chunks = split(s, '<d p="');
+            let out = [];
+            for (let i = 1; i < length(chunks); i++) {
+                let chunk = chunks[i];
+                let gt = index(chunk, '">');
+                if (gt < 0) continue;
+                let p = substr(chunk, 0, gt);
+                let body = substr(chunk, gt + 2);
+                let end = index(body, '</d>');
+                if (end < 0) continue;
+                let text = substr(body, 0, end);
+                if (length(text) < 1 || length(text) > 60) continue;
+                let f = split(p, ',');
+                if (length(f) < 4) continue;
+                let t = num(f[0]);
+                let mode = num(f[1]);
+                let size = num(f[2]);
+                let color = num(f[3]);
+                if (t < 0 || t > 86400) continue;
+                if (mode < 1 || mode > 5) continue;
+                push(out, { t: t, m: mode, s: size, c: color, x: text });
+                if (length(out) >= 3000) break;
+            }
+            return { ok: true, cid: cid, list: out };
+        },
+        /* 设置面板里的"清空缓存" */
+        'GET /clear-cache': function () {
+            ctx.sh('rm -f /etc/e5-infoscreen/plugins/bili/cache.mp4 /tmp/bili-cache-id /tmp/bili-req /tmp/bili-dl.mp4 /tmp/bili-dl.res');
+            return { ok: true };
         },
         /* ---------- 扫码登录 ---------- */
         /* 生成二维码：拿到 url 和 qrcode_key，二维码由设备上的 qrencode 画成 PNG，

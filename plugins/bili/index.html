@@ -30,6 +30,15 @@ header button{height:28px;padding:0 10px;font:inherit;font-size:13px;color:#dce8
 #screen canvas{width:100%;height:auto;max-height:100%;background:#000;display:block}
 #pinfo{font-size:11px;color:var(--dim);padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #status{font-size:11px;color:var(--dim);padding:2px 8px}
+#settings{display:none;position:fixed;inset:0;z-index:21;background:rgba(5,9,15,.9);
+  align-items:center;justify-content:center;padding:10px}
+#settings.on{display:flex}
+#settings .box{width:100%;background:#101a28;border:1px solid #243349;border-radius:10px;
+  padding:10px;display:flex;flex-direction:column;gap:7px}
+#settings .hd{font-size:13px;color:var(--accent);padding-bottom:2px}
+#settings .row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#c8d6e8}
+#settings button{height:28px;padding:0 12px;font:inherit;font-size:12px;color:#dce8f8;
+  background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 #login{display:none;position:fixed;inset:0;z-index:20;background:rgba(5,9,15,.94);
   flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:12px}
 #login.on{display:flex}
@@ -44,9 +53,21 @@ header button{height:28px;padding:0 10px;font:inherit;font-size:13px;color:#dce8
 <header><b>哔哩哔哩</b><input id="q" type="search" placeholder="搜索视频" autocomplete="off"><button id="find" type="button">搜索</button>
   <button id="back" type="button">返回</button>
   <button id="reload" type="button">刷新</button>
-  <button id="acc" type="button">登录</button></header>
+  <button id="acc" type="button">登录</button>
+  <button id="cfg" type="button">设置</button></header>
 <div id="status">排行榜</div>
 <div id="list"></div>
+<div id="settings">
+  <div class="box">
+    <div class="hd">设置</div>
+    <div class="row"><span>弹幕</span><button id="setdm" type="button">开</button></div>
+    <div class="row"><span>弹幕字号</span><button id="setsz" type="button">中</button></div>
+    <div class="row"><span>画质（下次播放生效）</span><button id="setqn" type="button">720P</button></div>
+    <div class="row"><span>视频缓存</span><button id="setclear" type="button">清空</button></div>
+    <div class="row"><span>账号</span><button id="setlogout" type="button">退出登录</button></div>
+    <button id="setclose" type="button">关闭</button>
+  </div>
+</div>
 <div id="login">
   <canvas id="qrimg" width="170" height="170"></canvas>
   <div class="msg" id="qrmsg">用哔哩哔哩 App 扫码</div>
@@ -78,6 +99,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   var inPlayer = false;
   var ws = null, img = null;
   var curMs = 0, durMs = 0;
+  var shotAt = (function(){ var m = /shotat=(\d+)/.exec(location.search); return m ? +m[1] : 20; })();
   var segs = [], segIdx = 0, segSkipUntil = -1;
 
   /* 播到广告/口播区间就跳到段尾；跳完要等时间追上目标，避免反复跳 */
@@ -114,6 +136,69 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
   var shotWant = false, shotDone = false, shotFrames = 0;
   try { shotWant = new URLSearchParams(location.search).get('shot') === '1'; } catch(e){}
 
+
+  /* ---------- 设置 ---------- */
+  var qnPref = 80, curCid = 0;
+  var settingsEl = document.getElementById('settings');
+  var setDm = document.getElementById('setdm');
+  var setSz = document.getElementById('setsz');
+  var setQn = document.getElementById('setqn');
+
+  function saveCfg(k, v){ try { localStorage.setItem('bili.' + k, String(v)); } catch(e){} }
+  function loadCfg(k, d){
+    try { var v = localStorage.getItem('bili.' + k); return v === null ? d : v; } catch(e){ return d; }
+  }
+
+  function syncCfgUi(){
+    setDm.textContent = dmOn ? '开' : '关';
+    setSz.textContent = dmSize <= 14 ? '小' : (dmSize >= 20 ? '大' : '中');
+    setQn.textContent = qnPref >= 80 ? '1080P' : '720P';
+  }
+
+  (function initCfg(){
+    var d = loadCfg('dm', '1');
+    dmOn = d === '1';
+    var sz = +loadCfg('sz', '14');
+    if (sz === 17 || sz === 20 || sz === 14) dmSize = sz;
+    var qn = +loadCfg('qn', '80');
+    if (qn === 64 || qn === 80) qnPref = qn;
+    syncCfgUi();
+  })();
+
+  document.getElementById('cfg').addEventListener('click', function(){
+    syncCfgUi();
+    settingsEl.classList.add('on');
+  });
+  document.getElementById('setclose').addEventListener('click', function(){
+    settingsEl.classList.remove('on');
+  });
+  setDm.addEventListener('click', function(){
+    dmOn = !dmOn;
+    saveCfg('dm', dmOn ? '1' : '0');
+    if (!dmOn) dmLive.length = 0;
+    syncCfgUi();
+  });
+  setSz.addEventListener('click', function(){
+    dmSize = dmSize <= 14 ? 17 : (dmSize === 17 ? 20 : 14);
+    saveCfg('sz', dmSize);
+    syncCfgUi();
+  });
+  setQn.addEventListener('click', function(){
+    qnPref = qnPref >= 80 ? 64 : 80;
+    saveCfg('qn', qnPref);
+    syncCfgUi();
+    statusEl.textContent = '画质已设为 ' + (qnPref >= 80 ? '1080P（需要大会员，否则自动降级）' : '720P') + '，下次播放生效';
+  });
+  document.getElementById('setclear').addEventListener('click', function(){
+    fetch('/api/plugins/bili/clear-cache').then(function(r){ return r.json(); })
+      .then(function(){ statusEl.textContent = '视频缓存已清空'; })
+      .catch(function(){});
+  });
+  document.getElementById('setlogout').addEventListener('click', function(){
+    fetch('/api/plugins/bili/logout').then(function(r){ return r.json(); })
+      .then(function(){ setAcc(''); statusEl.textContent = '已退出登录'; })
+      .catch(function(){});
+  });
 
   /* ---------- 登录（扫码） ---------- */
   var accBtn = document.getElementById('acc');
@@ -271,7 +356,73 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       }).catch(function(e){ statusEl.textContent = '搜索请求失败 ' + e; });
   }
 
-  /* 后端推来的一帧：4 字节头（宽、高各 u16 小端）+ RGB565 像素 */
+  /* ---------- 弹幕 ---------- */
+  var dmAll = [], dmIdx = 0, dmLive = [], dmTrack = 0;
+  var dmOn = true, dmSize = 14;
+  var dmLastMs = 0;
+
+  function loadDanmaku(cid){
+    dmAll = []; dmIdx = 0; dmLive.length = 0;
+    if (!cid || !dmOn) return;
+    fetch('/api/plugins/bili/danmaku?cid=' + cid).then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.ok) return;
+        var list = d.list || [];
+        list.sort(function(a, b){ return a.t - b.t; });
+        dmAll = list;
+        probe('danmaku', String(list.length));
+      }).catch(function(){});
+  }
+
+  function dmSpawn(it){
+    if (it.m === 4 || it.m === 5){
+      dmLive.push({ x: 0, y: it.m === 5 ? 14 : cv.height - 26, text: it.x,
+                    color: it.c, fixed: true, born: curMs, w: 0 });
+      return;
+    }
+    dmTrack = (dmTrack + 1) % 6;
+    dmLive.push({ x: cv.width + 8, y: 16 + dmTrack * 20, text: it.x,
+                  color: it.c, fixed: false, born: curMs, w: 0 });
+  }
+
+  function dmColor(c){
+    var s = (c >>> 0).toString(16);
+    while (s.length < 6) s = '0' + s;
+    return '#' + s;
+  }
+
+  function drawDanmaku(ms, dt){
+    if (!dmOn || !dmAll.length) return;
+    /* 跳转后时间会突变：别把中间几千条一次性倒出来 */
+    if (ms < dmLastMs - 500 || ms > dmLastMs + 1500){
+      dmLive.length = 0;
+      dmIdx = 0;
+      while (dmIdx < dmAll.length && dmAll[dmIdx].t * 1000 < ms) dmIdx++;
+    }
+    while (dmIdx < dmAll.length && dmAll[dmIdx].t * 1000 <= ms){ dmSpawn(dmAll[dmIdx]); dmIdx++; }
+    var g = cctx;
+    g.textBaseline = 'top';
+    g.font = dmSize + 'px "Noto Sans CJK SC",sans-serif';
+    for (var i = dmLive.length - 1; i >= 0; i--){
+      var e = dmLive[i];
+      if (!e.w) e.w = g.measureText(e.text).width;
+      if (e.fixed){
+        if (ms - e.born > 3200){ dmLive.splice(i, 1); continue; }
+        e.x = (cv.width - e.w) / 2;
+      } else {
+        if (ms - e.born > 9000){ dmLive.splice(i, 1); continue; }
+        e.x -= 0.115 * dt;
+        if (e.x + e.w < -4){ dmLive.splice(i, 1); continue; }
+      }
+      g.lineWidth = 3;
+      g.strokeStyle = 'rgba(0,0,0,.72)';
+      g.strokeText(e.text, e.x, e.y);
+      g.fillStyle = dmColor(e.color);
+      g.fillText(e.text, e.x, e.y);
+    }
+  }
+
+  /* 后端推来的一帧：8 字节头（宽、高各 u16 + 毫秒 u32，小端）+ RGB565 像素 */
   function onFrame(buf){
     var b = new Uint8Array(buf);
     if (b.length < 8) return;
@@ -294,7 +445,11 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
       d[p + 3] = 255;
     }
     cctx.putImageData(img, 0, 0);
-    if (shotWant && !shotDone && ++shotFrames >= 20){ shotDone = true; shotUpload(w, h); }
+    var dt = ms - dmLastMs;
+    if (!(dt > 0 && dt < 400)) dt = 35;
+    drawDanmaku(ms, dt);
+    dmLastMs = ms;
+    if (shotWant && !shotDone && ++shotFrames >= shotAt){ shotDone = true; shotUpload(w, h); }
   }
 
   /* 从画布读回像素再上传：证明的是“画布上真的有画面”，不是收到的原始帧 */
@@ -375,11 +530,13 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
     if (!it) return;
     statusEl.textContent = '取流与缓存中…';
     probe('play-start', it.bvid);
-    fetch('/api/plugins/bili/prepare?bvid=' + encodeURIComponent(it.bvid) + '&cid=' + (it.cid || 0))
+    fetch('/api/plugins/bili/prepare?bvid=' + encodeURIComponent(it.bvid) + '&cid=' + (it.cid || 0) +
+          '&qn=' + qnPref)
       .then(function(r){ return r.json(); })
       .then(function(d){
         probe('prepare-done', d ? (d.ok ? 'ok' : ('err:' + d.error)) : 'null');
         if (!d || !d.ok){ statusEl.textContent = '取流失败：' + ((d && d.error) || '?'); return null; }
+        curCid = d.cid || it.cid || 0;
         pinfo.textContent = it.title;
         statusEl.textContent = '下载中…';
         return waitReady(0);
@@ -388,6 +545,7 @@ var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],
         if (!d){ statusEl.textContent = '下载失败'; return null; }
         pinfo.textContent = it.title + ' · ' + Math.round((d.size || 0) / 1048576) + 'MB';
         loadSegments(it.bvid);
+        loadDanmaku(curCid);
         statusEl.textContent = '启动播放器…';
         return fetch('/api/plugins/bili/player-start').then(function(r){ return r.json(); });
       })
