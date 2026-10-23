@@ -21,11 +21,34 @@ header button:active{background:#26323f}
 main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
 .row{padding:8px 10px;border-bottom:1px solid #17202b}
 .row:active{background:#182230}
+/* 键盘选中的行要看得见，否则方向键按下去不知道停在哪 */
+.row.sel{background:#182230;box-shadow:inset 3px 0 0 var(--accent)}
 .row b{display:block;font-weight:400;font-size:13px;line-height:1.35;word-break:break-word}
 .row span{display:block;font-size:11px;color:var(--dim);margin-top:2px}
 .post{padding:8px 10px;border-bottom:1px solid #17202b}
 .post .who{font-size:11px;color:var(--accent);margin-bottom:3px}
 .post .txt{font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.body{font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.body img{display:block;max-width:100%;max-height:300px;margin:6px 0;border:1px solid var(--line);
+  border-radius:4px;background:#0b1017}
+.body .off{color:var(--accent);font-size:12px}
+#viewer{position:fixed;inset:0;background:#000;display:none;z-index:60;overflow:auto}
+#viewer.on{display:flex;align-items:center;justify-content:center}
+#viewer img{max-width:100%;max-height:100%}
+/* 回复：帖子页右下角一个按钮，点开是输入面板 */
+#replyfab{position:fixed;right:10px;bottom:12px;height:34px;padding:0 15px;border:0;border-radius:17px;
+  background:#1f6feb;color:#fff;font:inherit;font-size:13px;display:none;z-index:40}
+body.in-thread #replyfab{display:block}
+#replybox{position:fixed;inset:0;background:rgba(0,0,0,.65);display:none;z-index:70;
+  flex-direction:column;justify-content:flex-end;padding:10px}
+#replybox.on{display:flex}
+#replybox textarea{width:100%;height:140px;padding:8px;font:inherit;font-size:13px;color:var(--fg);
+  background:#161f2a;border:1px solid var(--line);border-radius:6px;resize:none}
+#replybox .bar{display:flex;gap:8px;margin-top:8px}
+#replybox .bar button{flex:1;height:36px;font:inherit;font-size:13px;border-radius:6px;
+  border:1px solid var(--line);background:#1b2532;color:var(--fg)}
+#replybox .bar .send{background:#1f6feb;border:0;color:#fff}
+#replybox .msg{font-size:12px;color:#ff7b72;margin-bottom:6px;min-height:16px}
 .pager{display:flex;gap:6px;padding:9px 10px 2px}
 .pager button{flex:1;height:30px;font:inherit;font-size:12px;color:var(--fg);
   background:#1b2532;border:1px solid var(--line);border-radius:5px}
@@ -48,10 +71,22 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
 <header>
   <button id="back" type="button">‹</button>
   <div id="title">嗨PDA</div>
+  <button id="imgmode" type="button">图:缩略</button>
   <button id="web" type="button">网页</button>
   <button id="acc" type="button">登录</button>
 </header>
 <main id="main"></main>
+<div id="viewer"><img alt=""></div>
+<button id="replyfab" type="button">回复</button>
+<div id="replybox">
+  <div class="msg" id="replymsg"></div>
+  <textarea id="replytext" placeholder="写点什么…"></textarea>
+  <div class="bar">
+    <button id="replycancel" type="button">取消</button>
+    <button id="replysend" class="send" type="button">发送</button>
+  </div>
+</div>
+<script src="/sdk/e5.js"></script>
 <script>
 (function(){
   var main = document.getElementById('main');
@@ -59,12 +94,23 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
   var accBtn = document.getElementById('acc');
   var backBtn = document.getElementById('back');
   var webBtn = document.getElementById('web');
+  var imgBtn = document.getElementById('imgmode');
+  var replyFab = document.getElementById('replyfab');
+  var replyBox = document.getElementById('replybox');
+  var replyText = document.getElementById('replytext');
+  var replyMsg = document.getElementById('replymsg');
+  var replySend = document.getElementById('replysend');
+  var viewer = document.getElementById('viewer');
+  var viewerImg = viewer.querySelector('img');
+  /* 换过键名：之前存下的 off 会让人以为「图片坏了」，这里重新从缩略图开始 */
+  var imgMode = localStorage.getItem('hipda-img2') || 'thumb';
   var curPageUrl = 'https://www.4d4y.com/forum/forumdisplay.php?fid=2';
 
   var view = 'boards';       /* boards | threads | thread */
   var fid = 0, tid = 0, page = 1, pages = 1;
   var boardName = '', threadName = '';
   var logged = false;
+  var threadImgs = [], imgCursor = 0;
 
   function esc(s){
     return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
@@ -72,6 +118,67 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
     });
   }
   function setTitle(t){ titleEl.textContent = t || '嗨PDA'; }
+
+  /* ---------- 图片 ---------- */
+  function imgLabel(){
+    imgBtn.textContent = imgMode === 'orig' ? '图:原图' : (imgMode === 'off' ? '图:关' : '图:缩略');
+  }
+  /* 按后端给的 parts 顺序渲染：文字段和图片交替，图片才不会被堆到楼层末尾 */
+  function partsHtml(po){
+    var parts = po.parts || [];
+    if (!parts.length){
+      var t = esc(po.text || '');
+      var im0 = po.imgs || [];
+      if (imgMode !== 'off')
+        for (var j = 0; j < im0.length; j++)
+          t += '<img data-o="' + esc(im0[j].o) + '" src="' +
+               esc(imgMode === 'orig' ? im0[j].o : im0[j].t) + '" alt="">';
+      return '<div class="body">' + t + '</div>';
+    }
+    var h = '<div class="body">';
+    for (var i = 0; i < parts.length; i++){
+      var p = parts[i];
+      if (p.k === 't'){ h += esc(p.v); continue; }
+      if (imgMode === 'off'){
+        h += '<span class="off" data-open="' + esc(p.o || p.t) + '">[图]</span>';
+        continue;
+      }
+      h += '<img data-o="' + esc(p.o) + '" src="' +
+           esc(imgMode === 'orig' ? p.o : p.t) + '" alt="">';
+    }
+    return h + '</div>';
+  }
+  /* 图片诊断：渲染后等两秒，数一下真正加载出来的张数，报给后端 */
+  function probeImg(tag, extra){
+    try{
+      var b = {tid: tid, mode: imgMode, n: 0, ok: 0, bad: 0, src: tag};
+      if (extra) for (var k in extra) b[k] = extra[k];
+      fetch('/api/plugins/hipda/imgprobe', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(b)
+      });
+    }catch(e){}
+  }
+
+  function reportImgs(){
+    var ims = main.querySelectorAll('.body img');
+    if (!ims.length){ probeImg('no-img-in-dom'); return; }
+    var first = ims[0].src || '';
+    setTimeout(function(){
+      var ok = 0, lastErr = '';
+      for (var i = 0; i < ims.length; i++) if (ims[i].naturalWidth) ok++;
+      probeImg('rendered', {n: ims.length, ok: ok, bad: ims.length - ok, src: first});
+    }, 2500);
+  }
+
+  function openViewer(url){
+    viewerImg.src = url;
+    viewer.classList.add('on');
+  }
+  function closeViewer(){
+    viewer.classList.remove('on');
+    viewerImg.removeAttribute('src');
+  }
 
   function api(path){
     return fetch('/api/plugins/hipda/' + path).then(function(r){ return r.json(); });
@@ -138,6 +245,7 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
   /* ---------- 版块 ---------- */
   function loadBoards(){
     view = 'boards'; setTitle('版块');
+    document.body.classList.remove('in-thread');
     main.innerHTML = '<div class="tip">加载版块…</div>';
     api('boards').then(function(d){
       if (!d || !d.ok){ fail((d && d.error) || '加载失败'); return; }
@@ -146,12 +254,14 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
         h += '<div class="row" data-fid="' + d.list[i].fid + '"><b>' + esc(d.list[i].name) + '</b></div>';
       }
       main.innerHTML = h || '<div class="tip">没有版块</div>';
+      selIdx = -1; selectRow(0);
     }).catch(function(e){ fail(String(e)); });
   }
 
   /* ---------- 帖子列表 ---------- */
   function loadThreads(f, name, p){
     view = 'threads'; fid = f; boardName = name || boardName; page = p || 1;
+    document.body.classList.remove('in-thread');
     curPageUrl = 'https://www.4d4y.com/forum/forumdisplay.php?fid=' + fid + '&page=' + page;
     setTitle(boardName + ' · 第 ' + page + ' 页');
     main.innerHTML = '<div class="tip">加载帖子…</div>';
@@ -173,12 +283,14 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
       h += pager();
       main.innerHTML = h;
       main.scrollTop = 0;
+      selIdx = -1; selectRow(0);
     }).catch(function(e){ fail(String(e)); });
   }
 
   /* ---------- 帖子内容 ---------- */
   function loadThread(t, name, p){
     view = 'thread'; tid = t; threadName = name || ''; page = p || 1;
+    document.body.classList.add('in-thread');
     curPageUrl = 'https://www.4d4y.com/forum/viewthread.php?tid=' + tid + '&page=' + page;
     setTitle((threadName || '帖子') + ' · ' + page + '/' + pages);
     main.innerHTML = '<div class="tip">加载内容…</div>';
@@ -187,19 +299,24 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
         if (d && d.need_login){ showLogin(); return; }
         fail((d && d.error) || '加载失败'); return;
       }
+      probeImg('api-ok', {n: d.list.length,
+        ok: (d.list[0] && d.list[0].imgs) ? d.list[0].imgs.length : -1});
       if (d.title) threadName = d.title;
       pages = d.pages || 1;
       setTitle(threadName + ' · ' + page + '/' + pages);
       var h = '';
+      threadImgs = []; imgCursor = 0;
       for (var i = 0; i < d.list.length; i++){
         var po = d.list[i];
+        for (var k = 0; k < (po.imgs || []).length; k++) threadImgs.push(po.imgs[k]);
         h += '<div class="post">' +
              (po.author ? '<div class="who">' + esc(po.author) + '</div>' : '') +
-             '<div class="txt">' + esc(po.text) + '</div></div>';
+             partsHtml(po) + '</div>';
       }
       h += pager();
       main.innerHTML = h;
       main.scrollTop = 0;
+      reportImgs();
     }).catch(function(e){ fail(String(e)); });
   }
 
@@ -212,6 +329,10 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
 
   /* ---------- 事件 ---------- */
   main.addEventListener('click', function(e){
+    var im = e.target.closest('.body img');
+    if (im){ openViewer(im.dataset.o || im.src); return; }
+    var off = e.target.closest('.body .off');
+    if (off && off.dataset.open){ openViewer(off.dataset.open); return; }
     var row = e.target.closest('.row');
     if (row){
       if (row.dataset.fid) { boardName = row.textContent.trim(); loadThreads(+row.dataset.fid, boardName, 1); return; }
@@ -243,6 +364,51 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
     location.href = '/plugins/browser/index.html?web=1&url=' + encodeURIComponent(curPageUrl);
   });
 
+  /* 退出：有宿主就让宿主关掉插件；直接以插件页当启动页时（没有宿主），回首页 */
+  function exitPlugin(){
+    try{
+      if (window.parent !== window && typeof e5 !== 'undefined' && e5.exit){ e5.exit(); return; }
+    }catch(e){}
+    location.href = '/';
+  }
+
+  replyFab.addEventListener('click', function(){
+    replyMsg.textContent = '';
+    replyBox.classList.add('on');
+    setTimeout(function(){ try{ replyText.focus(); }catch(e){} }, 50);
+  });
+  document.getElementById('replycancel').addEventListener('click', function(){
+    replyBox.classList.remove('on');
+    replyMsg.textContent = '';
+  });
+  replySend.addEventListener('click', function(){
+    var text = replyText.value.trim();
+    if (!text){ replyMsg.textContent = '内容不能为空'; return; }
+    replySend.disabled = true; replySend.textContent = '发送中…'; replyMsg.textContent = '';
+    fetch('/api/plugins/hipda/reply', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tid: tid, message: text})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      replySend.disabled = false; replySend.textContent = '发送';
+      if (!d || !d.ok){ replyMsg.textContent = (d && d.error) || '发送失败'; return; }
+      replyBox.classList.remove('on');
+      replyText.value = '';
+      loadThread(tid, threadName, page);
+    }).catch(function(e){
+      replySend.disabled = false; replySend.textContent = '发送';
+      replyMsg.textContent = String(e);
+    });
+  });
+
+  imgBtn.addEventListener('click', function(){
+    imgMode = imgMode === 'thumb' ? 'orig' : (imgMode === 'orig' ? 'off' : 'thumb');
+    localStorage.setItem('hipda-img2', imgMode);
+    imgLabel();
+    if (view === 'thread') loadThread(tid, threadName, page);
+  });
+
+  viewer.addEventListener('click', closeViewer);
+
   accBtn.addEventListener('click', function(){
     if (!logged) { showLogin(); return; }
     if (!confirm('退出登录？')) return;
@@ -252,9 +418,167 @@ main{flex:1;overflow:auto;padding:4px 0 10px;-webkit-overflow-scrolling:touch}
     showLogin();
   });
 
+  /* ---------- 全屏 ---------- */
+  /* 宿主打开插件时会留着工具栏和底部主菜单，320×480 上这两条占掉很多地方。
+     同源的父页面直接改样式即可（注入 <script> 在这台 WebKit 上不执行）。
+     心跳看门狗：插件页万一被直接销毁、没机会清理，宿主菜单栏会自己回来。 */
+  var HOST_CLASS = 'e5-hipda-full';
+  var hostStyleInjected = false, hostWatchInjected = false;
+
+  function hostChrome(on){
+    try{
+      if (window.parent === window) return;
+      var d = window.parent.document;
+      if (!hostStyleInjected){
+        var st = d.createElement('style');
+        st.id = 'e5-hipda-chrome';
+        st.textContent = 'body.' + HOST_CLASS + ' #mobile-toolbar,body.' + HOST_CLASS +
+          ' #mobile-nav{display:none!important}' +
+          'body.' + HOST_CLASS + ' #app-frame{top:var(--status-h);bottom:0;' +
+          'height:calc(100% - var(--status-h))!important}';
+        d.head.appendChild(st);
+        hostStyleInjected = true;
+      }
+      if (!hostWatchInjected){
+        try{
+          var sc = d.createElement('script');
+          sc.id = 'e5-hipda-watchdog';
+          sc.textContent = '(function(){if(window.__e5HipdaWatch)return;window.__e5HipdaWatch=1;' +
+            'setInterval(function(){if(Date.now()-(window.__e5HipdaPing||0)>5000){' +
+            'try{document.body.classList.remove("' + HOST_CLASS + '");}catch(e){}}},1000);})();';
+          (d.head || d.documentElement).appendChild(sc);
+          hostWatchInjected = true;
+        }catch(e){}
+      }
+      if (on){ try{ window.parent.__e5HipdaPing = Date.now(); }catch(e){} }
+      d.body.classList.toggle(HOST_CLASS, !!on);
+    }catch(e){}
+  }
+
+  /* ---------- 键盘 ---------- */
+  /* 宿主在 appOpen 时只把焦点搬进 iframe、然后 return，这一下按键就丢了，
+     菜单状态的键永远到不了本页。所以要在父页面挂一个转发器：宿主收到键、
+     且当前打开的正是本插件时，复制一份派发进 iframe。 */
+  function hostKeyForward(){
+    try{
+      var d = window.parent.document;
+      if (!d || d.__e5HipdaKeyFwd) return;
+      d.__e5HipdaKeyFwd = true;
+      d.addEventListener('keydown', function(e){
+        try{
+          var f = d.getElementById('app-frame');
+          if (!f || f.hidden) return;
+          if (!/\/plugins\/hipda\//.test(f.getAttribute('src') || '')) return;
+          var w = f.contentWindow; if (!w) return;
+          w.document.dispatchEvent(new w.KeyboardEvent('keydown', {
+            key: e.key, code: e.code, keyCode: e.keyCode, which: e.which,
+            repeat: e.repeat, bubbles: true, cancelable: true
+          }));
+        }catch(x){}
+      }, false);
+    }catch(e){}
+  }
+
+  var selIdx = -1;
+  var KEYMAP = {up:1, down:1, ok:1, back:1, left:1, right:1};
+
+  function rowList(){ return [].slice.call(main.querySelectorAll('.row')); }
+
+  function selectRow(i){
+    var rs = rowList();
+    if (!rs.length) return;
+    if (i < 0) i = rs.length - 1;
+    if (i >= rs.length) i = 0;
+    for (var j = 0; j < rs.length; j++) rs[j].classList.toggle('sel', j === i);
+    selIdx = i;
+    try{ rs[i].scrollIntoView({block:'nearest'}); }catch(e){ rs[i].scrollIntoView(); }
+  }
+
+  function openRow(el){
+    if (!el) return;
+    if (el.dataset.fid){ boardName = el.textContent.trim(); loadThreads(+el.dataset.fid, boardName, 1); return; }
+    if (el.dataset.tid){ threadName = el.querySelector('b').textContent; loadThread(+el.dataset.tid, threadName, 1); return; }
+  }
+
+  function pageStep(delta){
+    var p = page + delta;
+    if (p < 1 || p > pages) return;
+    if (view === 'threads') loadThreads(fid, boardName, p);
+    else if (view === 'thread') loadThread(tid, threadName, p);
+  }
+
+  function onKey(kind){
+    if (!KEYMAP[kind]) return false;
+    /* 看图时先把图关掉，别一按返回就退出帖子 */
+    if (viewer.classList.contains('on')){
+      if (kind === 'back' || kind === 'ok'){ closeViewer(); return true; }
+      return false;
+    }
+    /* 回复面板开着时，返回键只关面板 */
+    if (replyBox.classList.contains('on')){
+      if (kind === 'back'){ replyBox.classList.remove('on'); return true; }
+      return false;
+    }
+    /* 帖子正文：上下滚动、确认翻一屏、左右翻页、返回回列表 */
+    if (view === 'thread'){
+      if (kind === 'up'){ main.scrollTop -= 90; return true; }
+      if (kind === 'down'){ main.scrollTop += 90; return true; }
+      if (kind === 'ok'){
+        /* 有图就按确认键依次看图，没图就是翻一屏 */
+        if (threadImgs.length){
+          openViewer(threadImgs[imgCursor % threadImgs.length].o || threadImgs[imgCursor % threadImgs.length].t);
+          imgCursor++;
+          return true;
+        }
+        main.scrollTop += 240; return true;
+      }
+      if (kind === 'left'){ pageStep(-1); return true; }
+      if (kind === 'right'){ pageStep(1); return true; }
+      if (kind === 'back'){ loadThreads(fid, boardName, page); return true; }
+      return false;
+    }
+    /* 列表：上下选、确认进、左右翻页、返回上一层，最外层放行让宿主关掉插件 */
+    if (kind === 'up'){ selectRow(selIdx <= 0 ? rowList().length - 1 : selIdx - 1); return true; }
+    if (kind === 'down'){ selectRow(selIdx < 0 ? 0 : selIdx + 1); return true; }
+    if (kind === 'left'){ pageStep(-1); return true; }
+    if (kind === 'right'){ pageStep(1); return true; }
+    if (kind === 'ok'){
+      var rs = rowList();
+      if (!rs.length) return true;
+      if (selIdx < 0) selectRow(0);
+      openRow(rs[selIdx < 0 ? 0 : selIdx]);
+      return true;
+    }
+    if (kind === 'back'){
+      if (view === 'threads'){ loadBoards(); return true; }
+      exitPlugin();
+      return true;
+    }
+    return false;
+  }
+
+  if (typeof e5 !== 'undefined' && e5.onKey) e5.onKey(function(k){ return onKey(k.kind); });
+  hostKeyForward();
+  hostChrome(true);
+  setInterval(function(){ hostChrome(true); }, 1000);
+  window.addEventListener('pagehide', function(){ hostChrome(false); }, true);
+
+  imgLabel();
+
   /* ---------- 启动 ---------- */
+  /* 深链接：?tid=123 直接打开帖子，?fid=2 直接进版块（调试和桌面快捷方式都用得上） */
+  var qp = new URLSearchParams(location.search);
+  var deepTid = +qp.get('tid') || 0;
+  var deepFid = +qp.get('fid') || 0;
+
   api('state').then(function(d){
-    if (d && d.logged){ logged = true; accBtn.textContent = (d.uname || '已登录').slice(0, 6); loadBoards(); }
+    if (d && d.logged){
+      logged = true;
+      accBtn.textContent = (d.uname || '已登录').slice(0, 6);
+      if (deepTid) loadThread(deepTid, '', 1);
+      else if (deepFid) loadThreads(deepFid, '', 1);
+      else loadBoards();
+    }
     else showLogin();
   }).catch(function(){ showLogin(); });
 })();

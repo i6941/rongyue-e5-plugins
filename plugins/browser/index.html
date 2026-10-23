@@ -59,6 +59,7 @@ p{margin:0 0 9px;word-wrap:break-word}
 <div id="status"></div>
 <main id="doc"></main>
 <iframe id="frame" title="网页" referrerpolicy="no-referrer"></iframe>
+<script src="/sdk/e5.js"></script>
 <script>
 (function(){
   var doc = document.getElementById('doc');
@@ -176,7 +177,7 @@ p{margin:0 0 9px;word-wrap:break-word}
     }
     h += '</div>';
     doc.innerHTML = h;
-    statusEl.textContent = '阅读器模式 · 只显示正文和链接';
+    statusEl.textContent = '同源代理模式 · 输入网址或点下面的书签';
     input.value = '';
     stack = [];
   }
@@ -288,8 +289,9 @@ p{margin:0 0 9px;word-wrap:break-word}
     applyZoom();
     if (!webMode && input.value){ showWeb(target(input.value)); }
   });
-  /* 三种模式循环：阅读 → 原文 → 同源代理 → 阅读 */
-  var modeState = 'reader';
+  /* 三种模式循环：阅读 → 原文 → 同源代理 → 阅读。
+     默认用同源代理：跨域原文在同一台机器上版面经常是乱的，代理至少能读标题、能接管链接。 */
+  var modeState = 'proxy';
   modeBtn.addEventListener('click', function(){
     var u = target(input.value) || curUrl;
     if (modeState === 'reader'){
@@ -309,7 +311,10 @@ p{margin:0 0 9px;word-wrap:break-word}
     if (!keepHist){ if (curUrl && curUrl !== u) histBack.push(curUrl); histFwd.length = 0; }
     curUrl = u;
     input.value = u;
-    if (webMode) showWeb(u); else go(u, false);
+    /* 按当前模式打开：代理优先，其次原文，最后阅读视图 */
+    if (modeState === 'proxy') showProxy(u);
+    else if (modeState === 'web') showWeb(u);
+    else go(u, false);
     syncMark();
   }
   backBtn.addEventListener('click', function(){
@@ -358,6 +363,100 @@ p{margin:0 0 9px;word-wrap:break-word}
   input.addEventListener('keydown', function(e){
     if (e.key === 'Enter' || e.keyCode === 13){ e.preventDefault(); openUrl(target(input.value)); }
   });
+
+  /* ---------- 全屏 / 键盘 ---------- */
+  var HOST_CLASS = 'e5-browser-full';
+  var hostStyleInjected = false, hostWatchInjected = false;
+
+  function hostChrome(on){
+    try{
+      if (window.parent === window) return;
+      var d = window.parent.document;
+      if (!hostStyleInjected){
+        var st = d.createElement('style');
+        st.id = 'e5-browser-chrome';
+        st.textContent = 'body.' + HOST_CLASS + ' #mobile-toolbar,body.' + HOST_CLASS +
+          ' #mobile-nav{display:none!important}' +
+          'body.' + HOST_CLASS + ' #app-frame{top:var(--status-h);bottom:0;' +
+          'height:calc(100% - var(--status-h))!important}';
+        d.head.appendChild(st);
+        hostStyleInjected = true;
+      }
+      if (!hostWatchInjected){
+        try{
+          var sc = d.createElement('script');
+          sc.id = 'e5-browser-watchdog';
+          sc.textContent = '(function(){if(window.__e5BrowserWatch)return;window.__e5BrowserWatch=1;' +
+            'setInterval(function(){if(Date.now()-(window.__e5BrowserPing||0)>5000){' +
+            'try{document.body.classList.remove("' + HOST_CLASS + '");}catch(e){}}},1000);})();';
+          (d.head || d.documentElement).appendChild(sc);
+          hostWatchInjected = true;
+        }catch(e){}
+      }
+      if (on){ try{ window.parent.__e5BrowserPing = Date.now(); }catch(e){} }
+      d.body.classList.toggle(HOST_CLASS, !!on);
+    }catch(e){}
+  }
+
+  /* 宿主在插件打开时只把焦点搬进 iframe 就 return，按键到不了本页，得在父页面挂转发器 */
+  function hostKeyForward(){
+    try{
+      var d = window.parent.document;
+      if (!d || d.__e5BrowserKeyFwd) return;
+      d.__e5BrowserKeyFwd = true;
+      d.addEventListener('keydown', function(e){
+        try{
+          var f = d.getElementById('app-frame');
+          if (!f || f.hidden) return;
+          if (!/\/plugins\/browser\//.test(f.getAttribute('src') || '')) return;
+          var w = f.contentWindow; if (!w) return;
+          w.document.dispatchEvent(new w.KeyboardEvent('keydown', {
+            key: e.key, code: e.code, keyCode: e.keyCode, which: e.which,
+            repeat: e.repeat, bubbles: true, cancelable: true
+          }));
+        }catch(x){}
+      }, false);
+    }catch(e){}
+  }
+
+  function exitApp(){
+    try{
+      if (window.parent !== window && typeof e5 !== 'undefined' && e5.exit){ e5.exit(); return; }
+    }catch(e){}
+    location.href = '/';
+  }
+
+  function onKey(kind){
+    if (kind === 'left' || kind === 'back'){
+      if (histBack.length){ backBtn.click(); return true; }
+      /* 没有上一页：在主界面按返回就退出插件，在页面里则回主界面 */
+      if (!webMode && doc.querySelector('.home')){ exitApp(); return true; }
+      home(); return true;
+    }
+    if (kind === 'right'){
+      if (histFwd.length){ fwdBtn.click(); return true; }
+      return false;
+    }
+    if (kind === 'up' || kind === 'down'){
+      /* 阅读视图是自己画的，能滚；原文/代理是跨域 iframe，按键进不去，只能不吞 */
+      if (webMode) return false;
+      doc.scrollTop += (kind === 'down' ? 80 : -80);
+      return true;
+    }
+    if (kind === 'ok'){
+      var u = target(input.value);
+      if (u){ openUrl(u); return true; }
+      return false;
+    }
+    return false;
+  }
+
+  if (typeof e5 !== 'undefined' && e5.onKey) e5.onKey(function(k){ return onKey(k.kind); });
+  hostKeyForward();
+  hostChrome(true);
+  setInterval(function(){ hostChrome(true); }, 1000);
+  window.addEventListener('pagehide', function(){ hostChrome(false); }, true);
+  modeBtn.textContent = '阅读';
 
   home();
   /* 设备上验证用：?web=1&url=... 直接以原文模式打开 */

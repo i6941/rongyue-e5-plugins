@@ -93,6 +93,18 @@ def strip_html(s):
     s = re.sub(r'\n{3,}', '\n\n', s)
     return s.strip()
 
+def abs_url(u):
+    """论坛里的图片有的是相对路径，补成绝对地址，否则插件页会去 127.0.0.1 找。"""
+    if not u:
+        return u
+    if u.startswith('//'):
+        return 'https:' + u
+    if u.startswith('http://') or u.startswith('https://'):
+        return u
+    if u.startswith('/'):
+        return 'https://www.4d4y.com' + u
+    return 'https://www.4d4y.com/forum/' + u
+
 
 def cmd_login(argv):
     # 凭据从 stdin 的 JSON 读，避免密码里的特殊字符被 shell 解释
@@ -217,11 +229,52 @@ def cmd_thread(argv):
         pid = int(mk.group(1))
         start = mk.end()
         nxt = marks[idx + 1].start() if idx + 1 < len(marks) else len(html)
-        stop = html.find('</td>', start)
-        if stop < 0 or stop > nxt:
+        # 正文单元格结束后紧跟 <div id="post_rate_div_N">，再往后是作者栏和操作栏
+        # （发短消息/加好友/报告/引用/TOP）。不能按 </td> 截，引用块里也有，
+        # 用 rfind 又会把下一楼的作者栏吞进来。
+        pos = html.find('post_rate_div_', start)
+        if pos < 0 or pos > nxt:
+            pos = html.find('</td></tr></table>', start)
+        if pos < 0 or pos > nxt:
             stop = nxt
-        body = strip_html(html[start:stop])[:3000]
-        if not body:
+        else:
+            # 标记落在 <div id="post_rate_div_…"> 里面，退回到这个标签的开头，
+            # 否则正文末尾会留下半截 '<div id="'
+            stop = html.rfind('<', start, pos)
+            if stop < 0:
+                stop = pos
+        raw = html[start:stop]
+        body = strip_html(raw)[:3000]
+        # 正文图片：缩略图是原图路径加 .thumb.jpg，原图在 onclick="zoom(this, '…')" 里
+        imgs = []
+        # parts 保留原文顺序：文字段和图片交替，前端照这个顺序渲染，
+        # 否则图片会被统一堆到每楼末尾（用户看到的就是「全跑到最下面」）。
+        parts = []
+        pos = 0
+        for im in re.finditer(r'<img[^>]*>', raw):
+            tag = im.group(0)
+            sm = re.search(r'src="([^"]+)"', tag)
+            if not sm:
+                continue
+            thumb = sm.group(1)
+            low = thumb.lower()
+            if ('smilies' in low or 'avatar' in low or 'images/default' in low
+                    or 'images/common' in low or 'logo.gif' in low):
+                continue
+            zm = re.search(r"zoom\(this,\s*'([^']+)'", tag)
+            orig = zm.group(1) if zm else thumb
+            thumb = abs_url(thumb)
+            orig = abs_url(orig)
+            seg = strip_html(raw[pos:im.start()])
+            if seg.strip():
+                parts.append({'k': 't', 'v': seg})
+            imgs.append({'t': thumb, 'o': orig})
+            parts.append({'k': 'i', 't': thumb, 'o': orig})
+            pos = im.end()
+        tail = strip_html(raw[pos:])
+        if tail.strip():
+            parts.append({'k': 't', 'v': tail})
+        if not body and not imgs:
             continue
         # 第一帖前面还隔着标题栏，窗口放大一些，否则楼主的名字取不到
         prev = html[max(0, mk.start() - 12000):mk.start()]
@@ -235,12 +288,85 @@ def cmd_thread(argv):
             author = names[-1].strip() if names else ''
         tm = re.search(r'发表于 ([0-9]{4}-[0-9]{1,2}-[0-9]{1,2}[ 0-9:]*)', prev)
         posts.append({'pid': pid, 'author': author,
-                      'time': tm.group(1).strip() if tm else '', 'text': body})
+                      'time': tm.group(1).strip() if tm else '', 'text': body,
+                      'imgs': imgs, 'parts': parts})
     pages = 1
     pm = re.findall(r'page=(\d+)', html)
     if pm:
         pages = max(int(x) for x in pm)
+    try:
+        with open('/tmp/e5-hipda-thread.log', 'a') as fh:
+            fh.write('tid=%d page=%d posts=%d imgs=%d\n'
+                     % (tid, page, len(posts), sum(len(x['imgs']) for x in posts)))
+    except Exception:
+        pass
     return {'ok': True, 'title': title, 'list': posts, 'page': page, 'pages': min(pages, 500)}
+
+
+def post_form(url, data):
+    """发帖用：Discuz 页面是 GBK，表单也必须按 gb18030 编码，否则中文会乱码。"""
+    if not url.startswith('http'):
+        url = urllib.parse.urljoin(BASE, url)
+    body = urllib.parse.urlencode(data, encoding='gb18030').encode('gb18030')
+    req = urllib.request.Request(url, data=body, headers=headers(
+        {'Content-Type': 'application/x-www-form-urlencoded'}))
+    with opener.open(req, timeout=TIMEOUT) as r:
+        return r.read(3 * 1024 * 1024).decode('gb18030', 'replace'), r.geturl()
+
+
+def cmd_reply(argv):
+    # 回复内容从 stdin 的 JSON 读，避免换行和引号被 shell 拆开
+    try:
+        d = json.load(sys.stdin)
+    except Exception as e:
+        return {'ok': False, 'error': 'bad stdin: %s' % str(e)[:60]}
+    tid = int(d.get('tid') or 0)
+    msg = (d.get('message') or '').strip()
+    dry = bool(d.get('dry'))
+    if tid < 1:
+        return {'ok': False, 'error': 'tid 不对'}
+    if not msg:
+        return {'ok': False, 'error': '内容为空'}
+    if len(msg) > 20000:
+        return {'ok': False, 'error': '内容太长'}
+
+    page, _ = fetch('viewthread.php?tid=%d' % tid)
+    if is_guest(page):
+        return {'ok': False, 'error': '未登录', 'need_login': True}
+    m = re.search(r'name="formhash" value="([^"]+)"', page)
+    if not m:
+        return {'ok': False, 'error': '页面里没有 formhash'}
+    formhash = m.group(1)
+    fm = re.search(r'name="fid" value="(\d+)"', page)
+    if not fm:
+        # 回复表单的 action 需要 fid；这个模板没放隐藏域，从面包屑里取
+        fm = re.search(r'forumdisplay\.php\?fid=(\d+)', page)
+    fid = fm.group(1) if fm else ''
+    tm = re.search(r'<title>(.*?)</title>', page, re.S)
+    subject = strip_html(tm.group(1)).replace('- 4D4Y', '').strip() if tm else ''
+
+    if dry:
+        return {'ok': True, 'dry': True, 'fid': fid, 'subject': subject,
+                'formhash_len': len(formhash), 'message_len': len(msg)}
+
+    data = {'formhash': formhash, 'subject': subject, 'message': msg, 'usesig': '1'}
+    html, final = post_form(
+        'post.php?action=reply&fid=%s&tid=%d&extra=&replysubmit=yes' % (fid, tid), data)
+
+    low = html
+    if '两次发表间隔' in low:
+        return {'ok': False, 'error': '论坛限制：两次发表间隔太短'}
+    for bad in ('对不起', '您无权', '需要审核', '禁止', '来路不正确'):
+        if bad in low:
+            return {'ok': False, 'error': '论坛拒绝：' + strip_html(html)[:120]}
+    if '来路不正确' in low or 'formhash' in low and '您' in low and '回复' not in low:
+        return {'ok': False, 'error': '论坛拒绝了这次提交（formhash/来源校验）'}
+    if msg[:20] and msg[:20] in html:
+        return {'ok': True, 'posted': True, 'url': final}
+    if '您的回复' in low or '回复成功' in low:
+        return {'ok': True, 'posted': True, 'url': final}
+    snippet = strip_html(html)[:160]
+    return {'ok': False, 'error': '没看到成功提示：' + snippet}
 
 
 def cmd_debug(argv):
@@ -258,7 +384,8 @@ def main():
         return
     cmd, argv = sys.argv[1], sys.argv[2:]
     fn = {'login': cmd_login, 'state': cmd_state, 'boards': cmd_boards,
-          'threads': cmd_threads, 'thread': cmd_thread, 'debug': cmd_debug}.get(cmd)
+          'threads': cmd_threads, 'thread': cmd_thread, 'debug': cmd_debug,
+          'reply': cmd_reply}.get(cmd)
     if not fn:
         print(json.dumps({'ok': False, 'error': 'unknown cmd'}))
         return

@@ -1,5 +1,5 @@
 'use strict';
-import { open } from 'fs';
+import { open, readfile } from 'fs';
 /* 精简版 B站 客户端后端：只封装官方 API，不破解。
    取流走 platform=html5 + fnval=0，官方会直接给 progressive MP4（durl），
    这是 <video> 能直接吃的格式；DASH 的分离音轨这条路在 WPE 上不好走。
@@ -11,6 +11,12 @@ return function (ctx) {
     const IMG_DOMAINS = ['hdslb.com'];
     const VID_DOMAINS = ['bilivideo.com', 'bilivideo.cn', 'akamaized.net', 'bilibili.com'];
 
+    /* B站接口有时给 http:// 的封面地址，而 host_ok 只放行 https，统一升一下级 */
+    function httpsify(u) {
+        if (substr(u, 0, 2) === '//') return 'https:' + u;
+        if (substr(u, 0, 7) === 'http://') return 'https://' + substr(u, 7);
+        return u;
+    }
     function ends_with(s, suf) {
         if (length(s) < length(suf)) return false;
         return substr(s, length(s) - length(suf), length(suf)) === suf;
@@ -111,7 +117,7 @@ return function (ctx) {
                     bvid: `${it.bvid ?? ''}`,
                     title: `${it.title ?? ''}`,
                     author: `${it.owner?.name ?? ''}`,
-                    pic: `${it.pic ?? ''}`,
+                    pic: httpsify(`${it.pic ?? ''}`),
                     dur: num(it.duration),
                     play: num(it.stat?.view),
                     cid: 0
@@ -134,8 +140,7 @@ return function (ctx) {
             let out = [];
             for (let it in (j.data?.result ?? [])) {
                 if (`${it.type ?? ''}` !== 'video') continue;
-                let pic = `${it.pic ?? ''}`;
-                if (substr(pic, 0, 2) === '//') pic = 'https:' + pic;
+                let pic = httpsify(`${it.pic ?? ''}`);
                 push(out, {
                     bvid: `${it.bvid ?? ''}`,
                     title: strip_tags(`${it.title ?? ''}`),
@@ -284,9 +289,12 @@ return function (ctx) {
         'GET /img': function (req) {
             let u = `${req.query?.u ?? ''}`;
             if (!host_ok(u, IMG_DOMAINS)) return { status: 403, type: 'text/plain', body: 'host not allowed' };
-            let tmp = '/tmp/bili-img.jpg';
+            /* 每次请求各用一个临时文件：列表会同时拉多张封面，
+               共用一个文件会互相覆盖，表现就是黑框。 */
+            let tmp = trim(`${ctx.sh('mktemp /tmp/bili-img-XXXXXX') ?? ''}`);
+            if (length(tmp) < 5) return { status: 500, type: 'text/plain', body: 'tmp' };
             ctx.sh('rm -f ' + tmp);
-            let r = ctx.sh("curl -s --max-time 20 -A '" + UA + "' -H 'Referer: " + REFERER + "' -o " + tmp +
+            let r = ctx.sh("curl -sL --max-time 20 -A '" + UA + "' -H 'Referer: " + REFERER + "' -o " + tmp +
                            " -w '%{http_code}' '" + u + "'");
             if (`${r ?? ''}` !== '200') return { status: 502, type: 'text/plain', body: 'upstream' };
             let data = readfile(tmp);

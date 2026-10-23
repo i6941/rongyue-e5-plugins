@@ -7,7 +7,9 @@ import { open } from 'fs';
 return function (ctx) {
     const DIR = '/etc/e5-infoscreen/plugins/hipda';
     const HELPER = DIR + '/e5-hipda';
-    const TMP = '/tmp/e5-hipda-in.json';
+    /* 登录和回复各用各的临时文件：同一个文件在并发时会互相覆盖 */
+    const TMP_LOGIN = '/tmp/e5-hipda-login.json';
+    const TMP_REPLY = '/tmp/e5-hipda-reply.json';
 
     function run(args) {
         let out = `${ctx.sh('python3 ' + HELPER + ' ' + args + ' 2>/dev/null') ?? ''}`;
@@ -33,12 +35,42 @@ return function (ctx) {
             if (length(u) < 1 || length(u) > 40) return { ok: false, error: '用户名长度不对' };
             if (length(p) < 1 || length(p) > 80) return { ok: false, error: '密码长度不对' };
             if (length(a) > 60) return { ok: false, error: '答案太长' };
-            let f = open(TMP, 'w', 0o600);
+            let f = open(TMP_LOGIN, 'w', 0o600);
             if (!f) return { ok: false, error: 'temp' };
             f.write(sprintf('%J', { u: u, p: p, q: q ? q : 0, a: a }));
             f.close();
-            let r = run('login < ' + TMP);
-            ctx.sh('shred -u ' + TMP + ' 2>/dev/null || rm -f ' + TMP);
+            let r = run('login < ' + TMP_LOGIN);
+            ctx.sh('shred -u ' + TMP_LOGIN + ' 2>/dev/null || rm -f ' + TMP_LOGIN);
+            return r;
+        },
+        /* 图片诊断：页面报告这一帖解析到几张图、实际加载成功/失败几张。
+           排查「缩略图不显示」时看 /tmp/e5-hipda-img.log。 */
+        'POST /imgprobe': function (req) {
+            let b = req.body ?? {};
+            let line = sprintf('%J\n', {
+                t: time(), tid: '' + (b.tid ?? ''), mode: '' + (b.mode ?? ''),
+                n: +(b.n ?? 0), ok: +(b.ok ?? 0), bad: +(b.bad ?? 0),
+                src: substr('' + (b.src ?? ''), 0, 300), err: substr('' + (b.err ?? ''), 0, 200)
+            });
+            try {
+                let f = open('/tmp/e5-hipda-img.log', 'a', 0o644);
+                if (f) { f.write(line); f.close(); }
+            } catch (e) { }
+            return { ok: true };
+        },
+        /* 回复：内容走临时文件交给 helper，和登录同一套做法（避免引号被 shell 拆） */
+        'POST /reply': function (req) {
+            let b = req.body ?? {};
+            let tid = posint(b.tid);
+            let msg = '' + (b.message ?? '');
+            if (!tid) return { ok: false, error: 'tid 不对' };
+            if (length(msg) < 1 || length(msg) > 20000) return { ok: false, error: '内容长度不对' };
+            let f = open(TMP_REPLY, 'w', 0o600);
+            if (!f) return { ok: false, error: 'temp' };
+            f.write(sprintf('%J', { tid: tid, message: msg, dry: b.dry ? 1 : 0 }));
+            f.close();
+            let r = run('reply < ' + TMP_REPLY);
+            ctx.sh('shred -u ' + TMP_REPLY + ' 2>/dev/null || rm -f ' + TMP_REPLY);
             return r;
         },
         'GET /state': function () {
