@@ -8,10 +8,10 @@ html,body{width:100%;height:100%;overflow:hidden}
 body{margin:0;background:#0b111b;color:#edf3fc;font:12px "Noto Sans CJK SC",sans-serif;position:relative;min-height:100%}
 header{position:absolute;top:0;left:0;right:0;height:34px;z-index:5;padding:3px 4px 3px 6px;background:#0b111b;border-bottom:1px solid #29354a;overflow:hidden;display:flex;align-items:center;gap:6px}
 h1{font-size:12px;margin:0;display:inline-block;flex:0 1 auto;max-width:44%;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;white-space:nowrap}#status{font-size:10px;color:#a8bad0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:inline-block;flex:1 1 auto;vertical-align:middle}
-main{position:absolute;top:60px;bottom:20px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
+main{position:absolute;top:60px;bottom:36px;left:0;right:0;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch}
 #stage{display:none;position:absolute;inset:0;background:#000}
 body.ingame #tabs{display:none}
-#menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 42px}
+#menu{display:grid;grid-template-columns:repeat(3,1fr);gap:5px;padding:6px 6px 8px}
 .cell{position:relative;display:block;width:100%;padding:0 0 4px;background:#141d2c;color:inherit;border:1px solid #223047;border-radius:6px;font:inherit;overflow:hidden}
 .cell.sel{border-color:#65bdff;background:#1d2c44}
 .cell .art{position:relative;width:100%;height:56px;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;color:#cfe4ff;background:#1b2740}
@@ -73,9 +73,9 @@ body.fx-lcd #fx{display:block;background:repeating-linear-gradient(to right,rgba
   line-height:30px;text-align:center;background:#22304a;color:#dce8f8;border:1px solid #3a4c6b;border-radius:6px;
   white-space:nowrap;overflow:hidden;touch-action:manipulation;-webkit-tap-highlight-color:transparent}
 #hud button:active{background:#31527f;color:#fff;border-color:#5b7fb0}
-#foot{display:flex;align-items:center;gap:6px}
+#foot{display:flex;align-items:center;gap:8px}
 #foot .sp{flex:1 1 auto}
-#foot button{height:16px;min-width:46px;padding:0 8px;font:inherit;font-size:11px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:4px}
+#foot button{height:28px;min-width:68px;padding:0 12px;font:inherit;font-size:14px;font-weight:600;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px;touch-action:manipulation}
 #foot button:active{background:#31527f;color:#fff}
 #hud button.hit{background:#3a5f96;color:#fff;border-color:#7fa6dd}
 /* 开局提示条：把这一版的按键分工直接写在屏幕上，玩一会儿就消失 */
@@ -96,11 +96,6 @@ body.ingame #hint.show{display:block}
 #stall .srow{display:flex;gap:10px}
 #stall button{height:42px;padding:0 14px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:8px}
 /* ---- 按键设置面板 ---- */
-
-  color:#eaf4ff;background:#2b4a72;border:1px solid #4a6f9f;border-radius:8px;
-  touch-action:manipulation;-webkit-tap-highlight-color:transparent}
-
-
 #cfg{position:absolute;inset:0;z-index:20;display:none;flex-direction:column;background:#0b111b}
 #cfg.open{display:flex}
 /* 打开后的头 450ms 不吃点击：手指还按在「# 按键」上，合成 click 会落到
@@ -127,7 +122,7 @@ body.ingame #hint.show{display:block}
 #cfgfx{flex:0 0 auto;display:flex;gap:6px;padding:6px 6px 0;background:#101827}
 #cfgfx button{flex:1 1 0;height:38px;font:inherit;font-size:13px;color:#dce8f8;background:#182234;border:1px solid #2b3a52;border-radius:6px}
 #cfgfx button:active{background:#31527f}
-footer{position:absolute;bottom:0;left:0;right:0;height:20px;z-index:6;padding:1px 6px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:10px;overflow:hidden;white-space:nowrap}
+footer{position:absolute;bottom:0;left:0;right:0;height:36px;z-index:6;padding:4px 8px;background:#0b111b;border-top:1px solid #29354a;color:#a8bad0;font-size:10px;overflow:hidden;white-space:nowrap}
 #fver{float:right;color:#65bdff;font-weight:600;margin-left:6px}
 body.ingame footer{display:none}
 /* 进游戏后页头/页脚那些字没信息量，却白占竖向空间：藏掉，把画面让出来 */
@@ -265,7 +260,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.16.0';
+var APP_VER='1.17.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
