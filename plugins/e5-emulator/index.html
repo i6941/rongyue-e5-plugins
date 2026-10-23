@@ -145,7 +145,7 @@ body.ingame main{top:0;bottom:0}
     <div id="hud"><span class="sp"></span>
       <button id="bview" type="button">铺</button><button id="bslot" type="button">存档</button>
       <button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
-      <button id="bpause" type="button">停</button><button id="quit" type="button">退</button></div>
+      <button id="bpause" type="button">停</button><button id="bset" type="button">设</button><button id="quit" type="button">退</button></div>
     <div id="hint"></div>
     <div id="loadtip">存档读取中…</div>
     <div id="slots"><div class="sbox">
@@ -261,7 +261,7 @@ try{
 
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版 */
-var APP_VER='1.14.0';
+var APP_VER='1.15.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1266,6 +1266,12 @@ function backIdOf(e){
 /* 返回键按下的时刻：长按退出后手还没松开，按键重复会一波波继续来。
    靠它把那一串重复吞掉，别漏给宿主（漏了宿主就会把整个插件关掉）。 */
 var backDownAt=0, backGuardUntil=0;
+/* 键位表里存的是 token。WPE 上 # 报成 key="Unidentified" + keyCode 51
+   （数字 3 也是 51，但带 key="3"），这里统一折成 "#"，键位表才匹配得到。 */
+function keyTok(kind,key,code){
+  if(kind==='digit'&&(!key||key==='Unidentified')&&code===51) return '#';
+  return key||('code:'+(code||0));
+}
 function handleKey(kind,key,repeat,id,code){
   try{ window.__kinds=((window.__kinds||'')+kind.charAt(0)).slice(-48); }catch(e){}
   if(slotOpen) return slotKey(kind);
@@ -1294,7 +1300,7 @@ function handleKey(kind,key,repeat,id,code){
   /* 按下第一个键就收起开局提示 */
   try{ if($('hint').classList.contains('show')) $('hint').classList.remove('show'); }catch(e){}
   /* 游戏里按 # 也能进按键设置：先把核心暂停，关面板再继续 */
-  if(kind==='digit'&&(key==='#'||((!key||key==='Unidentified')&&code===51))){ openCfg(); return true; }
+  /* 游戏里 # 不再打开设置：它是游戏键，按用户的键位表发给核心。 */
   if(kind==='back'){
     /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
     if(repeat) return true;
@@ -1339,7 +1345,7 @@ function handleKey(kind,key,repeat,id,code){
     var kb=btnsOf(kindAct[kind]);
     for(var jk=0;jk<kb.length;jk++) if(kb[jk]!==undefined) pressBtn(kb[jk]);
   }
-  var acts=actsOf(key||('code:'+(code||0)));
+  var acts=actsOf(keyTok(kind,key,code));
   if(acts.length){
     for(var i=0;i<acts.length;i++){
       var bs=btnsOf(acts[i]);
@@ -1365,7 +1371,7 @@ window.addEventListener('keyup',function(e){
     releaseBtn(btnOf('b'));     /* 短按返回 = 松开 B */
     return;
   }
-  var acts=actsOf(e.key||('code:'+(e.keyCode||0)));
+  var acts=actsOf(keyTok(kind,e.key,e.keyCode));
   for(var i=0;i<acts.length;i++){
     var bs=btnsOf(acts[i]);
     for(var j=0;j<bs.length;j++) if(bs[j]!==undefined) releaseBtn(bs[j]);
@@ -1457,7 +1463,7 @@ function cfgKey(kind,key,repeat,code){
   if(kind==='power') return false;
   if(kind==='back'||kind==='menu'){ closeCfg(); return true; }
   if(cfgListen && kind!=='up' && kind!=='down' && kind!=='left' && kind!=='right' && kind!=='ok'){
-    var tok=key||('code:'+(code||0));
+    var tok=keyTok(kind,key,code);
     if(BACK_TOKENS.indexOf(tok)>=0){ $('cfgtip').textContent='返回键保留用于退出游戏，不能绑定'; return true; }
     assignKey(tok); return true;
   }
@@ -1500,6 +1506,8 @@ function closeCfg(){
   cfgPausedNative=false;
 }
 bindTap($('bcfg'),function(){ openCfg(); });
+/* 游戏内打开设置的唯一入口：HUD 上的「设」。键盘上的 # 留给游戏自己用。 */
+bindTap($('bset'),function(){ openCfg(); });
 try{ bindTap($('bcore'),function(){ coreInstall(); }); }catch(e){}
 bindTap($('cfgclose'),function(){ closeCfg(); });
 bindTap($('cfgdone'),function(){ closeCfg(); });
