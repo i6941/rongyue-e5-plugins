@@ -19,6 +19,9 @@ header button:active{background:#30363d}
 #status{font-size:11px;color:var(--dim);padding:3px 9px;white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis}
 main{flex:1;overflow:auto;padding:6px 10px 18px;-webkit-overflow-scrolling:touch}
+#frame{flex:1;width:100%;border:0;background:#fff;display:none}
+body.web main{display:none}
+body.web #frame{display:block}
 h1{font-size:16px;line-height:1.35;margin:2px 0 10px}
 p{margin:0 0 9px;word-wrap:break-word}
 .err{color:#ff7b72}
@@ -37,9 +40,11 @@ p{margin:0 0 9px;word-wrap:break-word}
   <input id="url" type="text" placeholder="网址或搜索" autocomplete="off"
          autocapitalize="off" spellcheck="false">
   <button id="go" type="button">打开</button>
+  <button id="mode" type="button">原文</button>
 </header>
 <div id="status"></div>
 <main id="doc"></main>
+<iframe id="frame" title="网页" referrerpolicy="no-referrer"></iframe>
 <script>
 (function(){
   var doc = document.getElementById('doc');
@@ -49,12 +54,17 @@ p{margin:0 0 9px;word-wrap:break-word}
   var backBtn = document.getElementById('back');
   var stack = [];
   var busy = false;
+  var webMode = false;
+  var frame = document.getElementById('frame');
+  var modeBtn = document.getElementById('mode');
 
+  /* 第三个字段是打开方式：web = 原文（动态站，跑真网页），reader = 阅读视图 */
   var HOME = [
-    ['维基百科', 'https://zh.m.wikipedia.org/'],
-    ['Hacker News', 'https://news.ycombinator.com/'],
-    ['BBC News', 'https://www.bbc.com/news'],
-    ['搜索 OpenWrt', 'q:OpenWrt']
+    ['Hi-PDA 论坛', 'https://www.4d4y.com/forum/', 'web'],
+    ['哔哩哔哩', 'https://www.bilibili.com/', 'web'],
+    ['维基百科', 'https://zh.m.wikipedia.org/', 'reader'],
+    ['Hacker News', 'https://news.ycombinator.com/', 'reader'],
+    ['搜索 OpenWrt', 'q:OpenWrt', 'reader']
   ];
 
   function esc(s){
@@ -63,12 +73,44 @@ p{margin:0 0 9px;word-wrap:break-word}
     });
   }
 
+  /* 报告给后端，方便在设备上确认 iframe 到底有没有加载成功 */
+  function probe(status, url){
+    try{
+      fetch('/api/plugins/browser/probe', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode: webMode ? 'web' : 'reader', status: status, url: url || ''})
+      });
+    }catch(e){}
+  }
+
+  function showWeb(url){
+    webMode = true;
+    document.body.classList.add('web');
+    modeBtn.textContent = '阅读';
+    statusEl.textContent = '原文模式 · ' + url;
+    /* onload 必须先挂再设 src，否则加载快的页面会错过回调 */
+    var done = false;
+    frame.onload = function(){ done = true; probe('loaded', frame.src); };
+    frame.src = url;
+    probe('start', url);
+    setTimeout(function(){ if(!done) probe('timeout', frame.src); }, 12000);
+  }
+  function showReader(){
+    webMode = false;
+    document.body.classList.remove('web');
+    modeBtn.textContent = '原文';
+    frame.src = 'about:blank';
+    probe('reader', input.value);
+  }
+
   function home(){
     var h = '<div class="home"><p style="color:#8b949e;font-size:12px;margin:2px 0 6px">' +
             '输入网址，或输入关键词搜索</p>';
     for (var i = 0; i < HOME.length; i++){
-      h += '<a href="#" data-href="' + esc(HOME[i][1]) + '">' + esc(HOME[i][0]) +
-           '<span>' + esc(HOME[i][1].replace(/^q:/, '搜索：')) + '</span></a>';
+      h += '<a href="#" data-href="' + esc(HOME[i][1]) + '" data-mode="' + esc(HOME[i][2]) + '">' +
+           esc(HOME[i][0]) + '<span>' + esc(HOME[i][1].replace(/^q:/, '搜索：')) +
+           (HOME[i][2] === 'web' ? ' · 原文' : '') + '</span></a>';
     }
     h += '</div>';
     doc.innerHTML = h;
@@ -119,6 +161,7 @@ p{margin:0 0 9px;word-wrap:break-word}
   function go(q, push){
     var url = target(q);
     if (!url || busy) return;
+    if (webMode){ showWeb(url); input.value = url; return; }
     setBusy(true);
     statusEl.textContent = '加载中…';
     var t0 = Date.now();
@@ -141,12 +184,17 @@ p{margin:0 0 9px;word-wrap:break-word}
     e.preventDefault();
     var h = a.getAttribute('data-href');
     if (!h) return;
+    if (a.getAttribute('data-mode') === 'web'){ showWeb(target(h)); input.value = target(h); return; }
     if (h.indexOf('q:') === 0){ go(h, false); return; }
     stack.push(input.value || '');
     go(h, false);
   });
 
   goBtn.addEventListener('click', function(){ go(input.value, false); });
+  modeBtn.addEventListener('click', function(){
+    if (webMode) { showReader(); if (input.value) go(input.value, false); }
+    else { var u = target(input.value); if (u) showWeb(u); }
+  });
   backBtn.addEventListener('click', function(){
     var prev = stack.pop();
     if (prev) go(prev, false); else home();
@@ -156,6 +204,26 @@ p{margin:0 0 9px;word-wrap:break-word}
   });
 
   home();
+  /* 设备上验证用：?web=1&url=... 直接以原文模式打开 */
+  try{
+    var qp = new URLSearchParams(location.search);
+    var u0 = qp.get('url');
+    if (qp.get('web') === '1' && u0) showWeb(u0);
+    /* 诊断：WPE 自己能不能访问外网 */
+    if (qp.get('probe') === '1'){
+      probe('probe-start', 'https://example.com/');
+      function tryUrl(u, tag){
+        fetch(u, {mode: 'no-cors'}).then(function(){
+          probe('ok:' + tag, u);
+        }).catch(function(e){
+          probe('err:' + tag + ':' + String(e).slice(0, 60), u);
+        });
+      }
+      tryUrl('http://example.com/', 'http');
+      tryUrl('https://example.com/', 'https');
+      tryUrl('http://connectivitycheck.gstatic.com/generate_204', 'gstatic-http');
+    }
+  }catch(e){}
 })();
 </script>
 </body>

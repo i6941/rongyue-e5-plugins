@@ -2,6 +2,8 @@
 /* 浏览器插件后端：只做转发。
    抓取和解析都交给 /usr/libexec/e5-browse（python3），
    因为 ucode 不能写正则字面量，也不适合解析 HTML。 */
+import { open } from 'fs';
+
 return function (ctx) {
     /* URL 白名单：只允许 http(s)，且字符集里不含单引号、空格、$ 和反引号，
        这样拼进 shell 的单引号参数里不会被注入。 */
@@ -18,6 +20,18 @@ return function (ctx) {
     }
 
     return {
+        /* 记录原文模式（iframe）在设备上到底加载成功没有，排查用 */
+        'POST /probe': function (req) {
+            let b = req.body ?? {};
+            let line = sprintf('%J\n', { t: time(), mode: `${b.mode ?? ''}`, status: `${b.status ?? ''}`, url: `${b.url ?? ''}` });
+            try {
+                let f = open('/tmp/e5-browser-probe.log', 'a', 0o644);
+                if (!f) return { ok: false };
+                f.write(line);
+                f.close();
+                return { ok: true };
+            } catch (e) { return { ok: false, error: `${e}` }; }
+        },
         'GET /browse': function (req) {
             let url = clean_url(req.query?.url ?? '');
             if (url === null) return { ok: false, error: 'bad url' };

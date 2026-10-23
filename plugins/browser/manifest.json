@@ -1,7 +1,7 @@
 {
   "id": "browser",
   "api_version": 2,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "name": {
     "zh": "浏览器",
     "en": "Browser"
