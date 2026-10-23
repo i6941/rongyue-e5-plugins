@@ -375,49 +375,110 @@ return function (ctx) {
         },
         /* 轮询扫码结果。data.code：86101 未扫、86090 已扫待确认、0 成功、86038 过期。
            成功时从响应头里取 Set-Cookie，落到 600 权限的本地文件。 */
-        'GET /login-poll': function () {
+        'GET /login-poll': function (req) {
             let key = trim(`${ctx.sh('cat /tmp/bili-qr-key 2>/dev/null') ?? ''}`);
+            /* 允许显式指定 key：页面用默认的，诊断脚本可以指定 */
+            let qk = `${req.query?.key ?? ''}`;
+            if (length(qk) === 32) {
+                let okhex = true;
+                for (let i = 0; i < 32; i++) {
+                    if (index('0123456789abcdef', substr(qk, i, 1)) < 0) { okhex = false; break; }
+                }
+                if (okhex) key = qk;
+            }
             if (length(key) < 10) return { ok: false, error: 'no qr' };
-            let hdr = '/tmp/bili-login-hdr';
-            let body = '/tmp/bili-login-body';
-            ctx.sh("curl -s --max-time 15 -D " + hdr + " -o " + body + " -A '" + UA +
-                   "' -H 'Referer: " + REFERER +
+
+            /* 每次都用自己的临时文件。以前用固定文件名，两个轮询（页面 + 诊断脚本）
+               会互相覆盖，先拿到成功响应的那个读到的却是"已失效"，cookie 就丢了。 */
+            let tmp = trim(`${ctx.sh('umask 077; mktemp /tmp/bili-poll.XXXXXX') ?? ''}`);
+            if (length(tmp) < 8) return { ok: false, error: 'tmp' };
+            let hdr = tmp + '.h', body = tmp + '.b', jar = tmp + '.jar';
+            ctx.sh("curl -s --max-time 15 -c " + jar + " -D " + hdr + " -o " + body +
+                   " -A '" + UA + "' -H 'Referer: " + REFERER +
                    "' 'https://passport.bilibili.com/x/passport-login/web/qrcode/poll?qrcode_key=" + key + "'");
             let raw = `${ctx.sh('cat ' + body + ' 2>/dev/null') ?? ''}`;
+            let h = `${ctx.sh('cat ' + hdr + ' 2>/dev/null') ?? ''}`;
+            let jarS = `${ctx.sh('cat ' + jar + ' 2>/dev/null') ?? ''}`;
+            ctx.sh('rm -f ' + hdr + ' ' + body + ' ' + jar);
+
             let j = null;
             try { j = json(raw); } catch (e) { return { ok: false, error: 'json' }; }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
             let code = num(j.data?.code);
-            if (code === 86101) return { ok: true, state: 'waiting' };
-            if (code === 86090) return { ok: true, state: 'scanned' };
-            if (code === 86038) return { ok: true, state: 'expired' };
-            if (code !== 0) return { ok: true, state: 'pending' };
+            /* up_* 是 B 站原始状态码，方便判断卡在哪一步（不含凭据） */
+            let up = { up_code: code, up_msg: `${j.data?.message ?? ''}`, key: substr(key, 0, 6) };
+            if (code === 86101) return { ok: true, state: 'waiting', up: up };
+            if (code === 86090) return { ok: true, state: 'scanned', up: up };
+            if (code === 86038) return { ok: true, state: 'expired', up: up };
+            if (code !== 0) return { ok: true, state: 'pending', up: up };
 
-            let h = `${ctx.sh('cat ' + hdr + ' 2>/dev/null') ?? ''}`;
+            /* cookie 的来源有三处，命中即用：
+               1) 响应头的 Set-Cookie（实测走这条）；
+               2) 响应 JSON 的 data.url 查询串；
+               3) curl -c 落的 cookie jar。 */
+            let u = `${j.data?.url ?? ''}`;
             let names = ['SESSDATA', 'bili_jct', 'DedeUserID'];
             let vals = [];
             for (let n in names) {
                 let k = names[n] + '=';
-                let at = index(h, k);
                 let v = '';
+                let at = index(h, k);
                 if (at >= 0) {
                     let rest = substr(h, at + length(k));
-                    let semi = index(rest, ';');
-                    v = semi < 0 ? rest : substr(rest, 0, semi);
-                    let nl = index(v, '\n');
-                    if (nl >= 0) v = substr(v, 0, nl);
-                    let cr = index(v, '\r');
-                    if (cr >= 0) v = substr(v, 0, cr);
-                    v = trim(v);
+                    let cut = index(rest, ';');
+                    v = cut < 0 ? rest : substr(rest, 0, cut);
+                } else {
+                    at = index(u, k);
+                    if (at >= 0) {
+                        let rest = substr(u, at + length(k));
+                        let cut = index(rest, '&');
+                        v = cut < 0 ? rest : substr(rest, 0, cut);
+                    } else {
+                        let tab = index(jarS, '\t' + names[n] + '\t');
+                        if (tab >= 0)
+                            v = substr(jarS, tab + length(names[n]) + 2);
+                    }
                 }
-                push(vals, v);
+                let nl = index(v, '\n');
+                if (nl >= 0) v = substr(v, 0, nl);
+                let cr = index(v, '\r');
+                if (cr >= 0) v = substr(v, 0, cr);
+                let qt = index(v, '"');
+                if (qt >= 0) v = substr(v, 0, qt);
+                push(vals, trim(v));
             }
-            if (length(vals[0]) < 10 || length(vals[1]) < 10) return { ok: true, state: 'nocookie' };
+
+            if (length(vals[0]) < 10 && length(u) > 20 && index(u, 'http') === 0 && index(u, "'") < 0) {
+                /* 有些场景 cookie 只在跨域地址上才下发，照浏览器再走一次 */
+                let t2 = trim(`${ctx.sh('umask 077; mktemp /tmp/bili-poll.XXXXXX') ?? ''}`);
+                if (length(t2) > 8) {
+                    ctx.sh("curl -s --max-time 15 -c " + t2 + " -o /dev/null -A '" + UA +
+                           "' -H 'Referer: " + REFERER + "' '" + u + "'");
+                    let j2 = `${ctx.sh('cat ' + t2 + ' 2>/dev/null') ?? ''}`;
+                    ctx.sh('rm -f ' + t2);
+                    for (let n2 in names) {
+                        if (length(vals[n2]) >= 10) continue;
+                        let tab2 = index(j2, '\t' + names[n2] + '\t');
+                        if (tab2 < 0) continue;
+                        let v2 = substr(j2, tab2 + length(names[n2]) + 2);
+                        let nl2 = index(v2, '\n');
+                        if (nl2 >= 0) v2 = substr(v2, 0, nl2);
+                        let cr2 = index(v2, '\r');
+                        if (cr2 >= 0) v2 = substr(v2, 0, cr2);
+                        vals[n2] = trim(v2);
+                    }
+                }
+            }
+
+            if (length(vals[0]) < 10 || length(vals[1]) < 10)
+                return { ok: true, state: 'nocookie',
+                         dbg: { hdr: length(h), url: length(u), jar: length(jarS),
+                                sess: length(vals[0]), jct: length(vals[1]) } };
             let cookie = 'SESSDATA=' + vals[0] + '; bili_jct=' + vals[1] + '; DedeUserID=' + vals[2];
             if (index(cookie, "'") >= 0) return { ok: false, error: 'bad cookie' };
             ctx.sh("umask 077; printf %s '" + cookie + "' > " + COOKIE_FILE +
                    "; chmod 600 " + COOKIE_FILE);
-            ctx.sh('rm -f /tmp/bili-qr-key /tmp/bili-qr.png');
+            ctx.sh('rm -f /tmp/bili-qr-key');
             let nav = api_get('/x/web-interface/nav');
             let nj = null;
             try { nj = json(nav); } catch (e) { }
