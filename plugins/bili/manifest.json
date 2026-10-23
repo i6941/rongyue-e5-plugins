@@ -1,0 +1,15 @@
+{
+  "id": "bili",
+  "api_version": 2,
+  "version": "0.1.0",
+  "name": {
+    "zh": "哔哩哔哩",
+    "en": "Bilibili"
+  },
+  "description": {
+    "zh": "排行榜与播放（精简客户端）",
+    "en": "Ranking and playback (minimal client)"
+  },
+  "entry": "index.html",
+  "order": 41
+}

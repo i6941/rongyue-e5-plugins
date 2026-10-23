@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>哔哩哔哩</title>
+<style>
+:root{--bg:#0b111b;--fg:#e6edf3;--dim:#93a4bb;--line:#243349;--accent:#fb7299}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
+  font:13px/1.4 -apple-system,"Noto Sans CJK SC",sans-serif}
+body{display:flex;flex-direction:column}
+header{display:flex;align-items:center;gap:6px;padding:5px 7px;border-bottom:1px solid var(--line);flex:0 0 auto}
+header b{font-size:15px;color:var(--accent)}
+header .sp{flex:1 1 auto}
+header input{flex:1 1 auto;min-width:0;height:28px;padding:0 8px;font:inherit;font-size:13px;
+  color:#e6edf3;background:#16202f;border:1px solid #243349;border-radius:6px}
+header button{height:28px;padding:0 10px;font:inherit;font-size:13px;color:#dce8f8;
+  background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
+#list{flex:1 1 auto;overflow-y:auto;padding:6px}
+.card{display:flex;gap:7px;padding:6px;border-bottom:1px solid #16202f}
+.card:active{background:#16202f}
+.card img{width:96px;height:54px;object-fit:cover;border-radius:4px;background:#16202f;flex:0 0 auto}
+.card .info{min-width:0;flex:1 1 auto}
+.card .t{font-size:12px;line-height:1.35;max-height:2.7em;overflow:hidden}
+.card .m{font-size:10px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#player{display:none;flex:1 1 auto;flex-direction:column;background:#000}
+#player.on{display:flex}
+#screen{flex:1 1 auto;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+#screen canvas{width:100%;height:auto;max-height:100%;background:#000;display:block}
+#pinfo{font-size:11px;color:var(--dim);padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#status{font-size:11px;color:var(--dim);padding:2px 8px}
+</style>
+</head>
+<body>
+<header><b>哔哩哔哩</b><input id="q" type="search" placeholder="搜索视频" autocomplete="off"><button id="find" type="button">搜索</button>
+  <button id="back" type="button">返回</button>
+  <button id="reload" type="button">刷新</button></header>
+<div id="status">排行榜</div>
+<div id="list"></div>
+<div id="player">
+  <div id="screen"><canvas id="cv" width="320" height="180"></canvas></div>
+  <div id="pinfo"></div>
+</div>
+<script>
+(function(){
+  var listEl = document.getElementById('list');
+  var statusEl = document.getElementById('status');
+  var player = document.getElementById('player');
+  var cv = document.getElementById('cv');
+  var cctx = cv.getContext('2d');
+  var pinfo = document.getElementById('pinfo');
+  var items = [];
+  var inPlayer = false;
+  var ws = null, img = null;
+  /* ?shot=1：播到第 20 帧时把画布内容按 RGB565 分块传给后端，用于真机截图 */
+  var shotWant = false, shotDone = false, shotFrames = 0;
+  try { shotWant = new URLSearchParams(location.search).get('shot') === '1'; } catch(e){}
+
+  function esc(s){
+    return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];
+    });
+  }
+  function dur(s){
+    s = Number(s) || 0;
+    var m = Math.floor(s / 60), ss = s % 60;
+    return m + ':' + (ss < 10 ? '0' : '') + ss;
+  }
+  function probe(status, info){
+    try{
+      fetch('/api/plugins/bili/probe', {method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({status: status, info: info || ''})});
+    }catch(e){}
+  }
+
+  function render(){
+    var h = '';
+    for (var i = 0; i < items.length; i++){
+      var it = items[i];
+      h += '<div class="card" data-i="' + i + '">' +
+           '<img loading="lazy" src="/api/plugins/bili/img?u=' + encodeURIComponent(it.pic) + '" alt="">' +
+           '<div class="info"><div class="t">' + esc(it.title) + '</div>' +
+           '<div class="m">' + esc(it.author) + ' · ' + (it.durtxt || dur(it.dur)) + ' · ' +
+           (it.play > 10000 ? (Math.round(it.play / 10000) + '万') : it.play) + ' 播放</div></div></div>';
+    }
+    listEl.innerHTML = h || '<div style="padding:12px;color:#93a4bb">没有内容</div>';
+  }
+
+  function loadRank(){
+    statusEl.textContent = '加载排行榜…';
+    fetch('/api/plugins/bili/rank').then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok){ statusEl.textContent = '排行榜失败：' + ((d && d.error) || '?'); return; }
+      items = d.list || [];
+      statusEl.textContent = '排行榜 · ' + items.length + ' 个';
+      render();
+    }).catch(function(e){ statusEl.textContent = '请求失败 ' + e; });
+  }
+
+  function loadSearch(q){
+    q = (q || '').trim();
+    if (!q) return;
+    statusEl.textContent = '搜索 “' + q + '”…';
+    fetch('/api/plugins/bili/search?q=' + encodeURIComponent(q))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.ok){ statusEl.textContent = '搜索失败：' + ((d && d.error) || '?'); return; }
+        items = d.list || [];
+        statusEl.textContent = '搜索结果 · ' + items.length + ' 个';
+        render();
+      }).catch(function(e){ statusEl.textContent = '搜索请求失败 ' + e; });
+  }
+
+  /* 后端推来的一帧：4 字节头（宽、高各 u16 小端）+ RGB565 像素 */
+  function onFrame(buf){
+    var b = new Uint8Array(buf);
+    if (b.length < 4) return;
+    var w = b[0] | (b[1] << 8), h = b[2] | (b[3] << 8);
+    if (w < 2 || h < 2) return;
+    if (cv.width !== w || cv.height !== h){
+      cv.width = w; cv.height = h; img = null;
+    }
+    if (!img) img = cctx.createImageData(w, h);
+    var d = img.data, o = 4, n = w * h;
+    for (var i = 0, p = 0; i < n; i++, p += 4){
+      var v = b[o] | (b[o + 1] << 8); o += 2;
+      var r = (v >> 11) & 0x1f, g = (v >> 5) & 0x3f, bl = v & 0x1f;
+      d[p] = (r << 3) | (r >> 2);
+      d[p + 1] = (g << 2) | (g >> 4);
+      d[p + 2] = (bl << 3) | (bl >> 2);
+      d[p + 3] = 255;
+    }
+    cctx.putImageData(img, 0, 0);
+    if (shotWant && !shotDone && ++shotFrames >= 20){ shotDone = true; shotUpload(w, h); }
+  }
+
+  /* 从画布读回像素再上传：证明的是“画布上真的有画面”，不是收到的原始帧 */
+  function shotUpload(w, h){
+    try{
+      var d = cctx.getImageData(0, 0, w, h).data;
+      var bytes = new Uint8Array(w * h * 2);
+      for (var i = 0, p = 0, o = 0; i < w * h; i++, p += 4){
+        var r = d[p] >> 3, g = d[p + 1] >> 2, b = d[p + 2] >> 3;
+        var v = (r << 11) | (g << 5) | b;
+        bytes[o++] = v & 0xff; bytes[o++] = v >> 8;
+      }
+      var b64 = '', i2 = 0, STEP = 6000, n = bytes.length;
+      while (i2 < n){
+        var sl = bytes.subarray(i2, Math.min(i2 + STEP, n));
+        var arr = new Array(sl.length);
+        for (var k = 0; k < sl.length; k++) arr[k] = String.fromCharCode(sl[k]);
+        b64 += btoa(arr.join(''));
+        i2 += STEP;
+      }
+      var CH = 3000, parts = ['w=' + w + ',h=' + h + ',n=' + n + ';'];
+      for (var p2 = 0; p2 < b64.length; p2 += CH) parts.push(b64.slice(p2, p2 + CH));
+      var idx = 0;
+      function send(){
+        if (idx >= parts.length){ probe('shot-done', w + 'x' + h + ' parts=' + parts.length); return; }
+        var my = idx++;
+        fetch('/api/plugins/bili/shot', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({part: my, b64: parts[my]})}).then(send).catch(function(e){ probe('shot-fail', String(e)); });
+      }
+      send();
+    }catch(e){ probe('shot-fail', String(e)); }
+  }
+
+  function closeWs(){
+    if (ws){
+      try { ws.onclose = null; ws.close(); } catch(e){}
+      ws = null;
+    }
+  }
+
+  function connectPlayer(port, tries){
+    closeWs();
+    tries = tries || 0;
+    var url = 'ws://127.0.0.1:' + port;
+    probe('ws-connect', url + ' try=' + tries);
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = function(){ statusEl.textContent = '播放中'; probe('ws-open', url); };
+    ws.onmessage = function(ev){ onFrame(ev.data); };
+    ws.onerror = function(){ probe('ws-error', url); };
+    ws.onclose = function(){
+      ws = null;
+      if (!inPlayer) return;
+      /* 播放器进程刚起来时端口还没监听，第一次连必然失败，重试几次 */
+      if (tries < 15){
+        statusEl.textContent = '连接播放器…';
+        setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 400);
+        return;
+      }
+      statusEl.textContent = '播放结束';
+      probe('ws-close', 'ended');
+    };
+  }
+
+  /* 后台下载是异步的，这里轮询到 ready 为止（最多 150 秒） */
+  function waitReady(n){
+    return fetch('/api/plugins/bili/ready').then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.ready) return d;
+      if (d && d.state === 'failed'){ probe('dl-failed', String(d.code)); return null; }
+      if (n > 150) return null;
+      statusEl.textContent = '下载中… ' + n + 's';
+      return new Promise(function(res){ setTimeout(function(){ res(waitReady(n + 1)); }, 1000); });
+    });
+  }
+
+  function play(i){
+    var it = items[i];
+    if (!it) return;
+    statusEl.textContent = '取流与缓存中…';
+    probe('play-start', it.bvid);
+    fetch('/api/plugins/bili/prepare?bvid=' + encodeURIComponent(it.bvid) + '&cid=' + (it.cid || 0))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        probe('prepare-done', d ? (d.ok ? 'ok' : ('err:' + d.error)) : 'null');
+        if (!d || !d.ok){ statusEl.textContent = '取流失败：' + ((d && d.error) || '?'); return null; }
+        pinfo.textContent = it.title;
+        statusEl.textContent = '下载中…';
+        return waitReady(0);
+      })
+      .then(function(d){
+        if (!d){ statusEl.textContent = '下载失败'; return null; }
+        pinfo.textContent = it.title + ' · ' + Math.round((d.size || 0) / 1048576) + 'MB';
+        statusEl.textContent = '启动播放器…';
+        return fetch('/api/plugins/bili/player-start').then(function(r){ return r.json(); });
+      })
+      .then(function(s){
+        probe('start-done', s ? (s.ok ? 'ok' : ('err:' + s.error)) : 'null');
+        if (!s || !s.ok){ if (s) statusEl.textContent = '播放器启动失败：' + (s.error || '?'); return; }
+        inPlayer = true;
+        listEl.style.display = 'none';
+        player.classList.add('on');
+        connectPlayer(s.port || 9511, 0);
+      })
+      .catch(function(e){ probe('play-fail', String(e)); statusEl.textContent = '请求失败 ' + e; });
+  }
+
+  /* 点画面 = 暂停/继续（和模拟器同一个命令字节） */
+  cv.addEventListener('click', function(){
+    if (ws && ws.readyState === 1){
+      try { ws.send(new Uint8Array([4])); } catch(e){}
+      statusEl.textContent = statusEl.textContent === '已暂停' ? '播放中' : '已暂停';
+    }
+  });
+
+  listEl.addEventListener('click', function(e){
+    var c = e.target.closest ? e.target.closest('.card') : null;
+    if (!c) return;
+    play(Number(c.getAttribute('data-i')));
+  });
+
+  document.getElementById('back').addEventListener('click', function(){
+    if (!inPlayer) return;
+    inPlayer = false;
+    closeWs();
+    fetch('/api/plugins/bili/player-stop').catch(function(){});
+    cv.width = 320; cv.height = 180;
+    cctx.clearRect(0, 0, 320, 180);
+    player.classList.remove('on');
+    listEl.style.display = '';
+    statusEl.textContent = '排行榜 · ' + items.length + ' 个';
+  });
+  document.getElementById('find').addEventListener('click', function(){
+    loadSearch(document.getElementById('q').value);
+  });
+  document.getElementById('q').addEventListener('keydown', function(e){
+    if (e.key === 'Enter'){ e.preventDefault(); loadSearch(this.value); }
+  });
+  document.getElementById('reload').addEventListener('click', function(){
+    if (inPlayer){ document.getElementById('back').click(); }
+    loadRank();
+  });
+
+  window.addEventListener('beforeunload', function(){
+    try { fetch('/api/plugins/bili/player-stop'); } catch(e){}
+  });
+
+  loadRank();
+  try{
+    if (new URLSearchParams(location.search).get('autoplay') === '1'){
+      var waiter = setInterval(function(){
+        if (items.length){ clearInterval(waiter); play(0); }
+      }, 500);
+    }
+  }catch(e){}
+})();
+</script>
+</body>
+</html>
