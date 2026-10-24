@@ -1612,12 +1612,13 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       /* 播放断了就把宿主菜单还回去，别让人卡在全屏黑屏里出不来 */
       hostChrome(false);
       if (!inPlayer) return;
-      /* 播放器进程刚起来时端口还没监听：大片要读 9 秒以上的 MP4 索引，
-         等待窗口给到 60 秒（120 次 x 500ms），期间提示"正在索引"。 */
-      if (tries < 120 && !everFrame){
-        statusEl.textContent = tries < 4 ? '连接播放器…'
+      /* 播放器进程刚起来时索引（moov）可能还没下载完：大片光读索引就要
+         8~10 秒，文件本身还没下到那么远时播放器会一直等。这里给它 180 次
+         （约 90 秒）窗口，期间明确显示"正在索引"，不要让人以为卡死了。 */
+      if (tries < 180 && !everFrame){
+        statusEl.textContent = tries < 6 ? '连接播放器…'
                             : ('正在索引视频… ' + Math.round(tries * 0.5) + 's');
-        if (tries === 4) probe('ws-slow-index', 'waiting for player to listen');
+        if (tries === 6) probe('ws-slow-index', 'waiting for player to listen');
         connectTimer = setTimeout(function(){
           if (inPlayer) connectPlayer(port, tries + 1);
         }, 500);
@@ -1728,28 +1729,6 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       .then(function(st){
         if (my !== playToken) return null;
         probe('start-done', st ? (st.ok ? 'ok' : ('err:' + st.error)) : 'null');
-        if (st && st.error === 'index-broken'){
-          /* 索引区是空的（上一次续传在索引写完前掐断了顺序下载）：
-             删掉缓存重新准备一次，别再对着坏文件反复重连。 */
-          probe('index-broken', 'repair');
-          statusEl.textContent = '索引损坏，重新下载…';
-          return fetch('/api/plugins/bili/player-stop')
-            .then(function(){ return fetch('/api/plugins/bili/drop'); })
-            .then(function(){ return fetch('/api/plugins/bili/prepare?bvid=' + encodeURIComponent(it.bvid) +
-                                          '&cid=' + (it.cid || 0) + '&qn=' + qnPref); })
-            .then(function(r){ return r ? r.json() : null; })
-            .then(function(d){
-              if (my !== playToken || !d || !d.ok) return null;
-              currentPrepare = d;
-              return waitReady(0, my);
-            })
-            .then(function(d2){
-              if (my !== playToken || !d2) return null;
-              return fetch('/api/plugins/bili/player-start?max=' + (window.__maxWant || 480) +
-                           '&lead=' + leadMs).then(function(r){ return r.json(); });
-            })
-            .then(function(st2){ return st2; });
-        }
         if (!st || !st.ok){ if (st) statusEl.textContent = '播放器启动失败：' + (st.error || '?'); return; }
         inPlayer = true;
         document.body.classList.add('in-player');

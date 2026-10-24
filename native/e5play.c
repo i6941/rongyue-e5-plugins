@@ -380,10 +380,9 @@ static bool play_open(play_t *p, const char *path)
     fseeko(p->f, 0, SEEK_END);
     p->size = (int64_t)ftello(p->f);
 #endif
-    /* 大片的 moov（索引）有 6MB 以上，起播时文件往往还没下到那么远。
-       MP4D_open 读不到完整 moov 会直接判"不是 mp4"，进程就此退出；
-       所以先等索引落盘：最多等 90 秒，边等边看文件增长，
-       并且只在文件确实变大时才重新尝试（避免几百次失败调用累积内存）。 */
+    /* 索引（moov）可能还没下载完：等它落盘，最多 90 秒。
+       run_server 在索引未就绪时会反复调用本函数，所以失败路径必须
+       把文件句柄关掉，否则每轮泄漏一个 fd，几十轮就把进程拖死。 */
     {
         int64_t try_size = -1;
         bool ok = false;
@@ -403,7 +402,9 @@ static bool play_open(play_t *p, const char *path)
 #endif
         }
         if (!ok) {
-            fprintf(stderr, "e5play: not a valid mp4 (size=%lld)\n", (long long)p->size);
+            fprintf(stderr, "e5play: not a valid mp4 yet (size=%lld)\n", (long long)p->size);
+            fclose(p->f);
+            memset(p, 0, sizeof(*p));
             return false;
         }
     }
@@ -411,14 +412,22 @@ static bool play_open(play_t *p, const char *path)
     for (unsigned i = 0; i < p->mp4.track_count; i++) {
         if (p->mp4.track[i].handler_type == MP4D_HANDLER_TYPE_VIDE) { p->vtrack = (int)i; break; }
     }
-    if (p->vtrack < 0) { fprintf(stderr, "e5play: no video track\n"); return false; }
+    if (p->vtrack < 0) {
+        fprintf(stderr, "e5play: no video track\n");
+        MP4D_close(&p->mp4);
+        fclose(p->f);
+        memset(p, 0, sizeof(*p));
+        return false;
+    }
     MP4D_track_t *t = &p->mp4.track[p->vtrack];
     p->frames = t->sample_count;
-    /* 解析出 0 帧说明 moov 是残缺的（常见于续传在索引写完之前就砍掉了
-       顺序下载，文件头留下大片零）。这种情况连上去也发不出任何一帧，
-       不如直接报告失败，让页面重新准备文件，而不是让前端一直重连。 */
+    /* 解析出 0 帧说明索引还没下载完或已损坏。返回 false，让 run_server 继续等；
+       真正的"损坏"由播放器解析不出来（MP4D_open 失败）来体现，不在这里臆断。 */
     if (!p->frames) {
-        fprintf(stderr, "e5play: moov has 0 samples (index incomplete)\n");
+        fprintf(stderr, "e5play: moov parsed with 0 samples (index not ready)\n");
+        MP4D_close(&p->mp4);
+        fclose(p->f);
+        memset(p, 0, sizeof(*p));
         return false;
     }
     p->timescale = t->timescale ? t->timescale : 1000;
@@ -869,9 +878,20 @@ static unsigned sample_for_ms(const play_t *p, unsigned ms)
 static int run_server(const char *path, int port)
 {
     play_t p;
-    if (!play_open(&p, path)) return 3;
-    printf("E5PLAY mp4=%s frames=%u geometry=%ux%u timescale=%u\n",
-           path, p.frames, p.width, p.height, p.timescale);
+    /* 索引没下完时 play_open 会失败（此时文件往往才几百 KB）。
+       不能直接退出：那样页面连端口都连不上，只能盲重试。
+       这里先建好监听端口，让页面能连上并看到"正在索引"，同时继续等索引。 */
+    bool opened = play_open(&p, path);
+    if (!opened) {
+        /* play_open 失败时已经把 p 里的东西清干净了（见 play_open 末尾），
+           这里只要保证不留半成品即可。 */
+        memset(&p, 0, sizeof(p));
+    }
+    if (opened)
+        printf("E5PLAY mp4=%s frames=%u geometry=%ux%u timescale=%u\n",
+               path, p.frames, p.width, p.height, p.timescale);
+    else
+        printf("E5PLAY mp4=%s waiting for index\n", path);
     fflush(stdout);
 
     int ls = socket(AF_INET, SOCK_STREAM, 0);
@@ -916,6 +936,25 @@ static int run_server(const char *path, int port)
         if (do_handshake(cfd) != 0) { close(cfd); continue; }
         printf("E5PLAY client connected\n");
         fflush(stdout);
+
+        /* 索引还没下完就先等它就绪（最多 60 秒）。这期间连接是开着的，
+           页面看到的是"正在索引"而不是连接被拒；
+           等真正就绪再开解码器，避免拿 0 帧去跑主循环。 */
+        if (!opened) {
+            for (int i = 0; i < 600 && !opened; i++) {
+                usleep(100000);
+                opened = play_open(&p, path);
+            }
+            if (opened) {
+                printf("E5PLAY index ready frames=%u geometry=%ux%u\n",
+                       p.frames, p.width, p.height);
+                fflush(stdout);
+            } else {
+                fprintf(stderr, "E5PLAY index still not ready, dropping client\n");
+                close(cfd);
+                continue;
+            }
+        }
 
         player_t pl;
         /* 解码器初始化失败只影响这一个连接，不该把整个服务进程带走 */

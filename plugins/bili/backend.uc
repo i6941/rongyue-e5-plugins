@@ -887,17 +887,13 @@ return function (ctx) {
                 return { ok: false, error: 'no player binary' };
             if (trim(`${ctx.sh('test -s ' + mp4 + ' && echo yes') ?? ''}`) !== 'yes')
                 return { ok: false, error: 'no cached video' };
-            /* 文件头校验：索引区如果是空的（上一次续传在索引写完前就把
-               顺序下载砍掉了，留下大片零），播放器会解析出 0 帧，连上之后
-               一帧都发不出来。这里提前判定并报错，让页面重新准备文件，
-               而不是让前端反复重连空转。 */
-            let h1 = num(`${ctx.sh("dd if=" + mp4 + " bs=1024 skip=1024 count=4 2>/dev/null | tr -d '\\\\000' | wc -c") ?? '0'}`);
-            let h2 = num(`${ctx.sh("dd if=" + mp4 + " bs=1024 skip=4096 count=4 2>/dev/null | tr -d '\\\\000' | wc -c") ?? '0'}`);
-            if (h1 < 512 || h2 < 512)
-                return { ok: false, error: 'index-broken' };
             if (!stop_player()) return { ok: false, error: '旧播放器没退出' };
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/e5play.pid -x ' + bin +
                    ' -- --serve ' + mp4 + ' 9511 --max ' + max + ' --audio-lead ' + lead);
+            /* 不再用 dd 抽查文件头来判断索引好坏：文件刚下到几百 KB 时
+               4MB 偏移处本来就还没有数据，会被误判成"索引损坏"，然后删缓存
+               重下，再判损坏——所有视频都打不开。播放器自己的解析器才是权威，
+               它在索引还没下完时会等（返回 waiting），真解析不出来才报错。 */
             return { ok: true, port: 9511 };
         },
         /* 退出播放时一定要停掉：一个插件目录里只常驻一个解码进程 */
