@@ -273,6 +273,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     <div class="hd">设置</div>
     <div class="row"><span>弹幕</span><button id="setdm" type="button">开</button></div>
     <div class="row"><span>弹幕字号</span><button id="setsz" type="button">中</button></div>
+    <div class="row"><span>屏幕亮度</span><button id="setbl" type="button">50%</button></div>
     <div class="row"><span>后台播放</span><button id="setbg" type="button">关</button></div>
     <div class="row"><span>起播缓冲</span><button id="setwm" type="button">2MB</button></div>
     <div class="row"><span>横竖屏</span><button id="setrot" type="button">竖屏</button></div>
@@ -902,6 +903,38 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     var b = e.target.closest('button[data-tab]');
     if (b) loadHome(b.getAttribute('data-tab'));
   });
+
+  /* 屏幕亮度调节：复用宿主 /api/backlight，档位 25%/50%/75%/100% 循环并持久化 */
+  var BL_STEPS = [
+    { p: '25%', val: 64 },
+    { p: '50%', val: 128 },
+    { p: '75%', val: 192 },
+    { p: '100%', val: 255 }
+  ];
+  var blVal = +(loadCfg('brightness', '128'));
+  var blIdx = 1;
+  for (var bi = 0; bi < BL_STEPS.length; bi++){ if (BL_STEPS[bi].val === blVal) blIdx = bi; }
+  var setBlBtn = document.getElementById('setbl');
+  function syncBlUi(){ if (setBlBtn) setBlBtn.textContent = BL_STEPS[blIdx].p; }
+  function applyBrightness(save){
+    var cur = BL_STEPS[blIdx];
+    saveCfg('brightness', String(cur.val));
+    syncBlUi();
+    fetch('/api/backlight', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ level: cur.val, save: !!save })
+    }).catch(function(){});
+    statusEl.textContent = '屏幕亮度 ' + cur.p + ' 🔆';
+  }
+  function cycleBrightness(){
+    blIdx = (blIdx + 1) % BL_STEPS.length;
+    applyBrightness(true);
+  }
+  if (setBlBtn){
+    syncBlUi();
+    setBlBtn.addEventListener('click', function(){ cycleBrightness(); });
+  }
 
   /* 音画补偿：声音进程启动有几十毫秒延迟，e5play 会把视频时钟后移这么多。
      听感上声音落后就调大，声音超前就调小。 */
@@ -1984,6 +2017,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       if (kind === 'digit' && key === '2'){ toggleFav(); return true; }
       if (kind === 'digit' && key === '3'){ toggleComments(); return true; }
       if (kind === 'digit' && key === '4'){ toggleRelated(); return true; }
+      if (kind === 'digit' && key === '5'){ cycleBrightness(); return true; }
       if (kind === 'ok'){ cv.click(); return true; }
       /* 横屏时画面转了 90°：画面的左/右对应物理的上/下，按键跟着转 */
       if (rotOn()){
