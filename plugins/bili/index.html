@@ -72,16 +72,116 @@ body.in-player #tabs { display: none !important; }
 #pinfo{font-size:11px;color:var(--dim);padding:3px 8px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #player{position:relative}
 #pbar{flex:0 0 auto;background:#0b111b;border-top:1px solid var(--line);padding:4px 6px 7px}
-/* 横屏时控制栏改成浮层：不占画面高度，画面能吃满整块屏 */
-#pbar.overlay{position:absolute;z-index:8;background:rgba(8,13,20,.94);
-  border-top:1px solid #223046;opacity:0;pointer-events:none;transition:opacity .18s}
-#pbar.overlay.show{opacity:1;pointer-events:auto}
+/* 横屏时彻底隐藏竖屏底栏和角标 */
+body.rot-land #pbar, body.rot-land #rotbtn, body.rot-land #pmenubtn { display: none !important; }
+
+/* 横屏专用 480x320 全屏浮层：整体旋转 90 度，与物理屏幕完全贴合 */
+#land-ui {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 480px;
+  height: 320px;
+  transform: translate(-50%, -50%) rotate(90deg);
+  z-index: 15;
+  box-sizing: border-box;
+  flex-direction: column;
+  justify-content: space-between;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+body.rot-land #land-ui { display: flex; }
+body.rot-land #land-ui.show { opacity: 1; pointer-events: auto; }
+
+.land-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 38px;
+  padding: 0 12px;
+  background: linear-gradient(to bottom, rgba(5,9,15,.92), rgba(5,9,15,.4) 75%, transparent);
+}
+.land-title {
+  flex: 1 1 auto;
+  font-size: 13px;
+  font-weight: 500;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 2px #000;
+}
+.land-top-btns {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.land-top-btns button {
+  height: 26px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 12px;
+  color: #dce8f8;
+  background: rgba(22, 32, 47, .85);
+  border: 1px solid #3a4c6b;
+  border-radius: 6px;
+}
+.land-bot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 12px 10px;
+  background: linear-gradient(to top, rgba(5,9,15,.95), rgba(5,9,15,.5) 75%, transparent);
+}
+.land-seek {
+  height: 6px;
+  background: rgba(255,255,255,.2);
+  border-radius: 3px;
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+.land-seek i {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 0;
+  background: var(--accent);
+  border-radius: 3px;
+}
+.land-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.land-time {
+  font-size: 12px;
+  color: #c0d1e6;
+  font-variant-numeric: tabular-nums;
+  flex: 0 0 auto;
+}
+.land-btns {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+.land-btns button {
+  height: 30px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12px;
+  color: #e6edf3;
+  background: rgba(27, 38, 55, .88);
+  border: 1px solid #3d506d;
+  border-radius: 6px;
+}
+.land-btns button:active { background: #2b3d58; }
+
 #pseek{height:6px;background:#1b2637;border-radius:3px;margin:2px 2px 5px;position:relative;overflow:hidden}
 #pseek i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent);border-radius:3px}
-#pmenubtn{position:absolute;top:6px;right:56px;z-index:9;width:44px;height:32px;padding:0;font:inherit;
-  font-size:14px;line-height:30px;text-align:center;color:#dce8f8;background:rgba(20,30,46,.8);
-  border:1px solid #3a4c6b;border-radius:6px;display:none;pointer-events:auto;transition:opacity .2s}
-#pmenubtn.on{display:block}
 #ptime{font-size:11px;color:#8fa3bd;padding:1px 2px 5px;font-variant-numeric:tabular-nums}
 #pbtns{display:flex;gap:5px}
 #pbtns button{flex:1 1 0;height:34px;padding:0;font:inherit;font-size:12px;color:#dce8f8;
@@ -93,6 +193,10 @@ body.in-player #tabs { display: none !important; }
 #settings.on{display:flex}
 #settings .box{width:100%;background:#101a28;border:1px solid #243349;border-radius:10px;
   padding:10px;display:flex;flex-direction:column;gap:7px}
+/* 横屏时设置菜单旋转 90° 呈现在屏幕中央，并展开为双列网格排版 */
+body.rot-land #settings .box{width:440px;max-height:280px;transform:rotate(90deg);
+  flex:0 0 auto;display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;padding:10px 14px}
+body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -1}
 #settings .hd{font-size:13px;color:var(--accent);padding-bottom:2px}
 #settings .row{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:#c8d6e8}
 #settings button{height:28px;padding:0 12px;font:inherit;font-size:12px;color:#dce8f8;
@@ -143,10 +247,37 @@ body.in-player #tabs { display: none !important; }
   <div class="row"><button id="qlogout" type="button">退出登录</button><button id="qclose" type="button">关闭</button></div>
 </div>
 <div id="player">
-  <div id="screen"><div id="frame"><canvas id="cv" width="320" height="180"></canvas>
-      <div id="subs"></div></div>
-    <button id="rotbtn" type="button">竖</button>
-    <button id="pmenubtn" type="button">≡</button></div>
+  <div id="screen">
+    <div id="frame"><canvas id="cv" width="320" height="180"></canvas>
+      <div id="subs"></div>
+    </div>
+    <!-- 竖屏切横屏角标 -->
+    <button id="rotbtn" type="button">横</button>
+
+    <!-- 横屏独立专属全屏控制浮层 -->
+    <div id="land-ui">
+      <div class="land-top">
+        <div class="land-title" id="land-title"></div>
+        <div class="land-top-btns">
+          <button type="button" id="land-btn-cfg">≡ 设置</button>
+          <button type="button" id="land-btn-port">竖屏</button>
+        </div>
+      </div>
+      <div class="land-bot">
+        <div class="land-seek" id="land-seek"><i id="land-fill"></i></div>
+        <div class="land-row">
+          <div class="land-time" id="land-time">--:-- / --:--</div>
+          <div class="land-btns">
+            <button type="button" data-act="back10">« 10s</button>
+            <button type="button" data-act="play" id="land-play">暂停</button>
+            <button type="button" data-act="fwd10">10s »</button>
+            <button type="button" id="land-dm">弹幕</button>
+            <button type="button" id="land-rot">竖屏</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div id="pbar">
     <div id="pinfo"></div>
     <div id="pseek"><i id="pfill"></i></div>
@@ -198,34 +329,18 @@ body.in-player #tabs { display: none !important; }
     return false;
   }
   function layout(){
-    var pbEl = document.getElementById('pbar');
-    var mbEl = document.getElementById('pmenubtn');
-    if (pbEl){
-      if (rotOn()){
-        pbEl.classList.add('overlay');
-        if (mbEl) mbEl.classList.add('on');
-        document.body.classList.add('rot-land');
-        document.body.classList.add('in-player');
-        /* 控制栏转 90° 贴在屏幕一边：竖着拿是底部，横着拿就是右侧，字才是正的 */
-        pbEl.style.width = Math.max(200, Math.round(H)) + 'px';
-        pbEl.style.height = '96px';
-        pbEl.style.left = '50%';
-        pbEl.style.top = '50%';
-        pbEl.style.transform = 'translate(-50%,-50%) rotate(90deg) translateY(-' +
-                               Math.max(0, Math.round(W / 2 - 48)) + 'px)';
-        flashBar();
-      }
-      else {
-        pbEl.classList.remove('overlay'); pbEl.classList.remove('show');
-        pbEl.style.cssText = '';
-        if (mbEl) mbEl.classList.remove('on');
-        document.body.classList.remove('rot-land');
-        var sc0 = document.getElementById('screen'); if (sc0) sc0.classList.remove('hideui');
-        if (window.__barTimer) { clearTimeout(window.__barTimer); window.__barTimer = 0; }
-      }
+    if (rotOn()){
+      document.body.classList.add('rot-land');
+      document.body.classList.add('in-player');
+      var lui = document.getElementById('land-ui');
+      if (lui) lui.style.transform = 'translate(-50%,-50%) rotate(90deg)';
+      flashBar();
+    } else {
+      document.body.classList.remove('rot-land');
+      var landEl = document.getElementById('land-ui');
+      if (landEl) landEl.classList.remove('show');
+      if (window.__barTimer) { clearTimeout(window.__barTimer); window.__barTimer = 0; }
     }
-    /* 必须在控制栏改成浮层之后再量：横屏时控制栏不占高度，画面能吃满整屏。
-       先量再去改样式的话，量到的是扣掉控制栏的矮框，输出尺寸会跟着变小（画面变糊） */
     var W = screenEl.clientWidth, H = screenEl.clientHeight;
     if (!W || !H || !cv.width || !cv.height) return;
     /* 宽高比只认片源（首帧记下来），不再跟着画布走：
@@ -289,41 +404,69 @@ body.in-player #tabs { display: none !important; }
     else if (act === 'exit') leavePlayer();
   });
 
-  /* 横屏：有交互就把控制栏亮出来，停手 3.5 秒自动收起 */
+  /* 横屏浮层：有交互就亮出来，3.5 秒无操作自动收起 */
   function flashBar(){
     if (!rotOn()) return;
-    var bar = document.getElementById('pbar');
-    var scr = document.getElementById('screen');
-    if (bar) bar.classList.add('show');
-    if (scr) scr.classList.remove('hideui');
+    var ui = document.getElementById('land-ui');
+    if (ui) ui.classList.add('show');
     if (window.__barTimer) clearTimeout(window.__barTimer);
-    /* 3.5 秒没动静就连角上的「横」「≡」一起收掉，画面上不留东西 */
     window.__barTimer = setTimeout(function(){
-      var b2 = document.getElementById('pbar'); if (b2) b2.classList.remove('show');
-      var s2 = document.getElementById('screen'); if (s2) s2.classList.add('hideui');
+      var u2 = document.getElementById('land-ui');
+      if (u2) u2.classList.remove('show');
     }, 3500);
   }
   ['click', 'touchstart', 'keydown'].forEach(function(ev){
     document.addEventListener(ev, function(){ flashBar(); }, true);
   });
 
-  /* 进度条：点哪跳哪 */
-  var seekEl = document.getElementById('pseek');
-  if (seekEl) seekEl.addEventListener('click', function(e){
-    if (!(curDurS > 0)) return;
-    var r = seekEl.getBoundingClientRect();
-    if (!r.width) return;
-    var ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
-    seekBy(ratio * curDurS * 1000 - playerMs());
-  });
+  /* 进度条：点哪跳哪（支持竖屏和横屏） */
+  function bindSeek(el, isRot){
+    if (!el) return;
+    el.addEventListener('click', function(e){
+      if (e) e.stopPropagation();
+      if (!(curDurS > 0)) return;
+      var r = el.getBoundingClientRect();
+      var ratio = 0;
+      if (isRot){
+        /* 横屏顺时针转了 90°，横向对应 clientY */
+        if (!r.height) return;
+        ratio = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+      } else {
+        if (!r.width) return;
+        ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+      }
+      seekBy(ratio * curDurS * 1000 - playerMs());
+    });
+  }
+  bindSeek(document.getElementById('pseek'), false);
+  bindSeek(document.getElementById('land-seek'), true);
 
-  /* 横屏时控制栏是浮层：这个按钮呼出/收起 */
-  var menuBtn = document.getElementById('pmenubtn');
-  if (menuBtn) menuBtn.addEventListener('click', function(e){
-    if (e) e.stopPropagation();
-    var bar = document.getElementById('pbar');
-    if (bar) bar.classList.toggle('show');
-  });
+  /* 横屏控制按钮绑定 */
+  var landUi = document.getElementById('land-ui');
+  if (landUi){
+    landUi.addEventListener('click', function(e){
+      var b = e.target.closest('button');
+      if (!b) return;
+      e.stopPropagation();
+      var act = b.getAttribute('data-act');
+      if (act === 'back10') seekBy(-10000);
+      else if (act === 'fwd10') seekBy(10000);
+      else if (act === 'play'){ try{ cv.click(); }catch(x){} }
+      else if (b.id === 'land-rot' || b.id === 'land-btn-port') toggleRot();
+      else if (b.id === 'land-btn-cfg'){
+        var cfgBtn = document.getElementById('cfg');
+        if (cfgBtn) cfgBtn.click();
+      }
+      else if (b.id === 'land-dm'){
+        dmOn = !dmOn;
+        /* 必须和设置面板用同一个键（saveCfg -> bili.dm），否则两处开关互不认识 */
+        saveCfg('dm', dmOn ? '1' : '0');
+        if (!dmOn) dmLive.length = 0;
+        syncCfgUi();
+        statusEl.textContent = '弹幕 ' + (dmOn ? '开' : '关');
+      }
+    });
+  }
 
   /* 井号键切横竖屏（# 在 WPE 上可能是 Unidentified + 51） */
   window.addEventListener('keydown', function(e){
@@ -400,6 +543,8 @@ body.in-player #tabs { display: none !important; }
     setDm.textContent = dmOn ? '开' : '关';
     setSz.textContent = dmSize <= 14 ? '小' : (dmSize >= 20 ? '大' : '中');
     setQn.textContent = QN_TEXT[qnPref] || '720P';
+    var ldm = document.getElementById('land-dm');
+    if (ldm) ldm.textContent = dmOn ? '弹幕 开' : '弹幕 关';
   }
 
   (function initCfg(){
@@ -972,6 +1117,7 @@ body.in-player #tabs { display: none !important; }
         if (!d || !d.ok){ statusEl.textContent = '取流失败：' + ((d && d.error) || '?'); return null; }
         curCid = d.cid || it.cid || 0;
         pinfo.textContent = it.title;
+    var lt = document.getElementById('land-title'); if (lt) lt.textContent = it.title;
         statusEl.textContent = '下载中…';
         return waitReady(0, my);
       })
@@ -980,6 +1126,7 @@ body.in-player #tabs { display: none !important; }
         restartTried = 0; everFrame = 0;
         if (!d){ statusEl.textContent = '下载失败'; return null; }
         pinfo.textContent = it.title + ' · ' + Math.round((d.size || d.bytes || 0) / 1048576) + 'MB';
+    var lt2 = document.getElementById('land-title'); if (lt2) lt2.textContent = it.title;
         loadSegments(it.bvid);
         loadDanmaku(curCid);
         loadSubs(it.bvid, curCid);
@@ -1071,6 +1218,7 @@ body.in-player #tabs { display: none !important; }
     cctx.clearRect(0, 0, 320, 180);
     inPlayer = false; bgPlaying = false; playing = false;
     document.body.classList.remove('in-player');
+    document.body.classList.remove('rot-land');
     hostChrome(false);
     player.classList.remove('on');
     listEl.style.display = '';
@@ -1084,6 +1232,7 @@ body.in-player #tabs { display: none !important; }
       /* 后台播放是手动开的：画面收起来，播放器进程和声音继续 */
       inPlayer = false; bgPlaying = true;
       document.body.classList.remove('in-player');
+      document.body.classList.remove('rot-land');
       player.classList.remove('on');
       listEl.style.display = '';
       statusEl.textContent = '后台播放中 · 点这里回到画面';
@@ -1111,6 +1260,53 @@ body.in-player #tabs { display: none !important; }
   qEl.addEventListener('click', function(){
     if (window.E5IME) E5IME.open();
   });
+  /* 横屏 UI 自检：?landtest=1 时自动验证全套横屏界面与菜单尺寸 */
+  try{
+    if (new URLSearchParams(location.search).get('landtest') === '1'){
+      setTimeout(function(){
+        var rep = {};
+        try{
+          /* 1. 模拟进入播放器并切到横屏 */
+          player.classList.add('on');
+          rotMode = 1; layout();
+          var lui = document.getElementById('land-ui');
+          var pb = document.getElementById('pbar');
+          var rb = document.getElementById('rotbtn');
+          var csLui = window.getComputedStyle(lui);
+          var csPb = window.getComputedStyle(pb);
+          var csRb = window.getComputedStyle(rb);
+
+          rep.landUiDisplay = csLui.display;
+          rep.landUiWidth = csLui.width;
+          rep.landUiHeight = csLui.height;
+          rep.landUiTransform = csLui.transform;
+          rep.pbarHidden = csPb.display === 'none';
+          rep.rotbtnHidden = csRb.display === 'none';
+
+          /* 2. 打开设置面板测试双列网格与旋转 */
+          var setBox = document.querySelector('#settings .box');
+          var cfgBtn = document.getElementById('land-btn-cfg');
+          if (cfgBtn) cfgBtn.click();
+          var csBox = window.getComputedStyle(setBox);
+          rep.setGrid = csBox.display;
+          rep.setTransform = csBox.transform;
+          rep.setWidth = csBox.width;
+
+          /* 3. 关闭设置与退出播放器 */
+          var closeBtn = document.getElementById('setclose');
+          if (closeBtn) closeBtn.click();
+          stopPlayback();
+          rep.bodyClean = !document.body.classList.contains('rot-land');
+          rep.ok = rep.landUiDisplay === 'flex' && rep.pbarHidden && rep.rotbtnHidden &&
+                   rep.setGrid === 'grid' && rep.bodyClean;
+        }catch(e){
+          rep.ok = false; rep.err = '' + e;
+        }
+        probe('landtest', JSON.stringify(rep));
+      }, 3000);
+    }
+  }catch(e){}
+
   /* 字幕自检：?subtest=1 时播 25 秒后把横竖屏/开关/实际显示状态写进 probe */
   try{
     if (new URLSearchParams(location.search).get('subtest') === '1'){
@@ -1310,20 +1506,28 @@ body.in-player #tabs { display: none !important; }
       }
     } else if (bufShown){ bufShown = 0; statusEl.textContent = '播放中'; }
     /* 时间与按钮状态跟着真实进度走 */
+    var cur = Math.max(0, Math.round(playerMs() / 1000));
+    var tot = curDurS > 0 ? Math.round(curDurS) : 0;
+    var mm = function(v){ return (v < 10 ? '0' : '') + v; };
+    var timeStr = mm(Math.floor(cur / 60)) + ':' + mm(cur % 60) + ' / ' +
+                  (tot ? (mm(Math.floor(tot / 60)) + ':' + mm(tot % 60)) : '--:--');
     var tEl = document.getElementById('ptime');
-    if (tEl){
-      var cur = Math.max(0, Math.round(playerMs() / 1000));
-      var tot = curDurS > 0 ? Math.round(curDurS) : 0;
-      var mm = function(v){ return (v < 10 ? '0' : '') + v; };
-      tEl.textContent = mm(Math.floor(cur / 60)) + ':' + mm(cur % 60) + ' / ' +
-                        (tot ? (mm(Math.floor(tot / 60)) + ':' + mm(tot % 60)) : '--:--');
-    }
+    if (tEl) tEl.textContent = timeStr;
+    var ltEl = document.getElementById('land-time');
+    if (ltEl) ltEl.textContent = timeStr;
+
     var pb = document.querySelector('#pbtns button[data-act="play"]');
     if (pb) pb.textContent = playing ? '暂停' : '播放';
-    var fill = document.getElementById('pfill');
-    if (fill && curDurS > 0){
+    var lpb = document.getElementById('land-play');
+    if (lpb) lpb.textContent = playing ? '暂停' : '播放';
+
+    if (curDurS > 0){
       var ratio = Math.max(0, Math.min(1, (playerMs() / 1000) / curDurS));
-      fill.style.width = (ratio * 100).toFixed(1) + '%';
+      var wStr = (ratio * 100).toFixed(1) + '%';
+      var fill = document.getElementById('pfill');
+      if (fill) fill.style.width = wStr;
+      var lfill = document.getElementById('land-fill');
+      if (lfill) lfill.style.width = wStr;
     }
   }, 800);
   window.addEventListener('pagehide', function(){ hostChrome(false); }, true);
