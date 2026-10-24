@@ -211,6 +211,20 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
 #login .row{display:flex;gap:8px}
 #login button{height:30px;padding:0 14px;font:inherit;font-size:13px;color:#dce8f8;
   background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
+
+/* 评论区抽屉：竖屏覆盖在播放器下方或全屏，横屏旋转 90° 铺满 */
+#comments-drawer{display:none;position:absolute;inset:0;z-index:25;background:rgba(8,13,20,.96);flex-direction:column;padding:0}
+#comments-drawer.open{display:flex}
+body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transform:translate(-50%,-50%) rotate(90deg);border:1px solid #243349}
+.comm-head{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-bottom:1px solid #243349;background:#111a27;font-size:13px;font-weight:600;color:#e6edf3;flex:0 0 auto}
+.comm-head button{width:28px;height:28px;padding:0;border:none;background:transparent;color:#a9bad0;font-size:20px;line-height:24px;cursor:pointer}
+.comm-list{flex:1 1 auto;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch}
+.comm-item{display:flex;gap:8px;border-bottom:1px solid rgba(255,255,255,.06);padding-bottom:8px}
+.comm-avatar{width:28px;height:28px;border-radius:50%;flex:0 0 auto;background:#1c2838}
+.comm-body{flex:1 1 auto;min-width:0}
+.comm-user{font-size:12px;font-weight:500;color:#79a5db;display:flex;justify-content:space-between}
+.comm-user .comm-like{color:#8fa3bd;font-size:11px}
+.comm-text{font-size:13px;line-height:1.4;color:#e6edf3;margin-top:3px;word-break:break-all}
 </style>
 </head>
 <body>
@@ -288,6 +302,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
             <button type="button" data-act="fwd10">10s »</button>
             <button type="button" id="land-btn-like">点赞</button>
             <button type="button" id="land-btn-fav">收藏</button>
+            <button type="button" id="land-btn-comm">评论</button>
             <button type="button" id="land-dm">弹幕</button>
             <button type="button" id="land-rot">竖屏</button>
           </div>
@@ -305,7 +320,17 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       <button type="button" data-act="fwd10">10s »</button>
       <button type="button" id="btn-like">点赞</button>
       <button type="button" id="btn-fav">收藏</button>
+      <button type="button" id="btn-comm">评论</button>
       <button type="button" data-act="rot">横屏</button>
+    </div>
+  </div>
+  <div id="comments-drawer">
+    <div class="comm-head">
+      <span id="comm-title">评论</span>
+      <button type="button" id="comm-close" aria-label="关闭">×</button>
+    </div>
+    <div class="comm-list" id="comm-list">
+      <div style="padding:20px;text-align:center;color:#8fa3bd">加载评论中…</div>
     </div>
   </div>
 </div>
@@ -418,6 +443,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     if (!b) return;
     if (b.id === 'btn-like'){ toggleLike(); return; }
     if (b.id === 'btn-fav'){ toggleFav(); return; }
+    if (b.id === 'btn-comm'){ toggleComments(); return; }
     var act = b.getAttribute('data-act');
     if (act === 'back10') seekBy(-10000);
     else if (act === 'fwd10') seekBy(10000);
@@ -476,6 +502,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       else if (act === 'play'){ try{ cv.click(); }catch(x){} }
       else if (b.id === 'land-btn-like') toggleLike();
       else if (b.id === 'land-btn-fav') toggleFav();
+      else if (b.id === 'land-btn-comm') toggleComments();
       else if (b.id === 'land-rot' || b.id === 'land-btn-port') toggleRot();
       else if (b.id === 'land-btn-cfg'){
         var cfgBtn = document.getElementById('cfg');
@@ -984,6 +1011,71 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     }).catch(function(e){ statusEl.textContent = '收藏请求失败 ' + e; });
   }
 
+  /* ---------- 评论区 ---------- */
+  var commDrawer = document.getElementById('comments-drawer');
+  var commTitle = document.getElementById('comm-title');
+  var commList = document.getElementById('comm-list');
+  var commCloseBtn = document.getElementById('comm-close');
+  var commOpen = false, commLoading = false;
+
+  function toggleComments(){
+    if (!inPlayer) return;
+    if (commOpen){ closeComments(); } else { openComments(); }
+  }
+  function openComments(){
+    var it = nowPlaying();
+    if (!it || !it.bvid) return;
+    commOpen = true;
+    if (commDrawer) commDrawer.classList.add('open');
+    if (commTitle) commTitle.textContent = '评论加载中…';
+    if (commList) commList.innerHTML = '<div style="padding:20px;text-align:center;color:#8fa3bd">加载评论中…</div>';
+    loadComments(it.bvid);
+  }
+  function closeComments(){
+    commOpen = false;
+    if (commDrawer) commDrawer.classList.remove('open');
+  }
+  if (commCloseBtn) commCloseBtn.addEventListener('click', closeComments);
+
+  function loadComments(bvid){
+    if (commLoading) return;
+    commLoading = true;
+    fetch('/api/plugins/bili/comments?bvid=' + encodeURIComponent(bvid))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        commLoading = false;
+        if (!d || !d.ok){
+          if (commTitle) commTitle.textContent = '评论加载失败';
+          if (commList) commList.innerHTML = '<div style="padding:20px;text-align:center;color:#ff8585">' + ((d && d.error) || '加载失败') + '</div>';
+          return;
+        }
+        var count = d.count || (d.list ? d.list.length : 0);
+        if (commTitle) commTitle.textContent = '评论 (' + count + ') · 3键/返回键关闭';
+        renderComments(d.list || []);
+      }).catch(function(e){
+        commLoading = false;
+        if (commTitle) commTitle.textContent = '评论请求失败';
+        if (commList) commList.innerHTML = '<div style="padding:20px;text-align:center;color:#ff8585">请求失败 ' + e + '</div>';
+      });
+  }
+  function renderComments(list){
+    if (!commList) return;
+    if (!list.length){
+      commList.innerHTML = '<div style="padding:20px;text-align:center;color:#8fa3bd">暂无评论</div>';
+      return;
+    }
+    var h = '';
+    list.forEach(function(c){
+      h += '<div class="comm-item">' +
+           '<img class="comm-avatar" loading="lazy" src="/api/plugins/bili/img?u=' + encodeURIComponent(c.avatar) + '" alt="">' +
+           '<div class="comm-body">' +
+           '<div class="comm-user"><span>' + esc(c.uname) + '</span><span class="comm-like">👍 ' + c.like + '</span></div>' +
+           '<div class="comm-text">' + esc(c.message) + '</div>' +
+           '</div></div>';
+    });
+    commList.innerHTML = h;
+  }
+
   /* ---------- 弹幕 ---------- */
   var dmAll = [], dmIdx = 0, dmLive = [], dmTrack = 0;
   /* 这里不能再赋初值：initCfg 已经从 localStorage 读回来了，
@@ -1488,6 +1580,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   });
 
   function stopPlayback(){
+    closeComments();
     saveNow();
     closeWs();
     fetch('/api/plugins/bili/player-stop').catch(function(){});
@@ -1759,9 +1852,17 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       }
     }
     if (inPlayer){
-      /* 播放器快捷键：1 点赞 / 取消点赞，2 收藏 / 取消收藏 */
+      /* 评论区打开时：上下方向键滚动评论，3 键或返回键关闭评论区 */
+      if (commOpen){
+        if (kind === 'back' || (kind === 'digit' && key === '3')){ closeComments(); return true; }
+        if (kind === 'up'){ if (commList) commList.scrollTop -= 60; return true; }
+        if (kind === 'down'){ if (commList) commList.scrollTop += 60; return true; }
+        return true;
+      }
+      /* 播放器快捷键：1 点赞 / 取消点赞，2 收藏 / 取消收藏，3 打开/关闭评论区 */
       if (kind === 'digit' && key === '1'){ toggleLike(); return true; }
       if (kind === 'digit' && key === '2'){ toggleFav(); return true; }
+      if (kind === 'digit' && key === '3'){ toggleComments(); return true; }
       if (kind === 'ok'){ cv.click(); return true; }
       /* 横屏时画面转了 90°：画面的左/右对应物理的上/下，按键跟着转 */
       if (rotOn()){

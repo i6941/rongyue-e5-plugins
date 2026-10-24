@@ -383,6 +383,45 @@ return function (ctx) {
             if (!jd || num(jd.code) !== 0) return { ok: false, error: jd?.message ?? 'api' };
             return { ok: true, favorite: fav };
         },
+        /* 视频评论区：获取主楼热门/排序评论 */
+        'GET /comments': function (req) {
+            let bvid = `${req.query?.bvid ?? ''}`;
+            let pn = num(req.query?.pn);
+            if (pn < 1) pn = 1;
+            let aid = num(req.query?.aid);
+            if (!aid) {
+                if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+                let rv = api_get('/x/web-interface/view?bvid=' + bvid);
+                let jv = null;
+                try { jv = json(rv); } catch (e) { return { ok: false, error: 'view' }; }
+                aid = num(jv?.data?.aid);
+            }
+            if (!aid) return { ok: false, error: 'no aid' };
+            let raw = api_get('/x/v2/reply?type=1&oid=' + aid + '&sort=1&pn=' + pn + '&ps=20');
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let d = j.data ?? {};
+            let out = [];
+            for (let r in (d.replies ?? [])) {
+                let m = r?.member ?? {};
+                let c = r?.content ?? {};
+                push(out, {
+                    rpid: `${r?.rpid ?? ''}`,
+                    uname: `${m?.uname ?? ''}`,
+                    avatar: httpsify(`${m?.avatar ?? ''}`),
+                    message: `${c?.message ?? ''}`,
+                    like: num(r?.like),
+                    ctime: num(r?.ctime),
+                    rcount: num(r?.rcount)
+                });
+            }
+            return {
+                ok: true,
+                count: num(d.page?.count),
+                list: out
+            };
+        },
         /* 分区入口列表（去掉了无内容的直播） */
         'GET /regions': function () {
             return { ok: true, list: [
