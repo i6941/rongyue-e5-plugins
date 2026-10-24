@@ -1598,15 +1598,17 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     };
     thisWs.onmessage = function(ev){
       if (ws !== thisWs) return;
+      probe('ws-msg', 'bytes=' + (ev.data ? ev.data.byteLength : 0));
       onFrame(ev.data);
     };
-    thisWs.onerror = function(){
+    thisWs.onerror = function(err){
       if (ws !== thisWs) return;
       probe('ws-error', url);
     };
     thisWs.onclose = function(e){
       if (ws !== thisWs) return;
       ws = null;
+      probe('ws-close-live', 'code=' + (e ? e.code : '') + ' clean=' + (e ? e.wasClean : '') + ' try=' + tries);
       /* 播放断了就把宿主菜单还回去，别让人卡在全屏黑屏里出不来 */
       hostChrome(false);
       if (!inPlayer) return;

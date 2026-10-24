@@ -25,6 +25,8 @@
 #include <time.h>
 #include <poll.h>
 #include <sys/socket.h>
+#include <sys/prctl.h>
+#include <fcntl.h>
 #include <sys/uio.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -196,23 +198,30 @@ static int ws_send_frame(int fd, const uint8_t *hdr, size_t hdr_len, const uint8
     iov[0].iov_base = head; iov[0].iov_len = hlen;
     iov[1].iov_base = (void *)hdr; iov[1].iov_len = hdr_len;
     iov[2].iov_base = (void *)pixels; iov[2].iov_len = bytes;
+    int iovcnt = 3;
     size_t want = hlen + hdr_len + bytes;
     size_t done = 0;
     while (done < want) {
-        ssize_t r = writev(fd, iov, 3);
+        ssize_t r = writev(fd, iov, iovcnt);
         if (r <= 0) return -1;
         done += (size_t)r;
         if (done >= want) break;
-        size_t left = want - done;
-        uint8_t *base[3] = { head, (uint8_t *)hdr, (uint8_t *)pixels };
-        size_t len[3] = { hlen, hdr_len, bytes };
+        size_t skip = done;
+        const uint8_t *base[3] = { head, hdr, pixels };
+        size_t orig_len[3] = { hlen, hdr_len, bytes };
         int k = 0;
         for (int i = 0; i < 3; i++) {
-            if (left >= len[i]) { base[i] += len[i]; left -= len[i]; }
-            else { base[i] += left; len[i] -= left; left = 0; }
-            if (len[i]) { iov[k].iov_base = base[i]; iov[k].iov_len = len[i]; k++; }
+            if (skip >= orig_len[i]) {
+                skip -= orig_len[i];
+            } else {
+                iov[k].iov_base = (void *)(base[i] + skip);
+                iov[k].iov_len = orig_len[i] - skip;
+                skip = 0;
+                k++;
+            }
         }
-        if (k == 0) break;
+        iovcnt = k;
+        if (iovcnt == 0) break;
     }
     return 0;
 }
@@ -221,6 +230,15 @@ static bool paused = false;
 static volatile int g_seek_ms = -1;   /* >=0 表示待处理的跳转目标（毫秒） */
 
 /* 读客户端命令；返回 -1 表示连接断了 */
+/* 输出画面的长边上限：页面按当前横竖屏传 --max / 命令 6，
+   保证画布和显示区域 1:1，缩放一次都不做，字才不会糊 */
+static int g_max = 480;
+static int g_pending_max = 0;   /* >0：下一帧前按这个尺寸重建缩放器 */
+/* 声音从起进程到真正出声的延迟（毫秒）：起音频时把视频时钟后移同样的量，
+   否则每次快进/恢复后声音都落后画面。设备实测首包 40–70ms，默认留 120ms。 */
+static int g_audio_lead = 120;
+static int g_sharp = 60;        /* 反锐化强度 0-100，--sharp 可调 */
+
 static int ws_poll_cmd(int fd)
 {
     uint8_t h[2];
@@ -249,6 +267,12 @@ static int ws_poll_cmd(int fd)
     if (op == 0x8) return -1;
     if (op >= 0x8) return 0;
     if (len >= 1 && payload[0] == 4) paused = !paused;   /* 和模拟器一致：4 = 暂停/继续 */
+    if (len >= 3 && payload[0] == 6) {
+        /* 6 = 改输出长边（u16 小端）：切横竖屏时只改缩放目标，
+           不重启播放器、不重跳，画面不中断 */
+        int m = (int)(payload[1] | (payload[2] << 8));
+        if (m >= 64 && m <= 1920) g_pending_max = m;
+    }
     if (len >= 5 && payload[0] == 5) {
         /* 5 = 跳到指定毫秒：u32 小端 */
         g_seek_ms = (int)((uint32_t)payload[1] | ((uint32_t)payload[2] << 8) |
@@ -288,6 +312,15 @@ typedef struct {
 static int mp4_read_cb(int64_t offset, void *buffer, size_t size, void *token)
 {
     FILE *f = (FILE *)token;
+    /* 边下边播：文件还在增长时，这个样本可能还没写到磁盘上。
+       等到足够字节再说，别把半帧送进解码器；等两分钟还不行才报错。 */
+    for (int waited = 0; ; waited += 100) {
+        struct stat st;
+        if (fstat(fileno(f), &st) != 0) break;
+        if ((int64_t)st.st_size >= offset + (int64_t)size) break;
+        if (waited >= 120000) return 1;
+        usleep(100000);
+    }
 #ifdef _WIN32
     if (_fseeki64(f, offset, SEEK_SET) != 0) return 1;
 #else
@@ -462,6 +495,8 @@ static void audio_start(const char *path, double start_sec)
 
     pid_t out = fork();
     if (out == 0) {
+        /* 主进程死了就跟着死，别留下一个还在放音的孤儿进程 */
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
         dup2(fds[0], 0);
         close(fds[0]); close(fds[1]);
         int nfd = open("/dev/null", O_WRONLY);
@@ -472,6 +507,7 @@ static void audio_start(const char *path, double start_sec)
     }
     pid_t in = fork();
     if (in == 0) {
+        prctl(PR_SET_PDEATHSIG, SIGKILL);
         dup2(fds[1], 1);
         close(fds[0]); close(fds[1]);
         int nfd = open("/dev/null", O_WRONLY);
@@ -500,8 +536,7 @@ static void audio_set_paused(bool p)
 
 typedef struct {
     int ow, oh;
-    int *xmap;
-    int *ymap;
+    int *x0, *x1, *y0, *y1;   /* 每个输出像素对应的源区域 [x0,x1) x [y0,y1) */
     uint8_t *out;      /* RGB565 小端 */
 } scaler_t;
 
@@ -517,17 +552,33 @@ static void scaler_init(scaler_t *s, int src_w, int src_h, int max_w, int max_h)
     oh &= ~1;
     s->ow = ow;
     s->oh = oh;
-    s->xmap = (int *)malloc(sizeof(int) * (size_t)ow);
-    s->ymap = (int *)malloc(sizeof(int) * (size_t)oh);
-    for (int x = 0; x < ow; x++) s->xmap[x] = x * src_w / ow;
-    for (int y = 0; y < oh; y++) s->ymap[y] = y * src_h / oh;
+    s->x0 = (int *)malloc(sizeof(int) * (size_t)ow);
+    s->x1 = (int *)malloc(sizeof(int) * (size_t)ow);
+    s->y0 = (int *)malloc(sizeof(int) * (size_t)oh);
+    s->y1 = (int *)malloc(sizeof(int) * (size_t)oh);
+    /* 区域平均：每个输出像素覆盖源图的一块，取这块的平均值。
+       原来是最远邻点采样，720P 缩到 320 宽时边缘会锯齿、动起来会闪。 */
+    for (int x = 0; x < ow; x++) {
+        int a = x * src_w / ow, b = (x + 1) * src_w / ow;
+        if (b <= a) b = a + 1;
+        if (b > src_w) b = src_w;
+        s->x0[x] = a; s->x1[x] = b;
+    }
+    for (int y = 0; y < oh; y++) {
+        int a = y * src_h / oh, b = (y + 1) * src_h / oh;
+        if (b <= a) b = a + 1;
+        if (b > src_h) b = src_h;
+        s->y0[y] = a; s->y1[y] = b;
+    }
     s->out = (uint8_t *)malloc((size_t)ow * (size_t)oh * 2);
 }
 
 static void scaler_free(scaler_t *s)
 {
-    free(s->xmap);
-    free(s->ymap);
+    free(s->x0);
+    free(s->x1);
+    free(s->y0);
+    free(s->y1);
     free(s->out);
     memset(s, 0, sizeof(*s));
 }
@@ -536,16 +587,27 @@ static void yuv_to_rgb565(const scaler_t *s, const uint8_t *yp, const uint8_t *u
                           int ys, int cs, uint16_t *dst)
 {
     for (int y = 0; y < s->oh; y++) {
-        int sy = s->ymap[y];
-        const uint8_t *yr = yp + (size_t)sy * ys;
-        const uint8_t *ur = up + (size_t)(sy >> 1) * cs;
-        const uint8_t *vr = vp + (size_t)(sy >> 1) * cs;
+        int y0 = s->y0[y], y1 = s->y1[y];
+        int cy0 = y0 >> 1, cy1 = (y1 + 1) >> 1;
         uint16_t *orow = dst + (size_t)y * s->ow;
         for (int x = 0; x < s->ow; x++) {
-            int sx = s->xmap[x];
-            int Y = (int)yr[sx] - 16;
-            int U = (int)ur[sx >> 1] - 128;
-            int V = (int)vr[sx >> 1] - 128;
+            int x0 = s->x0[x], x1 = s->x1[x];
+            int sum = 0, n = 0;
+            for (int sy = y0; sy < y1; sy++) {
+                const uint8_t *row = yp + (size_t)sy * ys;
+                for (int sx = x0; sx < x1; sx++) { sum += row[sx]; n++; }
+            }
+            int Y = sum / n - 16;
+            /* 色度按同一块在色度平面上的范围取平均（4:2:0，两个方向都除以 2） */
+            int cx0 = x0 >> 1, cx1 = (x1 + 1) >> 1;
+            int us = 0, vs = 0, un = 0;
+            for (int cy = cy0; cy < cy1; cy++) {
+                const uint8_t *ur = up + (size_t)cy * cs;
+                const uint8_t *vr = vp + (size_t)cy * cs;
+                for (int cx = cx0; cx < cx1; cx++) { us += ur[cx]; vs += vr[cx]; un++; }
+            }
+            int U = (un ? us / un : 128) - 128;
+            int V = (un ? vs / un : 128) - 128;
             int R = (298 * Y + 409 * V + 128) >> 8;
             int G = (298 * Y - 100 * U - 208 * V + 128) >> 8;
             int B = (298 * Y + 516 * U + 128) >> 8;
@@ -553,6 +615,39 @@ static void yuv_to_rgb565(const scaler_t *s, const uint8_t *yp, const uint8_t *u
             if (G < 0) G = 0; else if (G > 255) G = 255;
             if (B < 0) B = 0; else if (B > 255) B = 255;
             orow[x] = (uint16_t)(((R & 0xF8) << 8) | ((G & 0xFC) << 3) | (B >> 3));
+        }
+    }
+}
+
+/* 轻度反锐化：out = c + k*(c - blur)。只在缩小很多的时候用，
+   竖屏 320x180 只有 5.7 万像素，这点卷积的代价可以忽略。 */
+static void sharpen_rgb565(uint16_t *px, int w, int h, int strength)
+{
+    if (strength <= 0 || w < 3 || h < 3) return;
+    static uint16_t *tmp = NULL;
+    static size_t cap = 0;
+    size_t need = (size_t)w * (size_t)h;
+    if (cap < need) {
+        uint16_t *q = (uint16_t *)realloc(tmp, need * sizeof(uint16_t));
+        if (!q) return;
+        tmp = q; cap = need;
+    }
+    memcpy(tmp, px, need * sizeof(uint16_t));
+    for (int y = 1; y < h - 1; y++) {
+        for (int x = 1; x < w - 1; x++) {
+            size_t i = (size_t)y * w + x;
+            /* 上下左右四点平均当模糊值，逐通道做 */
+            int r0 = (tmp[i] >> 11) & 0x1f, g0 = (tmp[i] >> 5) & 0x3f, b0 = tmp[i] & 0x1f;
+            int rn = ((tmp[i-1]>>11)&0x1f)+((tmp[i+1]>>11)&0x1f)+((tmp[i-w]>>11)&0x1f)+((tmp[i+w]>>11)&0x1f);
+            int gn = ((tmp[i-1]>>5)&0x3f)+((tmp[i+1]>>5)&0x3f)+((tmp[i-w]>>5)&0x3f)+((tmp[i+w]>>5)&0x3f);
+            int bn = (tmp[i-1]&0x1f)+(tmp[i+1]&0x1f)+(tmp[i-w]&0x1f)+(tmp[i+w]&0x1f);
+            int r = r0 + (r0 * 4 - rn) * strength / 400;
+            int g = g0 + (g0 * 4 - gn) * strength / 400;
+            int b = b0 + (b0 * 4 - bn) * strength / 400;
+            if (r < 0) r = 0; else if (r > 31) r = 31;
+            if (g < 0) g = 0; else if (g > 63) g = 63;
+            if (b < 0) b = 0; else if (b > 31) b = 31;
+            px[i] = (uint16_t)((r << 11) | (g << 5) | b);
         }
     }
 }
@@ -616,15 +711,21 @@ static int player_decode_sample(player_t *pl, unsigned idx, const uint8_t **rgb,
         unsigned w = (unsigned)info.UsrData.sSystemBuffer.iWidth;
         unsigned h = (unsigned)info.UsrData.sSystemBuffer.iHeight;
         if (w && h) {
-            if (w != pl->w || h != pl->h || !pl->sc.out) {
+            if (w != pl->w || h != pl->h || !pl->sc.out || g_pending_max > 0) {
                 pl->w = w; pl->h = h;
-                if (!pl->sc.out) scaler_init(&pl->sc, (int)w, (int)h, 320, 480);
+                int m = g_pending_max > 0 ? g_pending_max : g_max;
+                g_pending_max = 0;
+                scaler_free(&pl->sc);
+                scaler_init(&pl->sc, (int)w, (int)h, m, m);
             }
-            if (pl->sc.out) {
+if (pl->sc.out) {
                 yuv_to_rgb565(&pl->sc, plane[0], plane[1], plane[2],
                               info.UsrData.sSystemBuffer.iStride[0],
                               info.UsrData.sSystemBuffer.iStride[1],
                               (uint16_t *)pl->sc.out);
+                /* 缩得越狠越需要补一点锐度；放大或 1:1 就不要，避免噪点 */
+                if (g_sharp > 0 && pl->sc.ow < (int)w)
+                    sharpen_rgb565((uint16_t *)pl->sc.out, pl->sc.ow, pl->sc.oh, g_sharp);
                 *rgb = pl->sc.out;
                 *ow = pl->sc.ow;
                 *oh = pl->sc.oh;
@@ -692,6 +793,7 @@ static int run_selftest(const char *path, long frames)
     return 0;
 }
 
+
 /* ---------------- 服务模式 ---------------- */
 
 static const char *g_bind_addr = "127.0.0.1";
@@ -735,6 +837,9 @@ static int run_server(const char *path, int port)
 
     int ls = socket(AF_INET, SOCK_STREAM, 0);
     if (ls < 0) { perror("socket"); return 5; }
+    /* 子进程（paplay/ffmpeg）不能继承监听 socket，否则主进程被杀之后
+       它们还占着 9511，下一次播放 bind 不上，声音也停不下来。 */
+    fcntl(ls, F_SETFD, FD_CLOEXEC);
     int one = 1;
     setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in addr;
@@ -758,6 +863,7 @@ static int run_server(const char *path, int port)
         if (pr < 0) { if (errno == EINTR) continue; break; }
         int cfd = accept(ls, NULL, NULL);
         if (cfd < 0) { if (errno == EINTR) continue; break; }
+        fcntl(cfd, F_SETFD, FD_CLOEXEC);
         setsockopt(cfd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
         struct timeval snd_to = { 2, 0 };
         setsockopt(cfd, SOL_SOCKET, SO_SNDTIMEO, &snd_to, sizeof(snd_to));
@@ -766,19 +872,35 @@ static int run_server(const char *path, int port)
         fflush(stdout);
 
         player_t pl;
-        if (!player_open(&pl, &p, 320, 480)) { close(cfd); break; }
+        if (!player_open(&pl, &p, g_max, g_max)) { close(cfd); break; }
         paused = false;
         g_seek_ms = -1;
 
-        double start = now_ms();
         unsigned idx = 0;
         double seek_until = 0.0;
+        double audio_pending = 0.0;   /* >0 表示跳转后等第一帧再起声音 */
+        bool audio_was_paused = false;
         unsigned long sent = 0;
-        audio_start(p.path, 0.0);
+        audio_start(p.path, (double)p.ts_ms[0] / 1000.0);
+        /* 视频时钟对齐到「声音真正开始响」的时刻 */
+        double start = now_ms() + (double)g_audio_lead - (double)p.ts_ms[0];
 
         while (1) {
             if (ws_poll_cmd(cfd) < 0) break;
-            audio_set_paused(paused);
+            /* 暂停：直接停掉音频子进程。SIGSTOP 只是冻住进程，
+               已经写进声卡缓冲的几秒钟还会继续放，听起来就是"界面停了声音还在"。
+               恢复时按当前帧位置重开，偏差不超过一帧。 */
+            if (paused != audio_was_paused) {
+                audio_was_paused = paused;
+                /* 暂停期间可能又跳转过：待起音频的标记要清掉，否则恢复后会再起一次 */
+                audio_pending = 0.0;
+                if (paused) audio_stop();
+                else {
+                    audio_start(p.path, (double)p.ts_ms[idx] / 1000.0);
+                    /* 恢复也是重新起进程：同样把视频时钟往后压一点，避免恢复后错位 */
+                    start = now_ms() + (double)g_audio_lead - (double)p.ts_ms[idx];
+                }
+            }
 
             if (g_seek_ms >= 0) {
                 unsigned target_ms = (unsigned)g_seek_ms;
@@ -789,7 +911,8 @@ static int run_server(const char *path, int port)
                 seek_until = (double)target_ms;
                 start = now_ms() - (double)target_ms;
                 audio_stop();
-                audio_start(p.path, (double)target_ms / 1000.0);
+                /* 声音等第一帧出来再起：跳转那一刻目标位置往往还没下载到 */
+                audio_pending = 1.0;
                 printf("E5PLAY seek %ums sample=%u\n", target_ms, idx);
                 fflush(stdout);
             }
@@ -812,6 +935,13 @@ static int run_server(const char *path, int port)
                                    (uint8_t)((ms >> 16) & 0xff), (uint8_t)((ms >> 24) & 0xff) };
                 if (ws_send_frame(cfd, hdr, sizeof(hdr), rgb, (size_t)ow * (size_t)oh * 2) != 0) break;
                 sent++;
+                if (audio_pending > 0.0) {
+                    audio_pending = 0.0;
+                    audio_start(p.path, pts / 1000.0);
+                    /* 关键：声音要过 g_audio_lead 才响得出来，视频在这里等它，
+                       否则快进之后声音会一直落后画面（字幕跟画面走，听起来就更乱） */
+                    start = now_ms() + (double)g_audio_lead - pts;
+                }
                 seek_until = 0.0;
             }
             idx++;
@@ -843,6 +973,18 @@ int main(int argc, char **argv)
         if (!strcmp(argv[i], "--selftest")) selftest = true;
         else if (!strcmp(argv[i], "--serve")) serve = true;
         else if (!strcmp(argv[i], "--bind") && i + 1 < argc) g_bind_addr = argv[++i];
+        else if (!strcmp(argv[i], "--sharp") && i + 1 < argc) {
+            int v = atoi(argv[++i]);
+            if (v >= 0 && v <= 100) g_sharp = v;
+        }
+        else if (!strcmp(argv[i], "--max") && i + 1 < argc) {
+            int v = atoi(argv[++i]);
+            if (v >= 64 && v <= 1920) g_max = v;
+        }
+        else if (!strcmp(argv[i], "--audio-lead") && i + 1 < argc) {
+            int v = atoi(argv[++i]);
+            if (v >= 0 && v <= 1000) g_audio_lead = v;
+        }
         else if (!path) path = argv[i];
         else {
             /* 两种模式共用位置参数：自测模式是帧数，服务模式是端口。
