@@ -309,19 +309,77 @@ return function (ctx) {
         },
         /* 分区入口：首页第一排横着放这些入口 */
         'GET /regions': function () {
-            /* 只列实测能出数据的视频分区。
-               番剧/影视/电影/电视剧的 pgc 接口在本机一律 -400/-404（带 wbi 签名也是），
-               所以先不放进来，点了会空白反而更差。 */
             return { ok: true, list: [
+                { key: 'anime', name: '番剧', season_type: 1 },
+                { key: 'guochuang', name: '国创', season_type: 4 },
+                { key: 'movie', name: '电影', season_type: 2 },
+                { key: 'tv', name: '电视剧', season_type: 5 },
+                { key: 'doc', name: '纪录片', season_type: 3 },
                 { key: 'douga', name: '动画', rid: 1 },
                 { key: 'game', name: '游戏', rid: 4 },
                 { key: 'music', name: '音乐', rid: 3 },
                 { key: 'dance', name: '舞蹈', rid: 129 },
                 { key: 'tech', name: '科技', rid: 188 },
                 { key: 'life', name: '生活', rid: 160 },
-                { key: 'cinephile', name: '影视', rid: 181 },
-                { key: 'documentary', name: '纪录片', rid: 177 }
+                { key: 'cinephile', name: '影视', rid: 181 }
             ] };
+        },
+        /* PGC 剧集列表（番剧/国创/电影/电视剧/纪录片）：走 /pgc/season/index/result */
+        'GET /pgc': function (req) {
+            let st = num(req.query?.season_type);
+            if (st < 1 || st > 10) st = 1;
+            let raw = api_get('/pgc/season/index/result?type=1&season_type=' + st + '&page=1&pagesize=20');
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let out = [];
+            for (let it in (j.data?.list ?? [])) {
+                let badge = `${it.badge_info?.text ?? it.badge ?? ''}`;
+                let show = `${it.index_show ?? ''}`;
+                let sub = `${it.subTitle ?? it.order ?? ''}`;
+                let author = length(badge) ? (badge + (length(show) ? ' · ' + show : '')) : show;
+                push(out, {
+                    ssid: num(it.season_id),
+                    bvid: '',
+                    title: `${it.title ?? ''}`,
+                    author: author,
+                    pic: httpsify(`${it.cover ?? ''}`),
+                    dur: 0,
+                    durtxt: sub,
+                    play: 0,
+                    cid: 0,
+                    is_pgc: true
+                });
+                if (length(out) >= 20) break;
+            }
+            return { ok: true, list: out };
+        },
+        /* PGC 剧集分集详情：按 season_id 取每一集的 bvid 和 cid */
+        'GET /season': function (req) {
+            let ssid = num(req.query?.ssid);
+            if (!ssid) return { ok: false, error: 'no ssid' };
+            let raw = api_get('/pgc/view/web/season?season_id=' + ssid);
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let res = j.result ?? {};
+            let sTitle = `${res.title ?? ''}`;
+            let out = [];
+            for (let ep in (res.episodes ?? [])) {
+                let epTitle = `${ep.title ?? ''}`;
+                let longTitle = `${ep.long_title ?? ''}`;
+                let fullTitle = epTitle + (length(longTitle) ? (' ' + longTitle) : '');
+                push(out, {
+                    bvid: `${ep.bvid ?? ''}`,
+                    cid: num(ep.cid),
+                    title: fullTitle,
+                    author: sTitle,
+                    pic: httpsify(`${ep.cover ?? ''}`),
+                    dur: num(ep.duration) > 0 ? num(ep.duration) / 1000 : 0,
+                    play: 0
+                });
+            }
+            return { ok: true, season_title: sTitle, list: out };
         },
         /* 某个分区的视频（走排行榜的 rid 过滤，不需要额外签名） */
         'GET /region': function (req) {

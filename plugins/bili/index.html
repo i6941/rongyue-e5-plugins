@@ -725,11 +725,14 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     var h = '';
     for (var i = 0; i < items.length; i++){
       var it = items[i];
-      h += '<div class="card" data-i="' + i + '">' +
+      var meta = esc(it.author || '');
+      if (it.durtxt) meta += (meta ? ' · ' : '') + esc(it.durtxt);
+      else if (it.dur) meta += (meta ? ' · ' : '') + dur(it.dur);
+      if (it.play) meta += (meta ? ' · ' : '') + (it.play > 10000 ? (Math.round(it.play / 10000) + '万') : it.play) + (it.live ? ' 人气' : ' 播放');
+      h += '<div class="card' + (i === selIdx ? ' sel' : '') + '" data-i="' + i + '">' +
            '<img loading="lazy" src="/api/plugins/bili/img?u=' + encodeURIComponent(it.pic) + '" alt="">' +
            '<div class="info"><div class="t">' + esc(it.title) + '</div>' +
-           '<div class="m">' + esc(it.author) + ' · ' + (it.durtxt || dur(it.dur)) + ' · ' +
-           (it.play > 10000 ? (Math.round(it.play / 10000) + '万') : it.play) + ' 播放</div></div></div>';
+           '<div class="m">' + (meta || '视频') + '</div></div></div>';
     }
     listEl.innerHTML = h || '<div style="padding:12px;color:#93a4bb">没有内容</div>';
   }
@@ -799,6 +802,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       renderRegions(list);
     }).catch(function(){ renderRegions(list); });
   }
+  var seasonStack = null, seasonStackTitle = '';
   function renderRegions(list){
     if (!regionsEl) return;
     regionsEl.replaceChildren();
@@ -807,7 +811,8 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       b.type = 'button';
       b.textContent = r.name;
       b.setAttribute('data-region', r.key);
-      b.setAttribute('data-rid', r.rid);
+      if (r.rid !== undefined) b.setAttribute('data-rid', r.rid);
+      if (r.season_type !== undefined) b.setAttribute('data-st', r.season_type);
       b.addEventListener('click', function(){ openRegion(r); });
       regionsEl.appendChild(b);
     });
@@ -815,19 +820,44 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   function openRegion(r){
     var my = ++homeToken;
     setTemp(true);
+    seasonStack = null;
     statusEl.textContent = '加载' + r.name + '…';
-    var url = r.key === 'live' ? '/api/plugins/bili/live'
-            : '/api/plugins/bili/region?rid=' + encodeURIComponent(r.rid);
+    var url = r.season_type ? ('/api/plugins/bili/pgc?season_type=' + r.season_type)
+            : (r.key === 'live' ? '/api/plugins/bili/live'
+            : ('/api/plugins/bili/region?rid=' + encodeURIComponent(r.rid)));
     fetch(url).then(function(x){ return x.json(); }).then(function(d){
       if (my !== homeToken) return;
       if (!d || !d.ok){ statusEl.textContent = r.name + '失败：' + ((d && d.error) || '?'); return; }
       items = d.list || [];
-      statusEl.textContent = r.name + ' · ' + items.length + ' 个' + (r.key === 'live' ? '（点开暂不支持播放）' : '');
+      statusEl.textContent = r.name + ' · ' + items.length + ' 个 · 返回键回首页';
       render();
+      selectCard(0);
       var bs = regionsEl ? regionsEl.querySelectorAll('button') : [];
       for (var i = 0; i < bs.length; i++)
         bs[i].classList.toggle('on', bs[i].getAttribute('data-region') === r.key);
     }).catch(function(e){ statusEl.textContent = '请求失败 ' + e; });
+  }
+  function openSeason(it){
+    statusEl.textContent = '加载 ' + it.title + ' 分集…';
+    fetch('/api/plugins/bili/season?ssid=' + it.ssid).then(function(r){ return r.json(); }).then(function(d){
+      if (!d || !d.ok || !d.list || !d.list.length){
+        statusEl.textContent = '获取剧集失败：' + ((d && d.error) || '空');
+        return;
+      }
+      if (d.list.length === 1){
+        items = d.list;
+        render();
+        play(0);
+        return;
+      }
+      seasonStack = items.slice();
+      seasonStackTitle = statusEl.textContent;
+      items = d.list;
+      setTemp(true);
+      statusEl.textContent = (d.season_title || it.title) + ' · 共 ' + d.list.length + ' 话 · 返回键回列表';
+      render();
+      selectCard(0);
+    }).catch(function(e){ statusEl.textContent = '获取分集失败 ' + e; });
   }
   if (regionsEl) drawRegions();
 
@@ -1350,7 +1380,18 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   listEl.addEventListener('click', function(e){
     var c = e.target.closest ? e.target.closest('.card') : null;
     if (!c) return;
-    play(Number(c.getAttribute('data-i')));
+    var idx = Number(c.getAttribute('data-i'));
+    var it = items[idx];
+    if (!it) return;
+    if (it.is_pgc && it.ssid){
+      openSeason(it);
+      return;
+    }
+    if (it.live){
+      statusEl.textContent = '直播间暂不支持直接播放';
+      return;
+    }
+    play(idx);
   });
 
   function stopPlayback(){
@@ -1638,10 +1679,11 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       }
       return false;
     }
-    /* 列表页：1/2/3 切首页来源，左右键也切 */
+    /* 列表页：1/2/3/4 切首页来源，左右方向键也切 */
     if (kind === 'left' || kind === 'right'){
-      var order = ['rcmd', 'hot', 'rank'];
+      var order = ['rcmd', 'hot', 'rank', 'history'];
       var i0 = order.indexOf(homeTab);
+      if (i0 < 0) i0 = 0;
       i0 = kind === 'left' ? (i0 + order.length - 1) % order.length : (i0 + 1) % order.length;
       loadHome(order[i0]);
       return true;
@@ -1652,10 +1694,28 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       var cs = cards();
       if (!cs.length) return true;
       if (selIdx < 0) selectCard(0);
+      var it = items[selIdx < 0 ? 0 : selIdx];
+      if (it && it.is_pgc && it.ssid){
+        openSeason(it);
+        return true;
+      }
+      if (it && it.live){
+        statusEl.textContent = '直播间暂不支持直接播放';
+        return true;
+      }
       play(selIdx < 0 ? 0 : selIdx);
       return true;
     }
     if (kind === 'back'){
+      /* 如果在分集选单里，按返回先回到上一级剧集列表 */
+      if (seasonStack){
+        items = seasonStack;
+        seasonStack = null;
+        statusEl.textContent = seasonStackTitle || '已返回剧集列表';
+        render();
+        selectCard(0);
+        return true;
+      }
       /* 搜索/分区/历史这些是临时视图：先退回首页，再按一次才退出插件 */
       if (tempView){
         probe('back', 'temp view -> home');
