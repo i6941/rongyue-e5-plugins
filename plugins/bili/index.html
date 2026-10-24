@@ -1593,16 +1593,26 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       /* 播放断了就把宿主菜单还回去，别让人卡在全屏黑屏里出不来 */
       hostChrome(false);
       if (!inPlayer) return;
-      /* 播放器进程刚起来时端口还没监听，第一次连必然失败，重试几次 */
-      if (tries < 15){
-        statusEl.textContent = '连接播放器…';
+      /* 播放器进程刚起来时端口还没监听：大片（2 小时级的电影）要读 9 秒以上的
+         MP4 索引才开始监听，所以等待窗口给到 ~40 秒，期间提示"正在索引"。 */
+      if (tries < 160){
+        statusEl.textContent = tries < 8 ? '连接播放器…'
+                            : ('正在索引视频… ' + Math.round(tries * 0.25) + 's');
+        if (tries === 8) probe('ws-slow-index', 'waiting for player to listen');
         setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 250);
         return;
       }
-      /* 到结尾了：调用 onPlaybackEnded 展开相关推荐并 5 秒倒计时自动切播 */
-      statusEl.textContent = '播放结束';
-      probe('ws-close', 'ended');
-      onPlaybackEnded();
+      /* 只有"放过画面之后"的断线才算播放结束；
+         从没收到过帧就断，是启动失败，不能当成看完（否则会误触发连播）。 */
+      if (everFrame){
+        statusEl.textContent = '播放结束';
+        probe('ws-close', 'ended');
+        onPlaybackEnded();
+        return;
+      }
+      statusEl.textContent = '播放器没有响应，点画面重试或返回';
+      probe('ws-close', 'start-failed tries=' + tries);
+      try{ loadTip(true, '播放器启动失败 · 按 OK 重试', 0); }catch(e){}
     };
   }
 
