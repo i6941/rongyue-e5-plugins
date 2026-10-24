@@ -1560,9 +1560,17 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     }catch(e){ probe('shot-fail', String(e)); }
   }
 
+  var connectTimer = null;
   function closeWs(){
+    if (connectTimer){ clearTimeout(connectTimer); connectTimer = null; }
     if (ws){
-      try { ws.onclose = null; ws.close(); } catch(e){}
+      try {
+        ws.onopen = null;
+        ws.onmessage = null;
+        ws.onerror = null;
+        ws.onclose = null;
+        ws.close();
+      } catch(e){}
       ws = null;
     }
   }
@@ -1572,13 +1580,15 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     tries = tries || 0;
     var url = 'ws://127.0.0.1:' + port;
     probe('ws-connect', url + ' try=' + tries);
-    ws = new WebSocket(url);
-    ws.binaryType = 'arraybuffer';
-    ws.onopen = function(){
+    var thisWs = new WebSocket(url);
+    ws = thisWs;
+    thisWs.binaryType = 'arraybuffer';
+    thisWs.onopen = function(){
+      if (ws !== thisWs) return;
       statusEl.textContent = '播放中';
       if (pendingSeekMs >= 0){
         var at = pendingSeekMs; pendingSeekMs = -1;
-        try{ ws.send(seekCmd(at)); }catch(e){}
+        try{ thisWs.send(seekCmd(at)); }catch(e){}
         playOffsetMs = at; playTickAt = Date.now();
       } else {
         playOffsetMs = 0;
@@ -1586,33 +1596,41 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       playTickAt = Date.now(); playing = true;
       probe('ws-open', url);
     };
-    ws.onmessage = function(ev){ onFrame(ev.data); };
-    ws.onerror = function(){ probe('ws-error', url); };
-    ws.onclose = function(){
+    thisWs.onmessage = function(ev){
+      if (ws !== thisWs) return;
+      onFrame(ev.data);
+    };
+    thisWs.onerror = function(){
+      if (ws !== thisWs) return;
+      probe('ws-error', url);
+    };
+    thisWs.onclose = function(e){
+      if (ws !== thisWs) return;
       ws = null;
       /* 播放断了就把宿主菜单还回去，别让人卡在全屏黑屏里出不来 */
       hostChrome(false);
       if (!inPlayer) return;
-      /* 播放器进程刚起来时端口还没监听：大片（2 小时级的电影）要读 9 秒以上的
-         MP4 索引才开始监听，所以等待窗口给到 ~40 秒，期间提示"正在索引"。 */
-      if (tries < 160){
-        statusEl.textContent = tries < 8 ? '连接播放器…'
-                            : ('正在索引视频… ' + Math.round(tries * 0.25) + 's');
-        if (tries === 8) probe('ws-slow-index', 'waiting for player to listen');
-        setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 250);
+      /* 播放器进程刚起来时端口还没监听：大片要读 9 秒以上的 MP4 索引，
+         等待窗口给到 60 秒（120 次 x 500ms），期间提示"正在索引"。 */
+      if (tries < 120 && !everFrame){
+        statusEl.textContent = tries < 4 ? '连接播放器…'
+                            : ('正在索引视频… ' + Math.round(tries * 0.5) + 's');
+        if (tries === 4) probe('ws-slow-index', 'waiting for player to listen');
+        connectTimer = setTimeout(function(){
+          if (inPlayer) connectPlayer(port, tries + 1);
+        }, 500);
         return;
       }
-      /* 只有"放过画面之后"的断线才算播放结束；
-         从没收到过帧就断，是启动失败，不能当成看完（否则会误触发连播）。 */
+      /* 只有"放过画面之后"的断线才算播放结束 */
       if (everFrame){
         statusEl.textContent = '播放结束';
-        probe('ws-close', 'ended');
+        probe('ws-close', 'ended code=' + (e ? e.code : ''));
         onPlaybackEnded();
         return;
       }
       statusEl.textContent = '播放器没有响应，点画面重试或返回';
-      probe('ws-close', 'start-failed tries=' + tries);
-      try{ loadTip(true, '播放器启动失败 · 按 OK 重试', 0); }catch(e){}
+      probe('ws-close', 'start-failed tries=' + tries + ' code=' + (e ? e.code : ''));
+      try{ loadTip(true, '播放器启动失败 · 按 OK 重试', 0); }catch(err){}
     };
   }
 
@@ -1659,6 +1677,9 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     closeWs();
     pendingSeekMs = -1;
     srcAspect = 0;
+    lastFrameAt = 0;
+    restartTried = 0;
+    everFrame = 0;
     img = null;
     bgPlaying = false;
     inPlayer = false;
@@ -2234,9 +2255,8 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     var gap = Date.now() - lastFrameAt;
     if (gap > 1200){
       if (!bufShown){ bufShown = 1; statusEl.textContent = '缓冲中…（等下载追上来）'; }
-      /* 8 秒还一帧都没有：可能播放器在索引没写全时被拉起，已经退出了。
-         重启一次（只试一次，避免下载真的断了时无限重启）。 */
-      if (gap > 8000 && !restartTried && !everFrame){
+      /* 出过画面后卡死超过 10 秒才尝试重启一次（出首帧前全权由 connectPlayer 等待索引，绝不误杀） */
+      if (gap > 10000 && !restartTried && everFrame){
         restartTried = 1;
         statusEl.textContent = '重启播放器…';
         fetch('/api/plugins/bili/player-start').then(function(r){ return r.json(); })
