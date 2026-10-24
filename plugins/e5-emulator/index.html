@@ -142,13 +142,13 @@ body.ingame main{top:0;bottom:0}
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
     <div id="hud"><span class="sp"></span>
-      <button id="bview" type="button" title="画面模式" aria-label="画面模式">⛶</button>
-      <button id="bslot" type="button" title="存档槽" aria-label="存档槽">☰</button>
-      <button id="bsave" type="button" title="存档" aria-label="存档">▼</button>
-      <button id="bload" type="button" title="读档" aria-label="读档">▲</button>
-      <button id="bpause" type="button" title="暂停" aria-label="暂停">❚❚</button>
+      <button id="bview" type="button" title="画面模式" aria-label="画面模式">铺</button>
+      <button id="bslot" type="button" title="存档槽" aria-label="存档槽">槽</button>
+      <button id="bsave" type="button" title="存档" aria-label="存档">存</button>
+      <button id="bload" type="button" title="读档" aria-label="读档">取</button>
+      <button id="bpause" type="button" title="暂停/继续" aria-label="暂停/继续">❚❚</button>
       <button id="bset" type="button" title="设置" aria-label="设置">⚙</button>
-      <button id="quit" type="button" title="退出游戏" aria-label="退出游戏">⏻</button></div>
+      <button id="quit" type="button" title="退出游戏" aria-label="退出游戏">退</button></div>
     <div id="hint"></div>
     <div id="loadtip">存档读取中…</div>
     <div id="slots"><div class="sbox">
@@ -161,13 +161,13 @@ body.ingame main{top:0;bottom:0}
   </div>
 </main>
 <footer id="foot"><span id="fver"></span><span class="sp"></span>
-  <button id="fset" type="button" title="设置" aria-label="设置">⚙</button>
-  <button id="fexit" type="button" title="退出" aria-label="退出">⏻</button></footer>
+  <button id="fset" type="button" title="设置" aria-label="设置">⚙ 设置</button>
+  <button id="fexit" type="button">退出</button></footer>
 <div id="cfg">
-  <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
+  <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button" aria-label="关闭" style="font-size:18px;line-height:28px">×</button></div>
   <div id="cfgrid"></div>
   <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgengine" type="button">引擎 原生</button></div>
-  <div id="cfgfoot"><button id="cfgdef" type="button">默认</button><button id="cfgnum" type="button">数字键</button><button id="cfgnode" type="button">核心</button><button id="cfgdone" type="button">完成</button></div>
+  <div id="cfgfoot"><button id="cfgdef" type="button">默认按键</button><button id="cfgnum" type="button">九键方案</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
 <script>
@@ -176,6 +176,10 @@ var $=function(id){return document.getElementById(id)};
 /* 这台机器的触摸不一定合成 click 事件，所以按钮直接绑触摸事件；
    同时保留 mousedown/click（鼠标或辅助输入），用时间窗去重，一次点击只执行一遍。
    列表要能滚动：手指按下先不触发，抬起时若位移超过阈值就当滚动，不进游戏。 */
+var globalClickGuardUntil = 0;
+function globalClickGuard(ms){
+  globalClickGuardUntil = Math.max(globalClickGuardUntil, Date.now() + (ms || 450));
+}
 function bindTap(el,fn){
   if(!el) return;
   var sx=0,sy=0,moved=false,armed=false,last=0;
@@ -184,6 +188,7 @@ function bindTap(el,fn){
     return {x:t.clientX||0,y:t.clientY||0};
   }
   el.addEventListener('touchstart',function(e){
+    if(Date.now() < globalClickGuardUntil){ armed=false; return; }
     if(e.touches&&e.touches.length>1){ armed=false; return; }
     var p=pos(e); sx=p.x; sy=p.y; moved=false; armed=true;
   },{passive:true});
@@ -195,17 +200,21 @@ function bindTap(el,fn){
   el.addEventListener('touchend',function(e){
     if(!armed) return; armed=false;
     if(moved) return;                       /* 这一下是在滚动列表 */
-    var now=Date.now(); if(now-last<400) return; last=now;
+    if(Date.now() < globalClickGuardUntil) return;
+    var now=Date.now(); if(now-last<350) return; last=now;
+    /* 触摸触发后，接下来的 450ms 内屏蔽一切合成 click，杜绝底层元素被误点穿！ */
+    globalClickGuard(450);
     try{ el.classList.add('hit'); setTimeout(function(){ el.classList.remove('hit'); },180); }catch(x){}
     try{ fn(e); }catch(x){}
   },{passive:true});
   el.addEventListener('touchcancel',function(){ armed=false; });
-  el.addEventListener('mousedown',function(e){
-    var now=Date.now(); if(now-last<400) return; last=now;
-    try{ fn(e); }catch(x){}
-  });
   el.addEventListener('click',function(e){
-    var now=Date.now(); if(now-last<400) return; last=now;
+    if(Date.now() < globalClickGuardUntil){
+      if(e && e.preventDefault) e.preventDefault();
+      if(e && e.stopPropagation) e.stopPropagation();
+      return;
+    }
+    var now=Date.now(); if(now-last<350) return; last=now;
     try{ fn(e); }catch(x){}
   });
 }
@@ -1121,7 +1130,7 @@ function leave(){
   /* 原生：先让服务端把存档落盘再退出；进程由后端收掉 */
   try{ if(nativeActive()) natCmd2(1,0); }catch(e){}
   try{ if(nativeActive()) natStop(); }catch(e){}
-  try{ $('bpause').textContent='停'; }catch(e){}
+  try{ $('bpause').textContent='❚❚'; }catch(e){}
   try{ localStorage.removeItem('e5resume'); }catch(e){}   /* 主动退出就别再自动重进了 */
   try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(false); }catch(e){}
   try{ autoSave(); }catch(e){}
@@ -1268,11 +1277,11 @@ bindTap($('bpause'),function(){
   if(running&&nativeWanted(current)){
     if(!natCmd(4)) return;
     nat.paused=!nat.paused;
-    $('bpause').textContent=nat.paused?'继续':'停';
+    $('bpause').textContent=nat.paused?'▶':'❚❚';
     nat.stallTicks=0; nat.seen=nat.frames;
     return;
   }
-  try{ var em=window.EJS_emulator; if(em&&em.paused){ em.play&&em.play(); $('bpause').textContent='暂停'; } else if(em){ em.pause&&em.pause(); $('bpause').textContent='继续'; } }catch(e){}
+  try{ var em=window.EJS_emulator; if(em&&em.paused){ em.play&&em.play(); $('bpause').textContent='暂停'; } else if(em){ em.pause&&em.pause(); $('bpause').textContent='▶'; } }catch(e){}
 });
 
 /* ---- 按键：页面自己在 window 上接，不走 SDK 的转发 ----
@@ -1553,15 +1562,16 @@ function openCfg(){
   /* 游戏里进设置就暂停核心：面板是全屏的，不暂停会白烧 CPU，也听不见按键反馈 */
   try{
     if(running&&nativeWanted(current)&&!nat.paused){
-      if(natCmd(4)){ nat.paused=true; cfgPausedNative=true; $('bpause').textContent='继续'; }
+      if(natCmd(4)){ nat.paused=true; cfgPausedNative=true; $('bpause').textContent='▶'; }
     }
   }catch(e){}
 }
 function closeCfg(){
+  globalClickGuard(500);
   cfgOpen=false; cfgListen=false; $('cfg').classList.remove('open');
   try{
     if(cfgPausedNative&&running&&nativeWanted(current)&&nat.paused){
-      if(natCmd(4)){ nat.paused=false; $('bpause').textContent='停'; }
+      if(natCmd(4)){ nat.paused=false; $('bpause').textContent='❚❚'; }
     }
   }catch(e){}
   cfgPausedNative=false;
@@ -1575,23 +1585,14 @@ bindTap($('cfgdone'),function(){ closeCfg(); });
 bindTap($('cfgdef'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
   saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='已恢复默认（方向键 + OK 跳 + 返回键射击；0/1/2/3 = START/SELECT/L/R）';
+  $('cfgtip').textContent='已恢复默认按键（方向 + OK跳 + 返回射击）';
+  try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('已恢复默认按键'); }catch(e){}
 });
-/* 一键切到数字键方案：两套方向都能用，不用自己一个个绑 */
 bindTap($('cfgnum'),function(){
   for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(NUMPAD_KEYS[ACTIONS[i].id]||[]).slice();
   saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='数字键方案：5=A、6=B、7/9=斜角（0/1/2/3 不变）';
-});
-/* 核心版本切换（WebGL2 / 旧版）+ 清掉运行库缓存的核心文件 */
-function coreLabel(){ try{ return localStorage.getItem('e5legacy')==='1'?'旧版':'WebGL2'; }catch(e){ return 'WebGL2'; } }
-bindTap($('cfgnode'),function(){
-  try{
-    var legacy=localStorage.getItem('e5legacy')==='1';
-    if(legacy){ localStorage.setItem('e5legacy','0'); $('cfgtip').textContent='核心：WebGL2（下次进游戏生效）'; }
-    else { localStorage.setItem('e5legacy','1'); $('cfgtip').textContent='核心：旧版（下次进游戏生效）'; }
-    clearEjsCoreCache(function(r){ $('cfgtip').textContent='核心：'+coreLabel()+' · 缓存已清 '+r; });
-  }catch(e){ $('cfgtip').textContent='切换失败 '+e; }
+  $('cfgtip').textContent='已切到九键方案（5=A、6=B、7/9=斜角）';
+  try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('已切到九键方案'); }catch(e){}
 });
 
 /* 画面模式（按顺序循环）：
