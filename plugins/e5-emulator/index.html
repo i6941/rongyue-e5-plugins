@@ -142,9 +142,13 @@ body.ingame main{top:0;bottom:0}
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
     <div id="hud"><span class="sp"></span>
-      <button id="bview" type="button">铺</button><button id="bslot" type="button">存档</button>
-      <button id="bsave" type="button">存</button><button id="bload" type="button">读</button>
-      <button id="bpause" type="button">停</button><button id="bset" type="button">设</button><button id="quit" type="button">退</button></div>
+      <button id="bview" type="button" title="画面模式" aria-label="画面模式">⛶</button>
+      <button id="bslot" type="button" title="存档槽" aria-label="存档槽">☰</button>
+      <button id="bsave" type="button" title="存档" aria-label="存档">▼</button>
+      <button id="bload" type="button" title="读档" aria-label="读档">▲</button>
+      <button id="bpause" type="button" title="暂停" aria-label="暂停">❚❚</button>
+      <button id="bset" type="button" title="设置" aria-label="设置">⚙</button>
+      <button id="quit" type="button" title="退出游戏" aria-label="退出游戏">⏻</button></div>
     <div id="hint"></div>
     <div id="loadtip">存档读取中…</div>
     <div id="slots"><div class="sbox">
@@ -156,7 +160,9 @@ body.ingame main{top:0;bottom:0}
       <button id="sresume" type="button">重进（读回存档）</button></div></div>
   </div>
 </main>
-<footer id="foot"><span id="fver"></span><span class="sp"></span><button id="fset" type="button">设置</button><button id="fexit" type="button">返回</button></footer>
+<footer id="foot"><span id="fver"></span><span class="sp"></span>
+  <button id="fset" type="button" title="设置" aria-label="设置">⚙</button>
+  <button id="fexit" type="button" title="退出" aria-label="退出">⏻</button></footer>
 <div id="cfg">
   <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button">关闭</button></div>
   <div id="cfgrid"></div>
@@ -486,7 +492,9 @@ var kaTick=0;
 function nativeTick(){
   /* 游戏在跑的时候每 5 秒重申一次「别锁屏」：这一条消息一旦丢了，
      60 秒后宿主就会按空闲锁屏，表现就是玩着玩着黑屏、回来像被强制退出 */
-  if(++kaTick%5===0){ try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){} }
+  /* 宿主 idle=60 秒就关屏。这里每 2 秒续一次（原来 10 秒一次，且挂起时不续，
+     消息一丢就会被锁屏）。续的是 keepAwake，不是输入，不影响用户主动息屏。 */
+  if(++kaTick%2===0){ try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){} }
   if(susp.on) return;          /* 挂起期间不刷帧率、不续宿主心跳，让看门狗把菜单栏还回去 */
   fit();
   var now=Date.now();
@@ -1134,7 +1142,10 @@ function leave(){
   $('stage').style.display='none';
   $('stage').classList.remove('on');
   document.body.classList.remove('ingame');
-  hostChrome(true);
+  /* 退出游戏必须把宿主菜单还回去：hostChrome(false) 才是去掉隐藏类。
+     这里原来写的是 hostChrome(true)，等于继续藏菜单，只能靠注入脚本的看门狗救，
+     而那台 WebKit 不执行注入脚本 —— 所以退出后主页只剩中间内容。 */
+  hostChrome(false);
   releaseAll();
   $('menu').style.display='grid';
   $('title').textContent='复古游戏机';
@@ -1156,7 +1167,17 @@ bindTap($('fexit'),function(){
 /* 宿主那个看门狗 5 秒收不到心跳就会把系统栏加回来，垫在我们的按钮下面，
    所以插件开着的时候一直续心跳（列表页也要续，不能只在游戏里续）。 */
 (function(){
-  function keep(){ try{ hostChrome(true); }catch(e){} }
+  /* 只为真正在玩游戏时隐藏宿主 chrome。
+     原实现无条件 hostChrome(true)，退出到列表后每 2 秒又把菜单藏一遍，
+     表现就是"退出后只剩中间内容、菜单全没了"。
+     （注入脚本的 5 秒看门狗在这台 WebKit 上不执行，续心跳也没有意义。） */
+  var hidden=false;
+  function keep(){
+    try{
+      var want=!!running;
+      if(want!==hidden){ hidden=want; hostChrome(want); }
+    }catch(e){}
+  }
   keep();
   setInterval(keep, 2000);
 })();
@@ -1286,7 +1307,7 @@ function backIdOf(e){
 }
 /* 返回键按下的时刻：长按退出后手还没松开，按键重复会一波波继续来。
    靠它把那一串重复吞掉，别漏给宿主（漏了宿主就会把整个插件关掉）。 */
-var backDownAt=0, backGuardUntil=0;
+var backDownAt=0, backGuardUntil=0, backHeld=false;
 /* 键位表里存的是 token。WPE 上 # 报成 key="Unidentified" + keyCode 51
    （数字 3 也是 51，但带 key="3"），这里统一折成 "#"，键位表才匹配得到。 */
 function keyTok(kind,key,code){
@@ -1301,7 +1322,9 @@ function handleKey(kind,key,repeat,id,code){
   keyCount++; keyLogPush('D:'+kind+(key?(':'+key):'')+(code?('#'+code):'')+(repeat?'!':''));
   try{ $('tkey').textContent=(code||kind)+''; }catch(e){}
   if(!running){
-    if(kind==='back'&&(Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
+    /* 长按 1.2 秒退出后手指可能还按着，键盘会继续发重复的 keydown。
+       只要键还没松，就当同一次按压，一律吞掉 —— 否则会漏给宿主关掉插件。 */
+    if(kind==='back'&&(backHeld||Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
     if(kind==='up'){ selectIdx(sel-3); return true; }
     if(kind==='down'){ selectIdx(sel+3); return true; }
     if(kind==='left'){ selectIdx(sel-1); return true; }
@@ -1323,6 +1346,7 @@ function handleKey(kind,key,repeat,id,code){
   /* 游戏里 # 不再打开设置：它是游戏键，按用户的键位表发给核心。 */
   if(kind==='back'){
     /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
+    backHeld=true;
     if(repeat) return true;
     backDownAt=Date.now();
     var now=Date.now();
@@ -1383,8 +1407,9 @@ window.addEventListener('keydown',function(e){
 },true);
 window.addEventListener('keyup',function(e){
   var kind=keyKindOf(e);
+  if(kind==='back') backHeld=false;
   /* 松键要记下来（即使已经退出游戏）：下一次按返回才算新的按压 */
-  if(kind==='back'){ backDownAt=0; backGuardUntil=Date.now()+300; }
+  if(kind==='back'){ backHeld=false; backDownAt=0; backGuardUntil=Date.now()+400; }
   if(!running) return;
   keyLogPush('U:'+kind+(e.key?(':'+e.key):'')+(e.keyCode?('#'+e.keyCode):''));
   if(kind==='back'){
@@ -1420,17 +1445,22 @@ if(typeof e5!=='undefined'){
   /* 游戏里连 menu 类按键也吞掉：宿主收到 menu 会直接 closeApp()，
      而多键同按时键盘矩阵偶尔会报出一个幽灵 menu 键，正打着就被弹回应用列表。
      退出游戏仍有两个明确入口：HUD 上的「退」和长按返回 2.5 秒。 */
-  if(e5.onKey) e5.onKey(function(k){
+  /* 返回键在「不在游戏里」时也要自己处理，不能让 SDK 发 e5:exit：
+     长按 1.2 秒退出后手指还按着，键盘会继续送 keydown，超过 1.5 秒的那些
+     以前就漏出去了，宿主 closeApp() 直接把插件关掉 —— 表现就是"退出直接到主页"。 */
+  function emuOnKey(k){
     if(cfgOpen) return k.kind!=='power';
     if(k.kind==='power'||k.kind==='call') return false;
     if(k.kind==='menu') return !!running;
-    /* 长按退出的余波、刚退出这一刻的重复按键都要吞掉；
-       漏给宿主 SDK 会发 e5:exit，整个插件被关掉 —— 就是"一退出退到最外面"。 */
-    if(k.kind==='back'&&(Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
+    /* 只吞「长按退出那一次按压」的余波：手指还按着、或刚松手 400ms 内。
+       松手之后在列表里按返回，仍然应该退出插件（交给 SDK 发 e5:exit）。 */
+    if(k.kind==='back'&&(backHeld||Date.now()-backDownAt<1500||Date.now()<backGuardUntil)) return true;
     return !(k.kind==='back'&&!running);
-  });
+  }
+  if(e5.onKey) e5.onKey(emuOnKey);
+  window.__emuOnKey=emuOnKey;
   if(e5.onBack) e5.onBack(function(){
-    if(Date.now()<backGuardUntil||Date.now()-backDownAt<1500) return true;
+    if(backHeld||Date.now()<backGuardUntil||Date.now()-backDownAt<1500) return true;
     window.__backTaken=running; return running;
   });
 }
@@ -1508,6 +1538,7 @@ function cfgKey(kind,key,repeat,code){
 var cfgPausedNative=false;
 function openCfg(){
   cfgOpen=true; cfgSel=0; cfgListen=false;
+  try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
   /* 面板里编辑的是「当前机种」的键位：在游戏里就是正在玩的机种，
      在列表里就是当前选中的机种页（全部时沿用上一次的）。 */
   useKeymapFor((running&&current&&current.sys)||(tabSys!=='ALL'?tabSys:keymapSys));
@@ -1534,6 +1565,7 @@ function closeCfg(){
     }
   }catch(e){}
   cfgPausedNative=false;
+  try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
 }
 /* 游戏内打开设置的唯一入口：HUD 上的「设」。键盘上的 # 留给游戏自己用。 */
 bindTap($('bset'),function(){ openCfg(); });
@@ -1665,6 +1697,25 @@ function hostKeyForward(){
     },false);
   }catch(e){}
 }
+/* 宿主关掉本插件（closeApp）时一定把隐藏类撤掉。
+   原来靠往宿主注入 <script> 的心跳看门狗，但这台 WebKit 不执行注入脚本，
+   于是插件一被关，主页就只剩中间内容、菜单全没了。
+   同源直接包住宿主的 closeApp —— 它是 app.js 的顶层函数声明，挂在宿主 window 上。
+   注意时机：宿主脚本没跑完时 closeApp 还不存在，所以这个函数要能被反复调用。 */
+function wrapHostClose(){
+  try{
+    var w=window.parent;
+    if(!w || w===window) return;
+    if(w.__e5EmuCloseWrapped) return;
+    if(typeof w.closeApp!=='function') return;
+    var orig=w.closeApp;
+    w.closeApp=function(){
+      try{ if(w.document && w.document.body) w.document.body.classList.remove(hostClass); }catch(e){}
+      return orig.apply(this,arguments);
+    };
+    w.__e5EmuCloseWrapped=true;
+  }catch(e){}
+}
 function hostChrome(on){
   try{
     var d=window.parent.document;
@@ -1692,6 +1743,9 @@ function hostChrome(on){
     }
     if(on){ try{ window.parent.__e5GamePing=Date.now(); }catch(e){} }
     d.body.classList.toggle(hostClass,!!on);
+    wrapHostClose();
+    /* 注入 <script> 的心跳看门狗在这台 WebKit 上不执行，别指望它 */
+    if(on) wrapHostClose();
   }catch(e){}
 }
 
@@ -1740,6 +1794,33 @@ function fit(){
   $('ejs_game').style.height=ch+'px';
   $('tres').textContent=g.w+'×'+g.h+' · '+note;
 }
+
+/* 退出键自检：?exitcheck=1 时直接调用 SDK 回调，判定会不会漏给宿主 */
+try{
+  if(new URLSearchParams(location.search).get('exitcheck')==='1'){
+    setTimeout(function(){
+      var r={};
+      try{
+        running=false;
+        backHeld=true;                 /* 长按刚退出、手指还按着 */
+        r.held=window.__emuOnKey({kind:'back'});
+        backHeld=false; backDownAt=0; backGuardUntil=0;
+        r.released=window.__emuOnKey({kind:'back'});
+        /* 按住余波必须吞掉；松手后列表里必须放行，否则退不出插件 */
+        r.closeWrap=typeof window.parent.closeApp;
+        try{ r.inFrame=(window.parent!==window); }catch(e){}
+        r.ok=(r.held===true && r.released===false);
+      }catch(e){ r.ok=false; r.err=''+e; }
+      try{
+        try{ r.wrapped=!!window.parent.__e5EmuCloseWrapped; }catch(e){}
+        var xhr=new XMLHttpRequest();
+        xhr.open('POST','/api/plugins/e5-emulator/stat',true);
+        xhr.setRequestHeader('Content-Type','application/json');
+        xhr.send(JSON.stringify({tag:'exitcheck', exitcheck:r}));
+      }catch(e){}
+    },1500);
+  }
+}catch(e){}
 
 var lastFrame=null, lastAt=0;
 setInterval(function(){
