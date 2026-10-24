@@ -260,11 +260,10 @@ return function (ctx) {
             if (!cid) return { ok: false, error: 'no cid' };
             /* 必须走签名接口：未签名的 /x/player/v2 在登录态下会随机返回别的视频的字幕 */
             let q = wbi_sign({ bvid: bvid, cid: `${cid}`, wts: `${time()}` });
-            let path = length(q) >= 10
-                ? '/x/player/wbi/v2?' + q
-                : '/x/player/v2?bvid=' + bvid + '&cid=' + cid;
+            /* 不回退到未签名接口：那条路实测会返回别的视频的字幕，宁可不显示 */
+            if (length(q) < 10) return { ok: false, error: 'wbi' };
             let j = null;
-            try { j = json(api_get(path)); } catch (e) { }
+            try { j = json(api_get('/x/player/wbi/v2?' + q)); } catch (e) { }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'api' };
             /* 这个接口会把实际返回的 bvid/cid 一起带上；对不上就说明拿的不是这部片子的字幕 */
             let gotCid = num(j.data?.cid);

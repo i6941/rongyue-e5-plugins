@@ -129,7 +129,8 @@ body.in-player #tabs { display: none !important; }
     <div class="row"><span>起播缓冲</span><button id="setwm" type="button">2MB</button></div>
     <div class="row"><span>横竖屏</span><button id="setrot" type="button">竖屏</button></div>
     <div class="row"><span>首页默认</span><button id="sethome" type="button">推荐</button></div>
-    <div class="row"><span>字幕</span><button id="setsub" type="button">开</button></div>
+    <div class="row"><span>字幕（竖屏）</span><button id="setsub" type="button">开</button></div>
+    <div class="row"><span>字幕（横屏）</span><button id="setsubland" type="button">关</button></div>
     <div class="row"><span>画质</span><button id="setqn" type="button">720P</button></div>
     <div class="row"><span>视频缓存</span><button id="setclear" type="button">清空</button></div>
     <div class="row"><span>账号</span><button id="setlogout" type="button">退出登录</button></div>
@@ -185,6 +186,12 @@ body.in-player #tabs { display: none !important; }
   if (!(rotMode >= 0 && rotMode <= 2)) rotMode = 0;
   /* 默认竖屏：老的自动横屏设置（2）在用户没主动选过时不再生效 */
   if (localStorage.getItem('bili-rot-set') !== '1') rotMode = 0;
+  /* 取证用：?rot=1 强制横屏、?rot=0 强制竖屏，便于横竖各跑一次对比清晰度 */
+  try{
+    var rotArg = new URLSearchParams(location.search).get('rot');
+    if (rotArg === '1') rotMode = 1;
+    else if (rotArg === '0') rotMode = 0;
+  }catch(e){}
   function rotOn(){
     if (rotMode === 1) return true;
     if (rotMode === 2) return cv.width > cv.height * 1.25 && cv.height >= 2;
@@ -193,7 +200,6 @@ body.in-player #tabs { display: none !important; }
   function layout(){
     var pbEl = document.getElementById('pbar');
     var mbEl = document.getElementById('pmenubtn');
-    var W = screenEl.clientWidth, H = screenEl.clientHeight;
     if (pbEl){
       if (rotOn()){
         pbEl.classList.add('overlay');
@@ -218,6 +224,9 @@ body.in-player #tabs { display: none !important; }
         if (window.__barTimer) { clearTimeout(window.__barTimer); window.__barTimer = 0; }
       }
     }
+    /* 必须在控制栏改成浮层之后再量：横屏时控制栏不占高度，画面能吃满整屏。
+       先量再去改样式的话，量到的是扣掉控制栏的矮框，输出尺寸会跟着变小（画面变糊） */
+    var W = screenEl.clientWidth, H = screenEl.clientHeight;
     if (!W || !H || !cv.width || !cv.height) return;
     /* 宽高比只认片源（首帧记下来），不再跟着画布走：
        输出尺寸取偶数，用画布反推会让比例在 1.778/1.784 之间漂，
@@ -233,6 +242,8 @@ body.in-player #tabs { display: none !important; }
       frameEl.style.transform = rotOn() ? 'translate(-50%,-50%) rotate(90deg)' : 'translate(-50%,-50%)';
     }
     screenEl.classList.toggle('rot', rotOn());
+    /* 旋转后立刻按新方向决定字幕显不显示（暂停时没有新帧，只靠 tickSubs 收不掉） */
+    if (subsEl && (rotOn() ? !subOnLand : !subOn)) subsEl.style.display = 'none';
     if (rotBtn) rotBtn.textContent = rotOn() ? '横' : '竖';
     /* 播放器按这个尺寸输出画面：和显示区域一样大，页面不再缩放，字才清楚 */
     window.__maxWant = Math.max(64, Math.round(x));
@@ -247,6 +258,8 @@ body.in-player #tabs { display: none !important; }
     if (!inPlayer) return;
     /* 只改输出尺寸：播放器收到命令后重建缩放器，不重启、不重跳、声音不断 */
     var m = window.__maxWant || 480;
+    probe('rot', 'mode=' + rotMode + ' screen=' + screenEl.clientWidth + 'x' +
+          screenEl.clientHeight + ' out=' + m);
     if (ws && ws.readyState === 1){
       try{ ws.send(new Uint8Array([6, m & 0xff, (m >> 8) & 0xff])); }catch(e){}
     }
@@ -329,6 +342,8 @@ body.in-player #tabs { display: none !important; }
   var lastFrameAt = 0, bufShown = 0, restartTried = 0, everFrame = 0, srcAspect = 0;
   /* 字幕：默认打开；B站要登录才有字幕（接口返回 need_login 时提示一次） */
   var subOn = localStorage.getItem('bili-sub') !== '0';
+  /* 横屏画面已经吃满屏，字幕会挡内容，所以默认关 */
+  var subOnLand = localStorage.getItem('bili-sub-land') === '1';
   var subs = [], subsEl = document.getElementById('subs'), subHinted = 0, subReq = 0;
   var shotAt = (function(){ var m = /shotat=(\d+)/.exec(location.search); return m ? +m[1] : 20; })();
   var segs = [], segIdx = 0, segSkipUntil = -1;
@@ -604,6 +619,18 @@ body.in-player #tabs { display: none !important; }
     if (b) loadHome(b.getAttribute('data-tab'));
   });
 
+  var setSubLandBtn = document.getElementById('setsubland');
+  if (setSubLandBtn){
+    setSubLandBtn.textContent = subOnLand ? '开' : '关';
+    setSubLandBtn.addEventListener('click', function(){
+      subOnLand = !subOnLand;
+      try{ localStorage.setItem('bili-sub-land', subOnLand ? '1' : '0'); }catch(e){}
+      setSubLandBtn.textContent = subOnLand ? '开' : '关';
+      if (!subOnLand && subsEl){ subsEl.style.display = 'none'; }
+      statusEl.textContent = '横屏字幕 ' + (subOnLand ? '开' : '关');
+    });
+  }
+
   var setSubBtn = document.getElementById('setsub');
   if (setSubBtn){
     setSubBtn.textContent = subOn ? '开' : '关';
@@ -740,7 +767,10 @@ body.in-player #tabs { display: none !important; }
   }
   function tickSubs(ms){
     if (!subsEl) return;
-    if (!subOn || !subs.length){ if (subsEl.style.display !== 'none') subsEl.style.display = 'none'; return; }
+    if (!subOn || !subs.length || (rotOn() && !subOnLand)){
+      if (subsEl.style.display !== 'none') subsEl.style.display = 'none';
+      return;
+    }
     var lo = 0, hi = subs.length;
     while (lo < hi){ var mid = (lo + hi) >> 1; if (subs[mid].b <= ms) lo = mid + 1; else hi = mid; }
     var line = subs[lo];
@@ -761,6 +791,13 @@ body.in-player #tabs { display: none !important; }
     if (w < 2 || h < 2) return;
     curMs = ms;
     lastFrameAt = Date.now();
+    if (!everFrame){
+      var fe = document.getElementById('frame');
+      probe('out', 'req=' + (window.__maxWant || 0) + ' frame=' + w + 'x' + h +
+            ' show=' + (fe ? (fe.style.width + 'x' + fe.style.height) : '-') +
+            ' rot=' + (rotOn() ? 1 : 0) +
+            ' screen=' + screenEl.clientWidth + 'x' + screenEl.clientHeight);
+    }
     everFrame = 1;
     playOffsetMs = ms; playTickAt = Date.now();
     if (bufShown){ bufShown = 0; statusEl.textContent = '播放中'; }
@@ -1074,6 +1111,21 @@ body.in-player #tabs { display: none !important; }
   qEl.addEventListener('click', function(){
     if (window.E5IME) E5IME.open();
   });
+  /* 字幕自检：?subtest=1 时播 25 秒后把横竖屏/开关/实际显示状态写进 probe */
+  try{
+    if (new URLSearchParams(location.search).get('subtest') === '1'){
+      setTimeout(function(){
+        try{
+          probe('subtest', 'rot=' + (rotOn() ? 1 : 0) +
+                ' on=' + subOn + ' land=' + subOnLand +
+                ' loaded=' + subs.length +
+                ' shown=' + (subsEl ? subsEl.style.display : '?') +
+                ' text=' + (subsEl ? (subsEl.textContent || '').slice(0, 12) : ''));
+        }catch(e){}
+      }, 25000);
+    }
+  }catch(e){}
+
   /* 自检：只在 ?imetest=1 时跑，结果进 /tmp/bili-probe.log（真机 WebKit 验证用） */
   try{
     if (new URLSearchParams(location.search).get('imetest') === '1' && window.E5IME){
