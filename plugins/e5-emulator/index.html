@@ -482,7 +482,11 @@ function nativeResume(){
     .catch(function(){ natConnect(0); });
 }
 /* 每秒一次的 native 侧维护：算帧率、补宿主样式、卡死检测、自动存档 */
+var kaTick=0;
 function nativeTick(){
+  /* 游戏在跑的时候每 5 秒重申一次「别锁屏」：这一条消息一旦丢了，
+     60 秒后宿主就会按空闲锁屏，表现就是玩着玩着黑屏、回来像被强制退出 */
+  if(++kaTick%5===0){ try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){} }
   if(susp.on) return;          /* 挂起期间不刷帧率、不续宿主心跳，让看门狗把菜单栏还回去 */
   fit();
   var now=Date.now();
@@ -822,18 +826,20 @@ function btnsOf(id){
    数字键 0=START、1=SELECT、2=L、3=R。
    方向键和 OK 键在 handleKey 里按"键的种类"直接映射（不靠 key 字面值），
    因为手机上报的 key 名不一定是 ArrowUp / Enter。 */
-var DEFAULT_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
-                  a:['Enter'],b:['6'],start:['0'],select:['1'],l:['2'],r:['3']};
+/* 用户实际在用的这套：6=A、3=B、#=START、*=SELECT、不绑 L/R
+   （L/R 原来占了 2 和 3，和 B 撞车，按 3 会同时触发两个动作） */
+var DEFAULT_KEYS={up:['ArrowUp','1'],down:['ArrowDown','7'],left:['ArrowLeft','4'],right:['ArrowRight','5'],
+                  upleft:[],upright:['2'],downleft:[],downright:['8'],
+                  a:['6'],b:['3'],start:['#'],select:['*'],l:[],r:[]};
 /* 数字键方案：在十字键之外，补一套数字键（5=A、6=B、7/9=两个斜角）。
    0/1/2/3 固定是 START/SELECT/L/R（验收标准），这套方案不占用它们，
    所以按键含义跟默认方案不冲突。 */
-var NUMPAD_KEYS={up:['ArrowUp'],down:['ArrowDown'],left:['ArrowLeft'],right:['ArrowRight'],
-                 upleft:['7'],upright:['9'],downleft:[],downright:[],
-                 a:['Enter','5'],b:['6'],start:['0'],select:['1'],l:['2'],r:['3']};
+/* 两套方案已经合并成同一份，面板上的两个重置按钮效果一样 */
+var NUMPAD_KEYS=DEFAULT_KEYS;
 /* 键位表带版本号：默认键位改过一次之后，旧版本存下来的自定义键位
    （上一轮调试时留下的"数字键方案"）会让新默认不生效，所以版本对不上
    就整份丢掉，重新用默认。用户自己改过之后版本会更新，不会被顶掉。 */
-var KEYMAP_VERSION=2;
+var KEYMAP_VERSION=4;   /* 4: 默认键位改成 6=A / 3=B / #=START / *=SELECT，不再绑 L/R */
 /* 键位按机种分开存：FC / MD / GBA 各有各的一套，互不影响。
    旧版只有一份全局 e5keymap，第一次按机种拆开时沿用它（不丢用户改过的键位）。 */
 var keymapSys='FC';
@@ -907,7 +913,10 @@ function tokenOf(e){
 var held={}, keyLog=[], keyCount=0, lastBackId='', lastBackTime=0, backKeyupSincePress=false, backTick=0, hintTimer=0;
 /* 按下和松开都记进日志：判断"能不能同时按两个键"要靠这个序列
    （如果按住 5 时系统上报了 5 的 keyup，那是硬件/内核只能报一个键）。 */
-function keyLogPush(s){ keyLog.push(s); if(keyLog.length>40) keyLog.shift(); }
+function keyLogPush(s){ keyLog.push(s+'@'+(Date.now()%100000)); if(keyLog.length>40) keyLog.shift(); }
+/* 按下时用的 token 记在 keyCode 上：WPE 偶尔在 keyup 上丢掉 key 名，
+   这时再按 key 名查表就查不到，按钮会一直卡在按下状态（表现就是"一直在跳"） */
+var pressedTok={}, lastKeyAt=0;
 
 function btnMax(){
   /* 核心声明的按键数量（controls[0] 的长度）。超出这个范围的按钮号发过去，
@@ -1351,6 +1360,9 @@ function handleKey(kind,key,repeat,id,code){
   /* 方向键和确认键按"键的种类"映射：手机上的方向键/确认键上报的 key 名
      不一定是 ArrowUp / Enter（有的是 Up、Select、Accept），按种类才稳。
      用户自定义的键位（数字键等）仍按 key 字面值查表。 */
+  var tok0=keyTok(kind,key,code);
+  if(code) pressedTok[code]=tok0;
+  lastKeyAt=Date.now();
   var kindAct={up:'up',down:'down',left:'left',right:'right',ok:'a'};
   if(kindAct[kind]){
     var kb=btnsOf(kindAct[kind]);
@@ -1382,7 +1394,10 @@ window.addEventListener('keyup',function(e){
     releaseBtn(btnOf('b'));     /* 短按返回 = 松开 B */
     return;
   }
-  var acts=actsOf(keyTok(kind,e.key,e.keyCode));
+  var tk=(e.keyCode&&pressedTok[e.keyCode])||keyTok(kind,e.key,e.keyCode);
+  if(e.keyCode) delete pressedTok[e.keyCode];
+  lastKeyAt=Date.now();
+  var acts=actsOf(tk);
   for(var i=0;i<acts.length;i++){
     var bs=btnsOf(acts[i]);
     for(var j=0;j<bs.length;j++) if(bs[j]!==undefined) releaseBtn(bs[j]);
@@ -1394,6 +1409,10 @@ window.addEventListener('keyup',function(e){
     for(var ju=0;ju<ku.length;ju++) if(ku[ju]!==undefined) releaseBtn(ku[ju]);
   }
 },true);
+/* 切走或熄屏时把还按着的键全部松开，免得回来那个键还在按下状态 */
+window.addEventListener('blur',function(){ try{ releaseAll(); }catch(e){} });
+document.addEventListener('visibilitychange',function(){ if(document.hidden){ try{ releaseAll(); }catch(e){} } });
+
 /* SDK 回调只负责告诉宿主"这个键插件收了"（否则宿主会把返回键当退出应用），
    真正的处理在上面的 window 监听里。返回键在菜单态必须放行：
    SDK 收到 onKey=false 会调用 onBack，onBack 再返回 false 就发 e5:exit 让宿主关掉插件。 */

@@ -5,6 +5,7 @@ import { open, readfile } from 'fs';
    这是 <video> 能直接吃的格式；DASH 的分离音轨这条路在 WPE 上不好走。
    视频和封面都要带 Referer，所以统一由后端代理。 */
 return function (ctx) {
+
     const UA = 'Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
     const REFERER = 'https://www.bilibili.com/';
     const API = 'https://api.bilibili.com';
@@ -128,6 +129,69 @@ return function (ctx) {
         return length(trim(`${ctx.sh('pidof e5play 2>/dev/null') ?? ''}`)) == 0;
     }
 
+    /* ---- 首页推荐：B站新版接口要求 wbi 签名（wts + w_rid） ---- */
+    const WBI_TAB = [46,47,18,2,53,8,23,32,15,50,10,31,58,3,45,35,27,43,5,49,33,9,42,19,
+                     29,28,14,39,12,38,41,13,37,48,7,16,24,55,40,61,26,17,0,1,60,51,30,4,
+                     22,25,54,21,56,59,6,63,57,62,11,36,20,34,44,52];
+
+    /* 从 https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png 取 key */
+    function wbi_base(u) {
+        let parts = split(`${u ?? ''}`, '/');
+        if (!length(parts)) return '';
+        let last = `${parts[length(parts) - 1] ?? ''}`;
+        let seg = split(last, '.');
+        return `${seg[0] ?? ''}`;
+    }
+
+    function wbi_keys() {
+        let cached = trim(`${ctx.sh('cat /tmp/bili-wbi 2>/dev/null') ?? ''}`);
+        let parts = split(cached, ' ');
+        if (length(parts) >= 2 && length(`${parts[0]}`) == 32 && length(`${parts[1]}`) == 32)
+            return [ `${parts[0]}`, `${parts[1]}` ];
+        let j = null;
+        try { j = json(api_get('/x/web-interface/nav')); } catch (e) { }
+        let img = wbi_base(j?.data?.wbi_img?.img_url);
+        let sub = wbi_base(j?.data?.wbi_img?.sub_url);
+        if (length(img) < 16 || length(sub) < 16) return [];
+        ctx.sh("printf '%s %s' '" + img + "' '" + sub + "' > /tmp/bili-wbi");
+        return [ img, sub ];
+    }
+
+    function wbi_sign(params) {
+        let ks = wbi_keys();
+        if (length(ks) < 2) return '';
+        let raw = `${ks[0]}${ks[1]}`;
+        let mix = '';
+        for (let i = 0; i < 64; i++) mix += substr(raw, WBI_TAB[i], 1);
+        mix = substr(mix, 0, 32);
+        let names = keys(params);
+        sort(names);
+        let q = '';
+        for (let n in names) {
+            if (length(q)) q += '&';
+            q += `${n}=${params[n]}`;
+        }
+        /* 签的是 query + mixinKey，两段一起哈希 */
+        ctx.sh("printf '%s' '" + q + mix + "' > /tmp/bili-wbi-q");
+        let rid = trim(`${ctx.sh('md5sum /tmp/bili-wbi-q | cut -c1-32') ?? ''}`);
+        if (length(rid) != 32) return '';
+        return q + '&w_rid=' + rid;
+    }
+
+    /* 列表项统一成页面要的形状；推荐流里混着番剧，没 bvid 的直接跳过 */
+    function feed_item(it, out) {
+        let bvid = `${it?.bvid ?? ''}`;
+        if (substr(bvid, 0, 2) !== 'BV') return;
+        push(out, {
+            bvid: bvid,
+            title: `${it?.title ?? ''}`,
+            author: `${it?.owner?.name ?? ''}`,
+            pic: httpsify(`${it?.pic ?? ''}`),
+            dur: num(it?.duration),
+            play: num(it?.stat?.view),
+            cid: 0
+        });
+    }
     return {
         /* 排行榜：取前 40 个，字段裁剪到面板需要的几个 */
         'GET /rank': function () {
@@ -149,6 +213,71 @@ return function (ctx) {
                 if (length(out) >= 40) break;
             }
             return { ok: true, list: out };
+        },
+
+        /* 个性化推荐：登录后是千人千面，未登录时是通用推荐 */
+        'GET /recommend': function (req) {
+            let ps = num(req.query?.ps);
+            if (ps < 6 || ps > 30) ps = 20;
+            let params = {
+                web_location: '1430650', y_num: '5', fresh_type: '4', feed_version: 'V8',
+                fresh_idx: `${num(req.query?.idx) > 0 ? num(req.query.idx) : 1}`,
+                fresh_idx_1h: '1', brush: '0', homepage_ver: '1',
+                ps: `${ps}`, last_y_num: '5', screen: '320x480', seo_info: '', fetch_row: '1',
+                wts: `${time()}`
+            };
+            let q = wbi_sign(params);
+            if (length(q) < 10) return { ok: false, error: 'wbi' };
+            let raw = api_get('/x/web-interface/wbi/index/top/feed/rcmd?' + q);
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let out = [];
+            for (let it in (j.data?.item ?? [])) feed_item(it, out);
+            return { ok: true, list: out };
+        },
+        /* 热门 */
+        'GET /popular': function (req) {
+            let pn = num(req.query?.pn);
+            if (pn < 1) pn = 1;
+            let raw = api_get('/x/web-interface/popular?ps=20&pn=' + pn);
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let out = [];
+            for (let it in (j.data?.list ?? [])) feed_item(it, out);
+            return { ok: true, list: out };
+        },
+
+        /* 字幕：B站把字幕放在 player/v2 里，且需要登录（未登录 need_login_subtitle=true） */
+        'GET /subtitle': function (req) {
+            let bvid = `${req.query?.bvid ?? ''}`;
+            let cid = num(req.query?.cid);
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            if (!cid) return { ok: false, error: 'no cid' };
+            let j = null;
+            try { j = json(api_get('/x/player/v2?bvid=' + bvid + '&cid=' + cid)); } catch (e) { }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api' };
+            let need_login = j.data?.need_login_subtitle === true;
+            let tracks = j.data?.subtitle?.subtitles ?? [];
+            let first = null;
+            for (let t in tracks) { if (t?.subtitle_url) { first = t; break; } }
+            if (!first) return { ok: true, need_login: need_login, lan: '', list: [] };
+            let u = `${first.subtitle_url ?? ''}`;
+            if (substr(u, 0, 2) === '//') u = 'https:' + u;
+            if (!host_ok(u, IMG_DOMAINS)) return { ok: false, error: 'bad url' };
+            ctx.sh("curl -s --max-time 20 -A '" + UA + "' '" + u + "' > /tmp/bili-sub.json");
+            let sj = null;
+            try { sj = json(readfile('/tmp/bili-sub.json')); } catch (e) { }
+            if (!sj) return { ok: false, error: 'sub json' };
+            let out = [];
+            for (let line in (sj.body ?? [])) {
+                let t = `${line?.content ?? ''}`;
+                if (length(t) < 1) continue;
+                push(out, { a: num(line?.from) * 1000, b: num(line?.to) * 1000, t: t });
+                if (length(out) >= 4000) break;
+            }
+            return { ok: true, need_login: false, lan: `${first.lan ?? ''}`, list: out };
         },
         /* 搜索：这个接口不带签名也能用（设备上实测 code=0） */
         'GET /search': function (req) {
@@ -217,7 +346,11 @@ return function (ctx) {
                     return { ok: false, error: 'pagelist' };
                 cid = num(pj.data[0].cid);
             }
-            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=80&fnval=0&platform=pc&fourk=1');
+            /* 画质用页面传来的值（16/32/64/80/112） */
+            let qn = num(req.query?.qn);
+            if (qn !== 16 && qn !== 32 && qn !== 64 && qn !== 80 && qn !== 112) qn = 80;
+            let q = api_get('/x/player/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=' + qn +
+                            '&fnval=0&platform=pc&fourk=1');
             let j = null;
             try { j = json(q); } catch (e) { }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'playurl' };
@@ -228,57 +361,106 @@ return function (ctx) {
 
             let dir = '/etc/e5-infoscreen/plugins/bili';
             let out = dir + '/cache.mp4';
-            let tmp = '/tmp/bili-dl.mp4';
             let res = '/tmp/bili-dl.res';
             /* 同一个视频已经缓存过就直接用，别每次重下几十上百 MB */
             let id = bvid + ' ' + cid;
             let cached = trim(`${ctx.sh('cat /tmp/bili-cache-id 2>/dev/null') ?? ''}`);
             let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
+            /* 快进续传过的缓存中间有空洞：文件大小够了但内容不全，
+               当缓存用会播到缺口就停，所以有空洞一律重下 */
+            let hole = num(`${ctx.sh('cat /tmp/bili-hole 2>/dev/null') ?? '0'}`);
             ctx.sh("echo '" + id + "' > /tmp/bili-req");
-            if (cached === id && have > 1048576)
+            if (cached === id && have > 1048576 && !(hole > 0))
                 return { ok: true, state: 'cached', size: have, cid: cid };
-            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' +
-                   res + ' ' + tmp);
-            let script = "curl -s --max-time 1800 --retry 3 --retry-delay 2 --max-filesize 300000000 -A '" + UA +
-                         "' -H 'Referer: " + REFERER + "'" + cookie_hdr() + " -o " + tmp +
+            /* 边下边播：直接写 cache.mp4，播放器读这个正在增长的文件 */
+            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' + res);
+            ctx.sh('rm -f ' + out);
+            let script = "curl -s --max-time 1800 --retry 3 --retry-delay 2 --max-filesize 900000000 -A '" + UA +
+                         "' -H 'Referer: " + REFERER + "'" + cookie_hdr() + " -o " + out +
                          " -w '%{http_code} %{size_download}' '" + u + "' > " + res;
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- -c "' +
                    script + '"');
+            /* 记下直链和总大小：快进时要按字节位置续传 */
+            ctx.sh("printf '%s' '" + u + "' > /tmp/bili-url");
+            ctx.sh('rm -f /tmp/bili-total /tmp/bili-hole');
             return { ok: true, state: 'downloading', quality: num(j.data.quality), cid: cid };
         },
-        /* 前端每秒问一次：下载完了没有 */
-        'GET /ready': function () {
-            let out = '/etc/e5-infoscreen/plugins/bili/cache.mp4';
-            let r = trim(`${ctx.sh('cat /tmp/bili-dl.res 2>/dev/null') ?? ''}`);
-            if (r === '') {
-                /* 缓存命中时不会有下载结果文件，直接按标记回答 */
-                let req = trim(`${ctx.sh('cat /tmp/bili-req 2>/dev/null') ?? ''}`);
-                let cached = trim(`${ctx.sh('cat /tmp/bili-cache-id 2>/dev/null') ?? ''}`);
-                if (req !== '' && req === cached) {
-                    let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
-                    if (have > 1048576)
-                        return { ok: true, ready: true, cached: true, size: have };
-                }
-                /* 下载进程没了、结果文件又是空的，说明 curl 被中断（超时或被换片杀掉）。
-                   以前这里一律回「下载中」，页面就永远等下去——现在改成明确失败，
-                   并带上已经下了多少字节，界面能显示进度。 */
-                let pidf = trim(`${ctx.sh('cat /var/run/bili-dl.pid 2>/dev/null') ?? ''}`);
-                let alive = 'no';
-                if (length(pidf) > 0)
-                    alive = trim(`${ctx.sh('kill -0 ' + pidf + ' 2>/dev/null && echo yes') ?? ''}`);
-                let bytes = num(`${ctx.sh('wc -c < /tmp/bili-dl.mp4 2>/dev/null') ?? '0'}`);
-                if (alive !== 'yes')
-                    return { ok: true, ready: false, state: 'failed', code: 'interrupted', bytes: bytes };
-                return { ok: true, ready: false, state: 'downloading', bytes: bytes };
+
+        /* 快进到还没下载的位置：按时间估算字节位置，从那里续传。
+           跳过的部分不需要下载——原来顺序下载必须把中间几十兆等完。 */
+        'GET /seek': function (req) {
+            let ms = num(req.query?.ms);
+            let dur = num(req.query?.dur);
+            if (!(ms > 0) || !(dur > 0)) return { ok: false, error: 'bad args' };
+            let dir = '/etc/e5-infoscreen/plugins/bili';
+            let out = dir + '/cache.mp4';
+            let url = trim(`${ctx.sh('cat /tmp/bili-url 2>/dev/null') ?? ''}`);
+            if (length(url) < 10) return { ok: false, error: 'no url' };
+            let have = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
+            let total = num(`${ctx.sh('cat /tmp/bili-total 2>/dev/null') ?? '0'}`);
+            if (!(total > 0)) {
+                ctx.sh("curl -s -D - -o /dev/null -r 0-0 -A '" + UA + "' -H 'Referer: " + REFERER + "'" + cookie_hdr() +
+                       " '" + url + "' > /tmp/bili-head");
+                total = num(`${ctx.sh("tr -d '\r' < /tmp/bili-head | awk -F/ '/Content-Range/{print $2}'") ?? '0'}`);
+                if (total > 0) ctx.sh("echo '" + total + "' > /tmp/bili-total");
             }
-            let parts = split(r, ' ');
-            let code = `${parts[0] ?? '0'}`;
-            let size = num(parts[1]);
-            if (code !== '200' || size < 1024)
-                return { ok: true, ready: false, state: 'failed', code: code };
-            ctx.sh('mv -f /tmp/bili-dl.mp4 ' + out + '; rm -f /tmp/bili-dl.res; ' +
-                   'cat /tmp/bili-req 2>/dev/null > /tmp/bili-cache-id');
-            return { ok: true, ready: true, file: '/plugins/bili/cache.mp4?v=' + time(), size: size };
+            if (!(total > 0)) return { ok: false, error: 'no size' };
+            /* 留 2MB 余量：估出来的位置可能落在关键帧之后 */
+            let off = (total * ms) / dur - 2097152;
+            if (off < 0) off = 0;
+            off = off - (off % 65536);
+            let hole = num(`${ctx.sh('cat /tmp/bili-hole 2>/dev/null') ?? '0'}`);
+            let covered = off <= have;
+            if (hole > 0 && off < hole) covered = false;
+            if (covered) return { ok: true, need: false, off: off };
+            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid');
+            let sh = '/tmp/bili-range.sh';
+            let f = open(sh, 'w', 0o755);
+            if (!f) return { ok: false, error: 'script' };
+            f.write("#!/bin/sh\ncurl -s --max-time 1800 -A '" + UA + "' -H 'Referer: " + REFERER + "'" +
+                    cookie_hdr() + " -r " + off + "- '" + url + "' | dd of=" + out +
+                    " bs=65536 seek=" + sprintf('%d', off / 65536) + " conv=notrunc 2>/dev/null\n");
+            f.close();
+            ctx.sh("echo '" + off + "' > /tmp/bili-hole");
+            ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- ' + sh);
+            return { ok: true, need: true, off: off, have: have };
+        },
+        /* 前端每秒问一次：够不够开播／下完没有。
+           边下边播：下载直接写 cache.mp4，够 12MB 就先让播放器读，
+           剩下的在播放过程中继续写。 */
+        'GET /ready': function (req) {
+            /* 起播门槛：页面传 wk（KB），默认 512KB。实测下载约 3MB/s，
+               512KB 半秒内就到；e5play 读的是增长中的文件，不用等整段。 */
+            let wk = num(req.query?.wk);
+            if (wk < 256 || wk > 65536) wk = 512;
+            let need = wk * 1024;
+            let out = '/etc/e5-infoscreen/plugins/bili/cache.mp4';
+            let cur = trim(`${ctx.sh('cat /tmp/bili-req 2>/dev/null') ?? ''}`);
+            let cached = trim(`${ctx.sh('cat /tmp/bili-cache-id 2>/dev/null') ?? ''}`);
+            let bytes = num(`${ctx.sh('wc -c < ' + out + ' 2>/dev/null') ?? '0'}`);
+            let r = trim(`${ctx.sh('cat /tmp/bili-dl.res 2>/dev/null') ?? ''}`);
+            if (r !== '') {
+                let parts = split(r, ' ');
+                let code = `${parts[0] ?? '0'}`;
+                let size = num(parts[1]);
+                if (code === '200' && size >= 1024) {
+                    ctx.sh('rm -f /tmp/bili-dl.res; cat /tmp/bili-req 2>/dev/null > /tmp/bili-cache-id');
+                    return { ok: true, ready: true, size: size };
+                }
+                return { ok: true, ready: false, state: 'failed', code: code, bytes: bytes };
+            }
+            if (cur !== '' && cur === cached && bytes > 1048576)
+                return { ok: true, ready: true, cached: true, size: bytes };
+            let pidf = trim(`${ctx.sh('cat /var/run/bili-dl.pid 2>/dev/null') ?? ''}`);
+            let alive = 'no';
+            if (length(pidf) > 0)
+                alive = trim(`${ctx.sh('kill -0 ' + pidf + ' 2>/dev/null && echo yes') ?? ''}`);
+            /* 12MB 大约够几十秒，下载速度远高于码率，够撑到后面写完 */
+            if (bytes >= need)
+                return { ok: true, ready: true, partial: alive === 'yes', size: bytes };
+            if (alive === 'yes')
+                return { ok: true, ready: false, state: 'downloading', bytes: bytes };
+            return { ok: true, ready: false, state: 'failed', code: 'interrupted', bytes: bytes };
         },
         /* 视频流代理：upos 要求 Referer，前端 <video> 没法自己加 */
         'GET /stream': function (req) {
@@ -301,7 +483,10 @@ return function (ctx) {
         /* 启动原生播放器：设备上没有 H.264 解码器（只有跑不起来的
            h264_v4l2m2m），所以视频由插件自带的 e5play（openh264 软解）
            解码，再用和模拟器相同的 WebSocket 协议把 RGB565 帧推给页面。 */
-        'GET /player-start': function () {
+        'GET /player-start': function (req) {
+            /* 输出尺寸跟着页面当前的横竖屏走：画布多大就输出多大，页面不再缩放 */
+            let max = num(req.query?.max);
+            if (max < 64 || max > 1920) max = 480;
             let dir = '/etc/e5-infoscreen/plugins/bili';
             let bin = dir + '/e5play';
             let mp4 = dir + '/cache.mp4';
@@ -311,7 +496,7 @@ return function (ctx) {
                 return { ok: false, error: 'no cached video' };
             if (!stop_player()) return { ok: false, error: '旧播放器没退出' };
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/e5play.pid -x ' + bin +
-                   ' -- --serve ' + mp4 + ' 9511');
+                   ' -- --serve ' + mp4 + ' 9511 --max ' + max);
             return { ok: true, port: 9511 };
         },
         /* 退出播放时一定要停掉：一个插件目录里只常驻一个解码进程 */

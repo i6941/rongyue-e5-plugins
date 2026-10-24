@@ -15,9 +15,34 @@ header b{font-size:15px;color:var(--accent)}
 header .sp{flex:1 1 auto}
 header input{flex:1 1 auto;min-width:0;height:28px;padding:0 8px;font:inherit;font-size:13px;
   color:#e6edf3;background:#16202f;border:1px solid #243349;border-radius:6px}
+/* 搜索框：用 div 而不是 input —— input 一旦获得焦点，宿主就会弹出它自己的
+   输入法（独立 iframe、盖在页面外），我们要用页面内的输入法，所以避开焦点链 */
+#q.qi{flex:1 1 auto;min-width:0;height:28px;padding:0 8px;font:inherit;font-size:13px;
+  color:#e6edf3;background:#16202f;border:1px solid #243349;border-radius:6px;
+  display:flex;align-items:center;overflow:hidden;white-space:nowrap}
+#q.qi.empty::before{content:attr(data-ph);color:#7b8da6}
+#ime{position:fixed;left:0;right:0;bottom:0;z-index:60;background:#0d1622;
+  border-top:1px solid #2a3c56;box-shadow:0 -6px 18px #0008;
+  display:none;flex-direction:column;gap:4px;padding:5px 6px 7px}
+#ime.on{display:flex}
+#ime .line1{display:flex;align-items:center;gap:6px;min-height:18px}
+#ime-mode{font-size:11px;color:#06101c;background:#4c9aff;border-radius:4px;padding:1px 4px}
+#ime-comp{font-size:13px;letter-spacing:2px;color:#8fd0ff;flex:1 1 auto;
+  white-space:nowrap;overflow:hidden}
+#ime-page{font-size:11px;color:#6b7d95}
+#ime-cands{display:flex;flex-wrap:wrap;gap:4px;min-height:26px;align-items:center}
+.ime-c{font-size:15px;line-height:22px;padding:0 7px;border-radius:5px;
+  background:#16202f;color:#e6edf3;border:1px solid #243349}
+.ime-c.sel{background:#4c9aff;color:#06101c;border-color:#7fbcff}
+.ime-tip{font-size:11px;color:#6b7d95}
+#ime .hint{font-size:10px;color:#5c6d84;white-space:nowrap;overflow:hidden}
 header button{height:28px;width:30px;padding:0;display:flex;align-items:center;justify-content:center;
   font:inherit;font-size:13px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 header button svg{display:block}
+#tabs{display:flex;gap:6px;padding:4px 7px 0;flex:0 0 auto}
+#tabs button{flex:1 1 0;height:28px;padding:0;font:inherit;font-size:12px;color:#a9bad0;
+  background:#16202f;border:1px solid #243349;border-radius:7px}
+#tabs button.on{color:#fff;background:#2a3c55;border-color:#3f5876;box-shadow:inset 0 -2px 0 var(--accent)}
 #list{flex:1 1 auto;overflow-y:auto;padding:6px}
 .card{display:flex;gap:7px;padding:6px;border-bottom:1px solid #16202f}
 .card:active{background:#16202f}
@@ -26,14 +51,42 @@ header button svg{display:block}
 .card .info{min-width:0;flex:1 1 auto}
 .card .t{font-size:12px;line-height:1.35;max-height:2.7em;overflow:hidden}
 .card .m{font-size:10px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.rot-land header, body.rot-land #status { display: none !important; }
+body.in-player #tabs { display: none !important; }
 #player{display:none;flex:1 1 auto;flex-direction:column;background:#000}
 #player.on{display:flex}
-#qbtn{position:absolute;right:8px;top:8px;z-index:5;height:24px;padding:0 8px;font:inherit;
-  font-size:11px;color:#fff;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.35);
-  border-radius:12px}
-#screen{flex:1 1 auto;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
-#screen canvas{width:100%;height:auto;max-height:100%;background:#000;display:block}
-#pinfo{font-size:11px;color:var(--dim);padding:5px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#screen{position:relative;flex:1 1 auto;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+#frame{position:absolute;left:50%;top:50%}
+#frame canvas{width:100%;height:100%;background:#000;display:block}
+/* 字幕：竖屏放在画面下方的黑边里，横屏跟着画面一起转 */
+#subs{position:absolute;left:0;right:0;bottom:-24px;text-align:center;color:#fff;
+  font:600 13px/1.3 -apple-system,"Noto Sans CJK SC",sans-serif;
+  text-shadow:0 1px 2px #000,0 0 4px #000,0 0 6px #000;padding:0 4px;
+  pointer-events:none;display:none}
+#screen.rot #subs{bottom:3px}
+#screen canvas{z-index:1}
+#rotbtn{position:absolute;top:6px;right:6px;z-index:9;width:44px;height:32px;padding:0;font:inherit;
+  font-size:12px;line-height:30px;text-align:center;color:#dce8f8;background:rgba(20,30,46,.8);
+  border:1px solid #3a4c6b;border-radius:6px;pointer-events:auto;transition:opacity .2s}
+#screen.hideui #rotbtn, #screen.hideui #pmenubtn{opacity:0;pointer-events:none}
+#pinfo{font-size:11px;color:var(--dim);padding:3px 8px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#player{position:relative}
+#pbar{flex:0 0 auto;background:#0b111b;border-top:1px solid var(--line);padding:4px 6px 7px}
+/* 横屏时控制栏改成浮层：不占画面高度，画面能吃满整块屏 */
+#pbar.overlay{position:absolute;z-index:8;background:rgba(8,13,20,.94);
+  border-top:1px solid #223046;opacity:0;pointer-events:none;transition:opacity .18s}
+#pbar.overlay.show{opacity:1;pointer-events:auto}
+#pseek{height:6px;background:#1b2637;border-radius:3px;margin:2px 2px 5px;position:relative;overflow:hidden}
+#pseek i{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--accent);border-radius:3px}
+#pmenubtn{position:absolute;top:6px;right:56px;z-index:9;width:44px;height:32px;padding:0;font:inherit;
+  font-size:14px;line-height:30px;text-align:center;color:#dce8f8;background:rgba(20,30,46,.8);
+  border:1px solid #3a4c6b;border-radius:6px;display:none;pointer-events:auto;transition:opacity .2s}
+#pmenubtn.on{display:block}
+#ptime{font-size:11px;color:#8fa3bd;padding:1px 2px 5px;font-variant-numeric:tabular-nums}
+#pbtns{display:flex;gap:5px}
+#pbtns button{flex:1 1 0;height:34px;padding:0;font:inherit;font-size:12px;color:#dce8f8;
+  background:#1b2637;border:1px solid #2c3d55;border-radius:7px}
+#pbtns button:active{background:#26374f}
 #status{font-size:11px;color:var(--dim);padding:2px 8px}
 #settings{display:none;position:fixed;inset:0;z-index:21;background:rgba(5,9,15,.9);
   align-items:center;justify-content:center;padding:10px}
@@ -55,12 +108,17 @@ header button svg{display:block}
 </style>
 </head>
 <body>
-<header><input id="q" type="search" placeholder="搜索视频" autocomplete="off">
+<header><div id="q" class="qi empty" data-ph="搜视频（按 0 或点这里）"></div>
   <button id="back" type="button" aria-label="返回"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
   <button id="reload" type="button" aria-label="刷新"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
   <button id="acc" type="button" aria-label="登录"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></button>
   <button id="cfg" type="button" aria-label="设置"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.03z"/></svg></button></header>
-<div id="status">排行榜</div>
+<div id="tabs">
+  <button type="button" data-tab="rcmd">1 推荐</button>
+  <button type="button" data-tab="hot">2 热门</button>
+  <button type="button" data-tab="rank">3 排行榜</button>
+</div>
+<div id="status">推荐</div>
 <div id="list"></div>
 <div id="settings">
   <div class="box">
@@ -68,6 +126,10 @@ header button svg{display:block}
     <div class="row"><span>弹幕</span><button id="setdm" type="button">开</button></div>
     <div class="row"><span>弹幕字号</span><button id="setsz" type="button">中</button></div>
     <div class="row"><span>后台播放</span><button id="setbg" type="button">关</button></div>
+    <div class="row"><span>起播缓冲</span><button id="setwm" type="button">2MB</button></div>
+    <div class="row"><span>横竖屏</span><button id="setrot" type="button">竖屏</button></div>
+    <div class="row"><span>首页默认</span><button id="sethome" type="button">推荐</button></div>
+    <div class="row"><span>字幕</span><button id="setsub" type="button">开</button></div>
     <div class="row"><span>画质</span><button id="setqn" type="button">720P</button></div>
     <div class="row"><span>视频缓存</span><button id="setclear" type="button">清空</button></div>
     <div class="row"><span>账号</span><button id="setlogout" type="button">退出登录</button></div>
@@ -80,12 +142,32 @@ header button svg{display:block}
   <div class="row"><button id="qlogout" type="button">退出登录</button><button id="qclose" type="button">关闭</button></div>
 </div>
 <div id="player">
-  <div id="screen"><canvas id="cv" width="320" height="180"></canvas></div>
-  <button id="qbtn" type="button" title="切换画质">720P</button>
-  <div id="pinfo"></div>
+  <div id="screen"><div id="frame"><canvas id="cv" width="320" height="180"></canvas>
+      <div id="subs"></div></div>
+    <button id="rotbtn" type="button">竖</button>
+    <button id="pmenubtn" type="button">≡</button></div>
+  <div id="pbar">
+    <div id="pinfo"></div>
+    <div id="pseek"><i id="pfill"></i></div>
+    <div id="ptime">--:-- / --:--</div>
+    <div id="pbtns">
+      <button type="button" data-act="back10">« 10s</button>
+      <button type="button" data-act="play">暂停</button>
+      <button type="button" data-act="fwd10">10s »</button>
+      <button type="button" data-act="rot">横屏</button>
+      <button type="button" data-act="exit">返回</button>
+    </div>
+  </div>
+</div>
+<div id="ime" aria-hidden="true">
+  <div class="line1"><span id="ime-mode">中</span><span id="ime-comp"></span><span id="ime-page"></span></div>
+  <div id="ime-cands"></div>
+  <div class="hint">2-9 拼音 · 1 标点 · 0 空格 · ←→ 选字 · ↑↓ 翻页 · OK 上屏/搜索 · 返回 收起</div>
 </div>
 <script src="/sdk/e5.js"></script>
 <script src="qrcode.js"></script>
+<script src="ime-dict.js"></script>
+<script src="ime.js"></script>
 <script>
 (function(){
   var listEl = document.getElementById('list');
@@ -94,10 +176,160 @@ header button svg{display:block}
   var cv = document.getElementById('cv');
   var cctx = cv.getContext('2d');
   var pinfo = document.getElementById('pinfo');
+
+  /* 横竖屏：0 竖屏（默认）1 横屏 2 自动（按视频比例，用户明确要求默认关）。
+     横屏时画面转 90°，320×480 的屏上 16:9 从 320×180 变成约 270×480。 */
+  var screenEl = document.getElementById('screen');
+  var rotBtn = document.getElementById('rotbtn');
+  var rotMode = +(localStorage.getItem('bili-rot') || 0);
+  if (!(rotMode >= 0 && rotMode <= 2)) rotMode = 0;
+  /* 默认竖屏：老的自动横屏设置（2）在用户没主动选过时不再生效 */
+  if (localStorage.getItem('bili-rot-set') !== '1') rotMode = 0;
+  function rotOn(){
+    if (rotMode === 1) return true;
+    if (rotMode === 2) return cv.width > cv.height * 1.25 && cv.height >= 2;
+    return false;
+  }
+  function layout(){
+    var pbEl = document.getElementById('pbar');
+    var mbEl = document.getElementById('pmenubtn');
+    var W = screenEl.clientWidth, H = screenEl.clientHeight;
+    if (pbEl){
+      if (rotOn()){
+        pbEl.classList.add('overlay');
+        if (mbEl) mbEl.classList.add('on');
+        document.body.classList.add('rot-land');
+        document.body.classList.add('in-player');
+        /* 控制栏转 90° 贴在屏幕一边：竖着拿是底部，横着拿就是右侧，字才是正的 */
+        pbEl.style.width = Math.max(200, Math.round(H)) + 'px';
+        pbEl.style.height = '96px';
+        pbEl.style.left = '50%';
+        pbEl.style.top = '50%';
+        pbEl.style.transform = 'translate(-50%,-50%) rotate(90deg) translateY(-' +
+                               Math.max(0, Math.round(W / 2 - 48)) + 'px)';
+        flashBar();
+      }
+      else {
+        pbEl.classList.remove('overlay'); pbEl.classList.remove('show');
+        pbEl.style.cssText = '';
+        if (mbEl) mbEl.classList.remove('on');
+        document.body.classList.remove('rot-land');
+        var sc0 = document.getElementById('screen'); if (sc0) sc0.classList.remove('hideui');
+        if (window.__barTimer) { clearTimeout(window.__barTimer); window.__barTimer = 0; }
+      }
+    }
+    if (!W || !H || !cv.width || !cv.height) return;
+    /* 宽高比只认片源（首帧记下来），不再跟着画布走：
+       输出尺寸取偶数，用画布反推会让比例在 1.778/1.784 之间漂，
+       来回切换就越来越糊 */
+    var a = srcAspect || (cv.width / cv.height), x;
+    x = rotOn() ? Math.min(H, W * a) : Math.min(W, H * a);
+    var y = x / a;
+    var frameEl = document.getElementById('frame');
+    if (frameEl){
+      frameEl.style.left = '50%'; frameEl.style.top = '50%';
+      frameEl.style.width = Math.round(x) + 'px';
+      frameEl.style.height = Math.round(y) + 'px';
+      frameEl.style.transform = rotOn() ? 'translate(-50%,-50%) rotate(90deg)' : 'translate(-50%,-50%)';
+    }
+    screenEl.classList.toggle('rot', rotOn());
+    if (rotBtn) rotBtn.textContent = rotOn() ? '横' : '竖';
+    /* 播放器按这个尺寸输出画面：和显示区域一样大，页面不再缩放，字才清楚 */
+    window.__maxWant = Math.max(64, Math.round(x));
+    var rb = document.querySelector('#pbtns button[data-act="rot"]');
+    if (rb) rb.textContent = rotOn() ? '竖屏' : '横屏';
+  }
+  /* 切换横竖屏：播放中要按新尺寸重启播放器，并跳回原来的进度 */
+  function toggleRot(){
+    rotMode = rotMode === 1 ? 0 : 1;
+    try{ localStorage.setItem('bili-rot', String(rotMode)); }catch(x){}
+    layout();
+    if (!inPlayer) return;
+    /* 只改输出尺寸：播放器收到命令后重建缩放器，不重启、不重跳、声音不断 */
+    var m = window.__maxWant || 480;
+    if (ws && ws.readyState === 1){
+      try{ ws.send(new Uint8Array([6, m & 0xff, (m >> 8) & 0xff])); }catch(e){}
+    }
+    statusEl.textContent = rotOn() ? ('横屏 ' + m + 'px') : ('竖屏 ' + m + 'px');
+  }
+  if (rotBtn){
+    rotBtn.addEventListener('click', function(e){
+      if (e) e.stopPropagation();
+      rotMode = (rotMode + 1) % 3;
+      try{ localStorage.setItem('bili-rot', String(rotMode)); localStorage.setItem('bili-rot-set', '1'); }catch(x){}
+      layout();
+      statusEl.textContent = ['竖屏', '横屏（转 90°）', '自动：宽视频自动横'][rotMode];
+    });
+  }
+  window.addEventListener('resize', function(){ try{ layout(); }catch(e){} });
+
+  /* 控制栏：触摸也能操作，不必记键盘 */
+  var pbtnsEl = document.getElementById('pbtns');
+  if (pbtnsEl) pbtnsEl.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-act]');
+    if (!b) return;
+    var act = b.getAttribute('data-act');
+    if (act === 'back10') seekBy(-10000);
+    else if (act === 'fwd10') seekBy(10000);
+    else if (act === 'play'){ try{ cv.click(); }catch(x){} }
+    else if (act === 'rot') toggleRot();
+    else if (act === 'exit') leavePlayer();
+  });
+
+  /* 横屏：有交互就把控制栏亮出来，停手 3.5 秒自动收起 */
+  function flashBar(){
+    if (!rotOn()) return;
+    var bar = document.getElementById('pbar');
+    var scr = document.getElementById('screen');
+    if (bar) bar.classList.add('show');
+    if (scr) scr.classList.remove('hideui');
+    if (window.__barTimer) clearTimeout(window.__barTimer);
+    /* 3.5 秒没动静就连角上的「横」「≡」一起收掉，画面上不留东西 */
+    window.__barTimer = setTimeout(function(){
+      var b2 = document.getElementById('pbar'); if (b2) b2.classList.remove('show');
+      var s2 = document.getElementById('screen'); if (s2) s2.classList.add('hideui');
+    }, 3500);
+  }
+  ['click', 'touchstart', 'keydown'].forEach(function(ev){
+    document.addEventListener(ev, function(){ flashBar(); }, true);
+  });
+
+  /* 进度条：点哪跳哪 */
+  var seekEl = document.getElementById('pseek');
+  if (seekEl) seekEl.addEventListener('click', function(e){
+    if (!(curDurS > 0)) return;
+    var r = seekEl.getBoundingClientRect();
+    if (!r.width) return;
+    var ratio = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    seekBy(ratio * curDurS * 1000 - playerMs());
+  });
+
+  /* 横屏时控制栏是浮层：这个按钮呼出/收起 */
+  var menuBtn = document.getElementById('pmenubtn');
+  if (menuBtn) menuBtn.addEventListener('click', function(e){
+    if (e) e.stopPropagation();
+    var bar = document.getElementById('pbar');
+    if (bar) bar.classList.toggle('show');
+  });
+
+  /* 井号键切横竖屏（# 在 WPE 上可能是 Unidentified + 51） */
+  window.addEventListener('keydown', function(e){
+    if (!inPlayer) return;
+    var isHash = (e.key === '#') || ((!e.key || e.key === 'Unidentified') && e.keyCode === 51);
+    if (!isHash) return;
+    e.preventDefault();
+    toggleRot();
+  }, true);
   var items = [];
   var inPlayer = false;
   var ws = null, img = null;
   var curMs = 0, durMs = 0;
+  /* 缓冲提示：快进到还没下载的位置时播放器会静默等待，
+     这里用「多久没来新帧」把它显示出来，别让人以为卡死了 */
+  var lastFrameAt = 0, bufShown = 0, restartTried = 0, everFrame = 0, srcAspect = 0;
+  /* 字幕：默认打开；B站要登录才有字幕（接口返回 need_login 时提示一次） */
+  var subOn = localStorage.getItem('bili-sub') !== '0';
+  var subs = [], subsEl = document.getElementById('subs'), subHinted = 0;
   var shotAt = (function(){ var m = /shotat=(\d+)/.exec(location.search); return m ? +m[1] : 20; })();
   var segs = [], segIdx = 0, segSkipUntil = -1;
 
@@ -148,10 +380,11 @@ header button svg{display:block}
     try { var v = localStorage.getItem('bili.' + k); return v === null ? d : v; } catch(e){ return d; }
   }
 
+  var QN_TEXT = {16: '360P', 32: '480P', 64: '720P', 80: '1080P'};
   function syncCfgUi(){
     setDm.textContent = dmOn ? '开' : '关';
     setSz.textContent = dmSize <= 14 ? '小' : (dmSize >= 20 ? '大' : '中');
-    setQn.textContent = '720P';
+    setQn.textContent = QN_TEXT[qnPref] || '720P';
   }
 
   (function initCfg(){
@@ -264,7 +497,7 @@ header button svg{display:block}
                   setAcc(p.uname || '已登录');
                   checkLogin();
 
-  loadRank();
+  loadHome(homeTab);
                 }, 900);
               }
             }).catch(function(){});
@@ -328,14 +561,74 @@ header button svg{display:block}
     listEl.innerHTML = h || '<div style="padding:12px;color:#93a4bb">没有内容</div>';
   }
 
-  function loadRank(){
-    statusEl.textContent = '加载排行榜…';
-    fetch('/api/plugins/bili/rank').then(function(r){ return r.json(); }).then(function(d){
-      if (!d || !d.ok){ statusEl.textContent = '排行榜失败：' + ((d && d.error) || '?'); return; }
+  /* 首页三种来源：推荐（个性化，需 wbi 签名）/ 热门 / 排行榜 */
+  var HOME_NAME = {rcmd: '推荐', hot: '热门', rank: '排行榜'};
+  var homeTab = localStorage.getItem('bili-home') || 'rcmd';
+  var homeToken = 0;
+  if (!HOME_NAME[homeTab]) homeTab = 'rcmd';
+
+  function setTabUI(){
+    var bs = document.querySelectorAll('#tabs button');
+    for (var i = 0; i < bs.length; i++)
+      bs[i].classList.toggle('on', bs[i].getAttribute('data-tab') === homeTab);
+  }
+
+  function loadHome(tab){
+    homeTab = HOME_NAME[tab] ? tab : homeTab;
+    /* 点 tab 只影响这一次浏览；「默认首页」只在设置里改，不被临时切换覆盖 */
+    setTabUI();
+    var my = ++homeToken;
+    var url = homeTab === 'rank' ? '/api/plugins/bili/rank'
+            : (homeTab === 'hot' ? '/api/plugins/bili/popular'
+                                 : '/api/plugins/bili/recommend');
+    statusEl.textContent = '加载' + HOME_NAME[homeTab] + '…';
+    fetch(url).then(function(r){ return r.json(); }).then(function(d){
+      if (my !== homeToken) return;   /* 已经切到别的 tab，这个结果作废 */
+      if (!d || !d.ok){
+        statusEl.textContent = HOME_NAME[homeTab] + '失败：' + ((d && d.error) || '?');
+        /* 推荐签名/接口出问题时退回热门，别让首页空着 */
+        if (homeTab === 'rcmd'){ statusEl.textContent = '推荐不可用，切到热门…'; loadHome('hot'); }
+        return;
+      }
       items = d.list || [];
-      statusEl.textContent = '排行榜 · ' + items.length + ' 个';
+      statusEl.textContent = HOME_NAME[homeTab] + ' · ' + items.length + ' 个';
       render();
     }).catch(function(e){ statusEl.textContent = '请求失败 ' + e; });
+  }
+
+  function loadRank(){ loadHome('rank'); }
+
+  var tabsEl = document.getElementById('tabs');
+  if (tabsEl) tabsEl.addEventListener('click', function(e){
+    var b = e.target.closest('button[data-tab]');
+    if (b) loadHome(b.getAttribute('data-tab'));
+  });
+
+  var setSubBtn = document.getElementById('setsub');
+  if (setSubBtn){
+    setSubBtn.textContent = subOn ? '开' : '关';
+    setSubBtn.addEventListener('click', function(){
+      subOn = !subOn;
+      try{ localStorage.setItem('bili-sub', subOn ? '1' : '0'); }catch(e){}
+      setSubBtn.textContent = subOn ? '开' : '关';
+      if (!subOn && subsEl){ subsEl.style.display = 'none'; subs = []; }
+      if (subOn && inPlayer && current) loadSubs(current.bvid, curCid);
+      statusEl.textContent = '字幕 ' + (subOn ? '开' : '关');
+    });
+  }
+
+  var setHomeBtn = document.getElementById('sethome');
+  if (setHomeBtn){
+    setHomeBtn.textContent = HOME_NAME[homeTab];
+    setHomeBtn.addEventListener('click', function(){
+      var order = ['rcmd', 'hot', 'rank'];
+      var i = order.indexOf(homeTab);
+      homeTab = order[(i + 1) % order.length];
+      try{ localStorage.setItem('bili-home', homeTab); }catch(e){}
+      setHomeBtn.textContent = HOME_NAME[homeTab];
+      setTabUI();
+      statusEl.textContent = '首页默认：' + HOME_NAME[homeTab];
+    });
   }
 
   function loadSearch(q){
@@ -354,7 +647,9 @@ header button svg{display:block}
 
   /* ---------- 弹幕 ---------- */
   var dmAll = [], dmIdx = 0, dmLive = [], dmTrack = 0;
-  var dmOn = true, dmSize = 14;
+  /* 这里不能再赋初值：initCfg 已经从 localStorage 读回来了，
+     再写一次 true/14 会把用户设置覆盖掉（之前弹幕设置存不住就是这个） */
+  var dmOn, dmSize;
   var dmLastMs = 0;
 
   function loadDanmaku(cid){
@@ -418,6 +713,37 @@ header button svg{display:block}
     }
   }
 
+  /* 字幕：二分找当前时间那一行；换了视频要重新拉 */
+  function loadSubs(bvid, cid){
+    subs = [];
+    if (subsEl) subsEl.style.display = 'none';
+    if (!subOn || !cid) return;
+    fetch('/api/plugins/bili/subtitle?bvid=' + encodeURIComponent(bvid) + '&cid=' + cid)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.ok) return;
+        subs = d.list || [];
+        if (!subs.length && d.need_login && !subHinted){
+          subHinted = 1;
+          statusEl.textContent = '这个视频的字幕需要登录后才能看';
+        }
+      })
+      .catch(function(){});
+  }
+  function tickSubs(ms){
+    if (!subsEl) return;
+    if (!subOn || !subs.length){ if (subsEl.style.display !== 'none') subsEl.style.display = 'none'; return; }
+    var lo = 0, hi = subs.length;
+    while (lo < hi){ var mid = (lo + hi) >> 1; if (subs[mid].b <= ms) lo = mid + 1; else hi = mid; }
+    var line = subs[lo];
+    if (line && ms >= line.a && ms < line.b){
+      if (subsEl.textContent !== line.t) subsEl.textContent = line.t;
+      if (subsEl.style.display !== 'block') subsEl.style.display = 'block';
+    } else if (subsEl.style.display !== 'none'){
+      subsEl.style.display = 'none';
+    }
+  }
+
   /* 后端推来的一帧：8 字节头（宽、高各 u16 + 毫秒 u32，小端）+ RGB565 像素 */
   function onFrame(buf){
     var b = new Uint8Array(buf);
@@ -426,11 +752,23 @@ header button svg{display:block}
     var ms = (b[4] | (b[5] << 8) | (b[6] << 16) | (b[7] << 24)) >>> 0;
     if (w < 2 || h < 2) return;
     curMs = ms;
+    lastFrameAt = Date.now();
+    everFrame = 1;
+    playOffsetMs = ms; playTickAt = Date.now();
+    if (bufShown){ bufShown = 0; statusEl.textContent = '播放中'; }
     adTick(ms / 1000);
+    if (!srcAspect && w > 1 && h > 1) srcAspect = w / h;
     if (cv.width !== w || cv.height !== h){
+      /* 取证：换片/切横竖屏时尺寸不一致，是花屏的主要嫌疑 */
+      probe('frame-resize', cv.width + 'x' + cv.height + ' -> ' + w + 'x' + h + ' bytes=' + b.length);
       cv.width = w; cv.height = h; img = null;
+      layout();
+    } else if (b.length !== 8 + w * h * 2){
+      /* 帧头尺寸和实际负载对不上：解码/传输层有问题 */
+      probe('frame-mismatch', w + 'x' + h + ' expect=' + (8 + w * h * 2) + ' got=' + b.length);
     }
-    if (!img) img = cctx.createImageData(w, h);
+    /* img 也要按帧尺寸校验，不能只看画布：换片时尺寸一样但缓存是旧的 */
+    if (!img || img.width !== w || img.height !== h) img = cctx.createImageData(w, h);
     var d = img.data, o = 8, n = w * h;
     for (var i = 0, p = 0; i < n; i++, p += 4){
       var v = b[o] | (b[o + 1] << 8); o += 2;
@@ -444,6 +782,7 @@ header button svg{display:block}
     var dt = ms - dmLastMs;
     if (!(dt > 0 && dt < 400)) dt = 35;
     drawDanmaku(ms, dt);
+    tickSubs(ms);
     dmLastMs = ms;
     if (shotWant && !shotDone && ++shotFrames >= shotAt){ shotDone = true; shotUpload(w, h); }
   }
@@ -495,6 +834,11 @@ header button svg{display:block}
     ws.binaryType = 'arraybuffer';
     ws.onopen = function(){
       statusEl.textContent = '播放中';
+      if (pendingSeekMs >= 0){
+        var at = pendingSeekMs; pendingSeekMs = -1;
+        try{ ws.send(seekCmd(at)); }catch(e){}
+        playOffsetMs = at; playTickAt = Date.now();
+      }
       playOffsetMs = 0; playTickAt = Date.now(); playing = true;
       probe('ws-open', url);
     };
@@ -502,11 +846,13 @@ header button svg{display:block}
     ws.onerror = function(){ probe('ws-error', url); };
     ws.onclose = function(){
       ws = null;
+      /* 播放断了就把宿主菜单还回去，别让人卡在全屏黑屏里出不来 */
+      hostChrome(false);
       if (!inPlayer) return;
       /* 播放器进程刚起来时端口还没监听，第一次连必然失败，重试几次 */
       if (tries < 15){
         statusEl.textContent = '连接播放器…';
-        setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 400);
+        setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 250);
         return;
       }
       statusEl.textContent = '播放结束';
@@ -516,19 +862,26 @@ header button svg{display:block}
 
   /* 后台下载是异步的，这里轮询到 ready 为止（最多 150 秒） */
   function waitReady(n, my){
-    return fetch('/api/plugins/bili/ready').then(function(r){ return r.json(); }).then(function(d){
+    return fetch('/api/plugins/bili/ready?wk=' + wmKb).then(function(r){ return r.json(); }).then(function(d){
       /* 换了视频就停止轮询，别让上一次的下载把界面文字改回去 */
       if (my !== undefined && my !== playToken) return null;
-      if (d && d.ready) return d;
+      /* 门槛一到就先开播放器：e5play 启动要 2 秒左右，
+         这段时间正好和剩下的下载重叠。 */
+      if (d && (d.ready || (d.bytes && d.bytes >= wmKb * 1024))) return d;
       if (d && d.state === 'failed'){ probe('dl-failed', String(d.code)); return null; }
       if (d && d.state === 'downloading' && d.bytes) statusEl.textContent = '下载中… ' + Math.round(d.bytes / 1048576) + 'MB';
-      if (n > 150) return null;
+      if (n > 500) return null;
       statusEl.textContent = '下载中… ' + n + 's';
-      return new Promise(function(res){ setTimeout(function(){ res(waitReady(n + 1, my)); }, 1000); });
+      /* 300ms 一轮：门槛只有半兆，一秒一轮会白白多等近一秒 */
+      return new Promise(function(res){ setTimeout(function(){ res(waitReady(n + 1, my)); }, 300); });
     });
   }
 
   var bgAudio = localStorage.getItem('bili-bg') === '1';
+  /* 起播门槛，单位 KB。512KB 足够解出开头几帧。 */
+  var wmKb = +(localStorage.getItem('bili-wk') || 512);
+  if (!(wmKb > 0) || wmKb < 256 || wmKb > 65536) wmKb = 512;
+  function wmLabel(){ return wmKb >= 1024 ? (wmKb / 1024) + 'MB' : wmKb + 'KB'; }
   var bgPlaying = false, lastPort = 9511;
 
   function syncBg(){
@@ -543,17 +896,23 @@ header button svg{display:block}
     if (!it) return;
     curIndex = i;
     var my = ++playToken;
+    /* 取流和下载也要禁止息屏：下载几十兆要好几分钟，空闲计时器 60 秒就会锁屏 */
+    try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
     /* 先把上一个播放器收掉：不停就开下一个，端口和缓存文件都被占着，
        第二个视频会一直卡在加载。 */
     closeWs();
+    pendingSeekMs = -1;
+    srcAspect = 0;
+    img = null;
     bgPlaying = false;
     inPlayer = false;
     player.classList.remove('on');
     listEl.style.display = '';
     statusEl.textContent = '准备中…';
     probe('play-start', it.bvid);
-    fetch('/api/plugins/bili/player-stop').catch(function(){}).then(function(){
-      return new Promise(function(res){ setTimeout(res, 400); });
+    fetch('/api/plugins/bili/player-stop').then(function(r){ return r.json(); }).catch(function(){}).then(function(st){
+      /* 只有确实停掉了旧播放器才需要等它释放缓存文件 */
+      return new Promise(function(res){ setTimeout(res, (st && st.stopped) ? 400 : 0); });
     }).then(function(){
       if (my !== playToken) return null;
       statusEl.textContent = '取流与缓存中…';
@@ -573,21 +932,26 @@ header button svg{display:block}
       })
       .then(function(d){
         if (my !== playToken) return null;
+        restartTried = 0; everFrame = 0;
         if (!d){ statusEl.textContent = '下载失败'; return null; }
-        pinfo.textContent = it.title + ' · ' + Math.round((d.size || 0) / 1048576) + 'MB';
+        pinfo.textContent = it.title + ' · ' + Math.round((d.size || d.bytes || 0) / 1048576) + 'MB';
         loadSegments(it.bvid);
         loadDanmaku(curCid);
+        loadSubs(it.bvid, curCid);
         statusEl.textContent = '启动播放器…';
-        return fetch('/api/plugins/bili/player-start').then(function(r){ return r.json(); });
+        return fetch('/api/plugins/bili/player-start?max=' + (window.__maxWant || 480)).then(function(r){ return r.json(); });
       })
       .then(function(st){
         if (my !== playToken) return null;
         probe('start-done', st ? (st.ok ? 'ok' : ('err:' + st.error)) : 'null');
         if (!st || !st.ok){ if (st) statusEl.textContent = '播放器启动失败：' + (st.error || '?'); return; }
         inPlayer = true;
+        document.body.classList.add('in-player');
         lastPort = st.port || 9511;
         listEl.style.display = 'none';
         player.classList.add('on');
+        /* 进播放器时先按当前横竖屏设置摆一次画面 */
+        try{ layout(); }catch(e){}
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
         connectPlayer(lastPort, 0);
@@ -602,18 +966,33 @@ header button svg{display:block}
   var playOffsetMs = 0, playTickAt = 0, playing = false, curDurS = 0;
 
   function playerMs(){
+    /* 缓冲（没有新帧）时进度就停在最后一帧，不能按墙钟继续跑，
+       否则快进到未下载区时会显示一个根本还没播到的时间 */
+    if (bufShown) return playOffsetMs;
     return playOffsetMs + (playing ? (Date.now() - playTickAt) : 0);
   }
 
+  var pendingSeekMs = -1;
+  /* 跳转命令：byte 5 + 4 字节小端毫秒 */
+  function seekCmd(ms){
+    var b = new Uint8Array(5);
+    b[0] = 5;
+    b[1] = ms & 0xff; b[2] = (ms >> 8) & 0xff;
+    b[3] = (ms >> 16) & 0xff; b[4] = (ms >>> 24) & 0xff;
+    return b;
+  }
   function seekBy(deltaMs){
     if (!ws || ws.readyState !== 1) return;
     var target = Math.max(0, playerMs() + deltaMs);
     if (curDurS > 0 && target > curDurS * 1000) target = curDurS * 1000;
-    var b = new Uint8Array(5);
-    b[0] = 5;
-    b[1] = target & 0xff; b[2] = (target >> 8) & 0xff;
-    b[3] = (target >> 16) & 0xff; b[4] = (target >>> 24) & 0xff;
-    try{ ws.send(b); }catch(e){ return; }
+    /* 往前跳时让后端从目标位置续传，跳过的那几十兆不用等 */
+    if (deltaMs > 0 && curDurS > 0){
+      fetch('/api/plugins/bili/seek?ms=' + Math.round(target) + '&dur=' + Math.round(curDurS * 1000))
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d && d.need) statusEl.textContent = '从目标位置续传…'; })
+        .catch(function(){});
+    }
+    try{ ws.send(seekCmd(target)); }catch(e){ return; }
     playOffsetMs = target; playTickAt = Date.now();
     statusEl.textContent = (deltaMs < 0 ? '后退 ' : '前进 ') + Math.abs(deltaMs / 1000) + 's · ' +
                            Math.floor(target / 1000) + 's';
@@ -640,8 +1019,14 @@ header button svg{display:block}
     closeWs();
     fetch('/api/plugins/bili/player-stop').catch(function(){});
     cv.width = 320; cv.height = 180;
+    /* 关键：ImageData 缓存必须一起丢掉。它的尺寸是按上一部片子分配的，
+       换片后如果只改画布尺寸、不清 img，新帧只会覆盖缓存的前半段，
+       剩下的还是上一部片子的像素 —— 表现就是上下半屏各是不同视频。 */
+    img = null;
     cctx.clearRect(0, 0, 320, 180);
     inPlayer = false; bgPlaying = false; playing = false;
+    document.body.classList.remove('in-player');
+    hostChrome(false);
     player.classList.remove('on');
     listEl.style.display = '';
     statusEl.textContent = '排行榜 · ' + items.length + ' 个';
@@ -653,6 +1038,7 @@ header button svg{display:block}
     if (bgAudio){
       /* 后台播放是手动开的：画面收起来，播放器进程和声音继续 */
       inPlayer = false; bgPlaying = true;
+      document.body.classList.remove('in-player');
       player.classList.remove('on');
       listEl.style.display = '';
       statusEl.textContent = '后台播放中 · 点这里回到画面';
@@ -674,12 +1060,25 @@ header button svg{display:block}
     connectPlayer(lastPort || 9511, 0);
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
   });
-  document.getElementById('q').addEventListener('keydown', function(e){
-    if (e.key === 'Enter'){ e.preventDefault(); loadSearch(this.value); }
+  /* 应用内置输入法：点搜索框（或列表页按 0）直接在这里打字，不再走宿主那套 */
+  var qEl = document.getElementById('q');
+  if (window.E5IME) E5IME.init({ search: function(t){ loadSearch(t || ''); } });
+  qEl.addEventListener('click', function(){
+    if (window.E5IME) E5IME.open();
   });
+  /* 自检：只在 ?imetest=1 时跑，结果进 /tmp/bili-probe.log（真机 WebKit 验证用） */
+  try{
+    if (new URLSearchParams(location.search).get('imetest') === '1' && window.E5IME){
+      setTimeout(function(){
+        var r;
+        try { r = E5IME.selfTest(); } catch(e){ r = {ok:false, error:'' + e}; }
+        probe('ime-selftest', JSON.stringify(r));
+      }, 700);
+    }
+  }catch(e){}
   document.getElementById('reload').addEventListener('click', function(){
     if (inPlayer){ document.getElementById('back').click(); }
-    loadRank();
+    loadHome(homeTab);
   });
 
   window.addEventListener('pagehide', function(){
@@ -699,10 +1098,13 @@ header button svg{display:block}
       if (!hostStyleInjected){
         var st = d.createElement('style');
         st.id = 'e5-bili-chrome';
-        st.textContent = 'body.' + HOST_CLASS + ' #mobile-toolbar,body.' + HOST_CLASS +
-          ' #mobile-nav{display:none!important}' +
-          'body.' + HOST_CLASS + ' #app-frame{top:var(--status-h);bottom:0;' +
-          'height:calc(100% - var(--status-h))!important}';
+        /* 注意：这里不能给 #app-frame 加 z-index。
+           宿主的输入法在 #ime-frame 里（z-index:auto），iframe 一旦被抬高，
+           输入法就会被整个盖住 —— 表现就是点搜索框没反应、调不出键盘。 */
+        st.textContent = 'body.' + HOST_CLASS + ' #bar,body.' + HOST_CLASS +
+          ' #mobile-toolbar,body.' + HOST_CLASS + ' #mobile-nav{display:none!important}' +
+          'body.' + HOST_CLASS + ' #app-frame{top:0!important;bottom:0!important;' +
+          'height:100%!important}';
         d.head.appendChild(st);
         hostStyleInjected = true;
       }
@@ -767,7 +1169,11 @@ header button svg{display:block}
     location.href = '/';
   }
 
-  function onKey(kind){
+  function onKey(kind, key){
+    /* 输入法开着时所有键先给它：2-9 在这里是拼音键，不能再拿去切首页 */
+    if (window.E5IME && E5IME.isOpen()){
+      if (E5IME.key(kind, key)) return true;
+    }
     if (settingsEl.classList.contains('on')){
       if (kind === 'back'){ settingsEl.classList.remove('on'); return true; }
       return false;
@@ -776,12 +1182,36 @@ header button svg{display:block}
       if (kind === 'back'){ loginEl.classList.remove('on'); stopQr(); return true; }
       return false;
     }
+    /* 列表页：1/2/3 切首页来源，0 打开搜索 */
+    if (!inPlayer && kind === 'digit'){
+      if (key === '0'){ if (window.E5IME) E5IME.open(); return true; }
+      var tabOf = { '1': 'rcmd', '2': 'hot', '3': 'rank' }[key];
+      if (tabOf){ loadHome(tabOf); return true; }
+    }
     if (inPlayer){
       if (kind === 'ok'){ cv.click(); return true; }
-      if (kind === 'left'){ seekBy(-10000); return true; }
-      if (kind === 'right'){ seekBy(10000); return true; }
-      if (kind === 'back'){ leavePlayer(); return true; }
+      /* 横屏时画面转了 90°：画面的左/右对应物理的上/下，按键跟着转 */
+      if (rotOn()){
+        if (kind === 'up'){ seekBy(-10000); return true; }
+        if (kind === 'down'){ seekBy(10000); return true; }
+      } else {
+        if (kind === 'left'){ seekBy(-10000); return true; }
+        if (kind === 'right'){ seekBy(10000); return true; }
+      }
+      if (kind === 'back'){
+        /* 横屏先回竖屏（符合直觉：退一步先退到竖屏），再按才退出播放 */
+        if (rotOn()){ toggleRot(); return true; }
+        leavePlayer(); return true;
+      }
       return false;
+    }
+    /* 列表页：1/2/3 切首页来源，左右键也切 */
+    if (kind === 'left' || kind === 'right'){
+      var order = ['rcmd', 'hot', 'rank'];
+      var i0 = order.indexOf(homeTab);
+      i0 = kind === 'left' ? (i0 + order.length - 1) % order.length : (i0 + 1) % order.length;
+      loadHome(order[i0]);
+      return true;
     }
     if (kind === 'up'){ selectCard(selIdx <= 0 ? cards().length - 1 : selIdx - 1); return true; }
     if (kind === 'down'){ selectCard(selIdx < 0 ? 0 : selIdx + 1); return true; }
@@ -796,11 +1226,55 @@ header button svg{display:block}
     return false;
   }
 
-  if (typeof e5 !== 'undefined' && e5.onKey) e5.onKey(function(k){ return onKey(k.kind); });
+  if (typeof e5 !== 'undefined' && e5.onKey) e5.onKey(function(k){
+    return onKey(k && k.kind, k && k.key);
+  });
   hostKeyForward();
-  hostChrome(true);
+  /* 插件自己的页面已经占满屏，宿主底部菜单不要出现：
+     打开插件就隐藏，只有退出插件时才还回去（原来只在播放器里隐藏） */
   setInterval(function(){ hostChrome(true); }, 1000);
+  /* 1.2 秒没有新帧就显示缓冲中（快进到未下载区域、或下载跟不上时会这样） */
+  setInterval(function(){
+    if (!inPlayer || !lastFrameAt) return;
+    var gap = Date.now() - lastFrameAt;
+    if (gap > 1200){
+      if (!bufShown){ bufShown = 1; statusEl.textContent = '缓冲中…（等下载追上来）'; }
+      /* 8 秒还一帧都没有：可能播放器在索引没写全时被拉起，已经退出了。
+         重启一次（只试一次，避免下载真的断了时无限重启）。 */
+      if (gap > 8000 && !restartTried && !everFrame){
+        restartTried = 1;
+        statusEl.textContent = '重启播放器…';
+        fetch('/api/plugins/bili/player-start').then(function(r){ return r.json(); })
+          .then(function(st){ if (st && st.ok){ lastFrameAt = Date.now(); connectPlayer(st.port || lastPort, 0); } })
+          .catch(function(){});
+      }
+    } else if (bufShown){ bufShown = 0; statusEl.textContent = '播放中'; }
+    /* 时间与按钮状态跟着真实进度走 */
+    var tEl = document.getElementById('ptime');
+    if (tEl){
+      var cur = Math.max(0, Math.round(playerMs() / 1000));
+      var tot = curDurS > 0 ? Math.round(curDurS) : 0;
+      var mm = function(v){ return (v < 10 ? '0' : '') + v; };
+      tEl.textContent = mm(Math.floor(cur / 60)) + ':' + mm(cur % 60) + ' / ' +
+                        (tot ? (mm(Math.floor(tot / 60)) + ':' + mm(tot % 60)) : '--:--');
+    }
+    var pb = document.querySelector('#pbtns button[data-act="play"]');
+    if (pb) pb.textContent = playing ? '暂停' : '播放';
+    var fill = document.getElementById('pfill');
+    if (fill && curDurS > 0){
+      var ratio = Math.max(0, Math.min(1, (playerMs() / 1000) / curDurS));
+      fill.style.width = (ratio * 100).toFixed(1) + '%';
+    }
+  }, 800);
   window.addEventListener('pagehide', function(){ hostChrome(false); }, true);
+  /* 插件被切到后台/宿主把页面藏起来时，一定要把播放器停掉：
+     否则 WS 还连着，解码和声音会继续在后台跑（表现就是"退出了还有声音"） */
+  document.addEventListener('visibilitychange', function(){
+    if (document.hidden && inPlayer && !bgAudio) stopPlayback();
+  });
+  window.addEventListener('pagehide', function(){
+    try{ (new Image()).src = '/api/plugins/bili/player-stop?t=' + Date.now(); }catch(e){}
+  });
 
   var setBgBtn = document.getElementById('setbg');
   if (setBgBtn) setBgBtn.addEventListener('click', function(){
@@ -811,23 +1285,54 @@ header button svg{display:block}
   });
   syncBg();
 
-  var QN_NAME = {16: '360P', 32: '480P', 64: '720P'};
-  function syncQn(){
-    var b = document.getElementById('setqn');
-    if (b) b.textContent = QN_NAME[qnPref] || (qnPref + 'P');
-    var q = document.getElementById('qbtn');
-    if (q) q.textContent = QN_NAME[qnPref] || (qnPref + 'P');
+  var setRotBtn = document.getElementById('setrot');
+  if (setRotBtn){
+    var ROT_NAME = ['竖屏', '横屏', '自动'];
+    setRotBtn.textContent = ROT_NAME[rotMode] || '竖屏';
+    setRotBtn.addEventListener('click', function(){
+      rotMode = (rotMode + 1) % 3;
+      try{
+        localStorage.setItem('bili-rot', String(rotMode));
+        localStorage.setItem('bili-rot-set', '1');
+      }catch(x){}
+      setRotBtn.textContent = ROT_NAME[rotMode];
+      layout();
+      if (inPlayer && ws && ws.readyState === 1){
+        var m = window.__maxWant || 480;
+        try{ ws.send(new Uint8Array([6, m & 0xff, (m >> 8) & 0xff])); }catch(e){}
+      }
+      statusEl.textContent = '横竖屏：' + ROT_NAME[rotMode] + '，下个视频或现在生效';
+    });
   }
+
+  var setWmBtn = document.getElementById('setwm');
+  if (setWmBtn){
+    setWmBtn.textContent = wmLabel();
+    setWmBtn.addEventListener('click', function(){
+      wmKb = wmKb === 512 ? 1024 : (wmKb === 1024 ? 2048 : (wmKb === 2048 ? 4096 : 512));
+      localStorage.setItem('bili-wk', String(wmKb));
+      setWmBtn.textContent = wmLabel();
+      statusEl.textContent = '起播缓冲 ' + wmLabel() + '，下个视频生效';
+    });
+  }
+
+  var QN_NAME = {16: '360P', 32: '480P', 64: '720P'};
+  function syncQn(){ syncCfgUi(); }
   var setQnBtn = document.getElementById('setqn');
   if (setQnBtn) setQnBtn.addEventListener('click', function(){
     qnPref = qnPref === 16 ? 32 : (qnPref === 32 ? 64 : 16);
     saveCfg('qn', qnPref);
-    syncQn();
-    statusEl.textContent = '画质 ' + (QN_NAME[qnPref] || qnPref) + '，下个视频生效';
+    syncCfgUi();
+    if (inPlayer){
+      statusEl.textContent = '切到 ' + (QN_NAME[qnPref] || qnPref) + '，重新缓冲…';
+      play(curIndex);
+    } else {
+      statusEl.textContent = '画质 ' + (QN_NAME[qnPref] || qnPref) + '，下个视频生效';
+    }
   });
-  syncQn();
+  syncCfgUi();
 
-  loadRank();
+  loadHome(homeTab);
   try{
     if (new URLSearchParams(location.search).get('autoplay') === '1'){
       var waiter = setInterval(function(){
