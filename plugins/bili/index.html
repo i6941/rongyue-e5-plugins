@@ -39,18 +39,12 @@ header input{flex:1 1 auto;min-width:0;height:28px;padding:0 8px;font:inherit;fo
 header button{height:28px;width:30px;padding:0;display:flex;align-items:center;justify-content:center;
   font:inherit;font-size:13px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 header button svg{display:block}
-#tabs{display:flex;gap:6px;padding:4px 7px 0;flex:0 0 auto}
-#tabs button{flex:1 1 0;height:28px;padding:0;font:inherit;font-size:12px;color:#a9bad0;
-  background:#16202f;border:1px solid #243349;border-radius:7px}
+#tabs{display:flex;gap:5px;padding:4px 7px 3px;flex:0 0 auto;overflow-x:auto;scrollbar-width:none;white-space:nowrap}
+#tabs::-webkit-scrollbar{display:none}
+#tabs button{flex:0 0 auto;height:28px;padding:0 10px;font:inherit;font-size:12px;color:#a9bad0;
+  background:#16202f;border:1px solid #243349;border-radius:14px}
 #tabs button.on{color:#fff;background:#2a3c55;border-color:#3f5876;box-shadow:inset 0 -2px 0 var(--accent)}
-/* 搜索/分区/历史是"临时视图"：这些时候不显示首页那排 tab */
 body.tempview #tabs { display: none !important; }
-#regions{display:flex;gap:5px;padding:4px 7px 2px;flex:0 0 auto;overflow-x:auto;scrollbar-width:none}
-#regions::-webkit-scrollbar{display:none}
-#regions button{flex:0 0 auto;height:26px;padding:0 9px;font:inherit;font-size:12px;color:#a9bad0;
-  background:#16202f;border:1px solid #243349;border-radius:13px}
-#regions button.on{color:#06101c;background:var(--accent);border-color:var(--accent)}
-body.tempview #regions { display: none !important; }
 #list{flex:1 1 auto;overflow-y:auto;padding:6px}
 .card{display:flex;gap:7px;padding:6px;border-bottom:1px solid #16202f}
 .card:active{background:#16202f}
@@ -223,15 +217,25 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
 <header><div id="q" class="qi empty" data-ph="搜视频（按 0 或点这里）"></div>
   <button id="back" type="button" aria-label="返回"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
   <button id="reload" type="button" aria-label="刷新"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg></button>
+  <button id="hist" type="button" aria-label="历史" title="历史"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
   <button id="acc" type="button" aria-label="登录"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-7 8-7s8 3 8 7"/></svg></button>
   <button id="cfg" type="button" aria-label="设置"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.56-1.1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.08a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.08a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1.03z"/></svg></button></header>
 <div id="tabs">
   <button type="button" data-tab="rcmd">1 推荐</button>
   <button type="button" data-tab="hot">2 热门</button>
-  <button type="button" data-tab="rank">3 排行榜</button>
-  <button type="button" data-tab="history">4 历史</button>
+  <button type="button" data-tab="rank">3 排行</button>
+  <button type="button" data-tab="anime">4 番剧</button>
+  <button type="button" data-tab="guochuang">5 国创</button>
+  <button type="button" data-tab="movie">6 电影</button>
+  <button type="button" data-tab="tv">7 剧集</button>
+  <button type="button" data-tab="doc">8 纪录</button>
+  <button type="button" data-tab="douga">9 动画</button>
+  <button type="button" data-tab="game">游戏</button>
+  <button type="button" data-tab="music">音乐</button>
+  <button type="button" data-tab="tech">科技</button>
+  <button type="button" data-tab="cinephile">影视</button>
+  <button type="button" data-tab="history">历史</button>
 </div>
-<div id="regions"></div>
 <div id="status">推荐</div>
 <div id="list"></div>
 <div id="settings">
@@ -282,6 +286,8 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
             <button type="button" data-act="back10">« 10s</button>
             <button type="button" data-act="play" id="land-play">暂停</button>
             <button type="button" data-act="fwd10">10s »</button>
+            <button type="button" id="land-btn-like">点赞</button>
+            <button type="button" id="land-btn-fav">收藏</button>
             <button type="button" id="land-dm">弹幕</button>
             <button type="button" id="land-rot">竖屏</button>
           </div>
@@ -297,8 +303,9 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       <button type="button" data-act="back10">« 10s</button>
       <button type="button" data-act="play">暂停</button>
       <button type="button" data-act="fwd10">10s »</button>
+      <button type="button" id="btn-like">点赞</button>
+      <button type="button" id="btn-fav">收藏</button>
       <button type="button" data-act="rot">横屏</button>
-      <button type="button" data-act="exit">返回</button>
     </div>
   </div>
 </div>
@@ -407,8 +414,10 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   /* 控制栏：触摸也能操作，不必记键盘 */
   var pbtnsEl = document.getElementById('pbtns');
   if (pbtnsEl) pbtnsEl.addEventListener('click', function(e){
-    var b = e.target.closest('button[data-act]');
+    var b = e.target.closest('button');
     if (!b) return;
+    if (b.id === 'btn-like'){ toggleLike(); return; }
+    if (b.id === 'btn-fav'){ toggleFav(); return; }
     var act = b.getAttribute('data-act');
     if (act === 'back10') seekBy(-10000);
     else if (act === 'fwd10') seekBy(10000);
@@ -465,6 +474,8 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       if (act === 'back10') seekBy(-10000);
       else if (act === 'fwd10') seekBy(10000);
       else if (act === 'play'){ try{ cv.click(); }catch(x){} }
+      else if (b.id === 'land-btn-like') toggleLike();
+      else if (b.id === 'land-btn-fav') toggleFav();
       else if (b.id === 'land-rot' || b.id === 'land-btn-port') toggleRot();
       else if (b.id === 'land-btn-cfg'){
         var cfgBtn = document.getElementById('cfg');
@@ -737,106 +748,76 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     listEl.innerHTML = h || '<div style="padding:12px;color:#93a4bb">没有内容</div>';
   }
 
-  /* 首页三种来源：推荐（个性化，需 wbi 签名）/ 热门 / 排行榜 */
-  var HOME_NAME = {rcmd: '推荐', hot: '热门', rank: '排行榜', history: '历史'};
+  /* 首页全部分类在同一层级平铺：推荐、热门、排行、番剧、国创、电影、剧集、纪录、动画、游戏、音乐、科技、影视、历史 */
+  var HOME_TABS = [
+    { key: 'rcmd', name: '推荐', url: '/api/plugins/bili/recommend' },
+    { key: 'hot', name: '热门', url: '/api/plugins/bili/popular' },
+    { key: 'rank', name: '排行', url: '/api/plugins/bili/rank' },
+    { key: 'anime', name: '番剧', url: '/api/plugins/bili/pgc?season_type=1' },
+    { key: 'guochuang', name: '国创', url: '/api/plugins/bili/pgc?season_type=4' },
+    { key: 'movie', name: '电影', url: '/api/plugins/bili/pgc?season_type=2' },
+    { key: 'tv', name: '剧集', url: '/api/plugins/bili/pgc?season_type=5' },
+    { key: 'doc', name: '纪录', url: '/api/plugins/bili/pgc?season_type=3' },
+    { key: 'douga', name: '动画', url: '/api/plugins/bili/region?rid=1' },
+    { key: 'game', name: '游戏', url: '/api/plugins/bili/region?rid=4' },
+    { key: 'music', name: '音乐', url: '/api/plugins/bili/region?rid=3' },
+    { key: 'tech', name: '科技', url: '/api/plugins/bili/region?rid=188' },
+    { key: 'cinephile', name: '影视', url: '/api/plugins/bili/region?rid=181' },
+    { key: 'history', name: '历史', url: '/api/plugins/bili/history' }
+  ];
+  var HOME_MAP = {};
+  HOME_TABS.forEach(function(t){ HOME_MAP[t.key] = t; });
+  var HOME_ORDER = HOME_TABS.map(function(t){ return t.key; });
+
   var homeTab = localStorage.getItem('bili-home') || 'rcmd';
   var homeToken = 0, searchQuery = '';
-  if (!HOME_NAME[homeTab]) homeTab = 'rcmd';
+  if (!HOME_MAP[homeTab]) homeTab = 'rcmd';
 
   function setTabUI(){
     var bs = document.querySelectorAll('#tabs button');
-    for (var i = 0; i < bs.length; i++)
-      bs[i].classList.toggle('on', bs[i].getAttribute('data-tab') === homeTab);
+    for (var i = 0; i < bs.length; i++){
+      var isOn = bs[i].getAttribute('data-tab') === homeTab;
+      bs[i].classList.toggle('on', isOn);
+      if (isOn) try{ bs[i].scrollIntoView({ inline: 'nearest', block: 'nearest' }); }catch(e){}
+    }
   }
 
-  /* 当前是不是"临时视图"（搜索结果 / 某个分区 / 直播）：这些时候不显示首页 tab */
+  /* 当前是不是"临时视图"（搜索结果 / 分集选单）：这些时候不显示首页 tab */
   var tempView = false;
   function setTemp(on){
     tempView = !!on;
     document.body.classList.toggle('tempview', tempView);
   }
 
-  function homeUrl(tab){
-    if (tab === 'rank') return '/api/plugins/bili/rank';
-    if (tab === 'hot') return '/api/plugins/bili/popular';
-    if (tab === 'history') return '/api/plugins/bili/history';
-    return '/api/plugins/bili/recommend';
-  }
-
   function loadHome(tab){
-    homeTab = HOME_NAME[tab] ? tab : homeTab;
-    /* 点 tab 只影响这一次浏览；「默认首页」只在设置里改，不被临时切换覆盖 */
+    var target = HOME_MAP[tab] || HOME_MAP['rcmd'];
+    homeTab = target.key;
     setTemp(false);
+    seasonStack = null;
     setTabUI();
     var my = ++homeToken;
-    statusEl.textContent = '加载' + HOME_NAME[homeTab] + '…';
-    fetch(homeUrl(homeTab)).then(function(r){ return r.json(); }).then(function(d){
-      if (my !== homeToken) return;   /* 已经切到别的 tab，这个结果作废 */
+    statusEl.textContent = '加载' + target.name + '…';
+    fetch(target.url).then(function(r){ return r.json(); }).then(function(d){
+      if (my !== homeToken) return;
       if (!d || !d.ok){
         if (d && d.login){
           items = [];
-          statusEl.textContent = '历史需要登录：点右上角头像扫码';
+          statusEl.textContent = '历史记录需要登录：点右上角头像扫码';
           render();
           return;
         }
-        statusEl.textContent = HOME_NAME[homeTab] + '失败：' + ((d && d.error) || '?');
-        /* 推荐签名/接口出问题时退回热门，别让首页空着 */
+        statusEl.textContent = target.name + '失败：' + ((d && d.error) || '?');
         if (homeTab === 'rcmd'){ statusEl.textContent = '推荐不可用，切到热门…'; loadHome('hot'); }
         return;
       }
       items = d.list || [];
-      statusEl.textContent = HOME_NAME[homeTab] + ' · ' + items.length + ' 个';
+      statusEl.textContent = target.name + ' · ' + items.length + ' 个';
       render();
+      selectCard(0);
     }).catch(function(e){ statusEl.textContent = '请求失败 ' + e; });
   }
 
-  /* 分区入口：点一下进该分区的排行榜（临时视图） */
-  var regionsEl = document.getElementById('regions');
-  var REGION_TABS = [{ key: 'live', name: '直播', rid: -1 }];
-  function drawRegions(){
-    if (!regionsEl) return;
-    var list = REGION_TABS.slice();
-    fetch('/api/plugins/bili/regions').then(function(r){ return r.json(); }).then(function(d){
-      if (!d || !d.ok) return;
-      list = list.concat(d.list || []);
-      renderRegions(list);
-    }).catch(function(){ renderRegions(list); });
-  }
   var seasonStack = null, seasonStackTitle = '';
-  function renderRegions(list){
-    if (!regionsEl) return;
-    regionsEl.replaceChildren();
-    list.forEach(function(r){
-      var b = document.createElement('button');
-      b.type = 'button';
-      b.textContent = r.name;
-      b.setAttribute('data-region', r.key);
-      if (r.rid !== undefined) b.setAttribute('data-rid', r.rid);
-      if (r.season_type !== undefined) b.setAttribute('data-st', r.season_type);
-      b.addEventListener('click', function(){ openRegion(r); });
-      regionsEl.appendChild(b);
-    });
-  }
-  function openRegion(r){
-    var my = ++homeToken;
-    setTemp(true);
-    seasonStack = null;
-    statusEl.textContent = '加载' + r.name + '…';
-    var url = r.season_type ? ('/api/plugins/bili/pgc?season_type=' + r.season_type)
-            : (r.key === 'live' ? '/api/plugins/bili/live'
-            : ('/api/plugins/bili/region?rid=' + encodeURIComponent(r.rid)));
-    fetch(url).then(function(x){ return x.json(); }).then(function(d){
-      if (my !== homeToken) return;
-      if (!d || !d.ok){ statusEl.textContent = r.name + '失败：' + ((d && d.error) || '?'); return; }
-      items = d.list || [];
-      statusEl.textContent = r.name + ' · ' + items.length + ' 个 · 返回键回首页';
-      render();
-      selectCard(0);
-      var bs = regionsEl ? regionsEl.querySelectorAll('button') : [];
-      for (var i = 0; i < bs.length; i++)
-        bs[i].classList.toggle('on', bs[i].getAttribute('data-region') === r.key);
-    }).catch(function(e){ statusEl.textContent = '请求失败 ' + e; });
-  }
   function openSeason(it){
     statusEl.textContent = '加载 ' + it.title + ' 分集…';
     fetch('/api/plugins/bili/season?ssid=' + it.ssid).then(function(r){ return r.json(); }).then(function(d){
@@ -859,9 +840,6 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       selectCard(0);
     }).catch(function(e){ statusEl.textContent = '获取分集失败 ' + e; });
   }
-  if (regionsEl) drawRegions();
-
-  function loadRank(){ loadHome('rank'); }
 
   var tabsEl = document.getElementById('tabs');
   if (tabsEl) tabsEl.addEventListener('click', function(e){
@@ -913,16 +891,17 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   }
 
   var setHomeBtn = document.getElementById('sethome');
+  function homeName(k){ return (HOME_MAP[k] || {}).name || k; }
   if (setHomeBtn){
-    setHomeBtn.textContent = HOME_NAME[homeTab];
+    setHomeBtn.textContent = homeName(homeTab);
     setHomeBtn.addEventListener('click', function(){
-      var order = ['rcmd', 'hot', 'rank'];
+      var order = ['rcmd', 'hot', 'rank', 'anime', 'guochuang', 'movie', 'tv', 'doc'];
       var i = order.indexOf(homeTab);
       homeTab = order[(i + 1) % order.length];
       try{ localStorage.setItem('bili-home', homeTab); }catch(e){}
-      setHomeBtn.textContent = HOME_NAME[homeTab];
+      setHomeBtn.textContent = homeName(homeTab);
       setTabUI();
-      statusEl.textContent = '首页默认：' + HOME_NAME[homeTab];
+      statusEl.textContent = '首页默认：' + homeName(homeTab);
     });
   }
 
@@ -941,6 +920,68 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
         statusEl.textContent = '搜索 “' + q + '” · ' + items.length + ' 个 · 返回键回首页';
         render();
       }).catch(function(e){ statusEl.textContent = '搜索请求失败 ' + e; });
+  }
+
+  /* ---------- 点赞与收藏 ---------- */
+  var curLiked = false, curFaved = false;
+  function updateLikeFavUI(){
+    var l1 = document.getElementById('btn-like'), l2 = document.getElementById('land-btn-like');
+    var f1 = document.getElementById('btn-fav'), f2 = document.getElementById('land-btn-fav');
+    var likeTxt = curLiked ? '已赞 👍' : '点赞';
+    var favTxt = curFaved ? '已藏 ⭐' : '收藏';
+    if (l1) l1.textContent = likeTxt;
+    if (l2) l2.textContent = likeTxt;
+    if (f1) f1.textContent = favTxt;
+    if (f2) f2.textContent = favTxt;
+  }
+  function syncRelation(bvid){
+    curLiked = false; curFaved = false; updateLikeFavUI();
+    if (!bvid) return;
+    fetch('/api/plugins/bili/relation?bvid=' + encodeURIComponent(bvid))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (d && d.ok){
+          curLiked = !!d.like;
+          curFaved = !!d.favorite;
+          updateLikeFavUI();
+        }
+      }).catch(function(){});
+  }
+  function toggleLike(){
+    var it = nowPlaying();
+    if (!inPlayer || !it || !it.bvid) return;
+    var want = !curLiked;
+    fetch('/api/plugins/bili/like', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bvid: it.bvid, like: want ? 1 : 2})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.ok){
+        curLiked = want;
+        updateLikeFavUI();
+        statusEl.textContent = curLiked ? '已点赞 👍' : '已取消点赞';
+      } else {
+        statusEl.textContent = (d && d.error) || '点赞失败';
+      }
+    }).catch(function(e){ statusEl.textContent = '点赞请求失败 ' + e; });
+  }
+  function toggleFav(){
+    var it = nowPlaying();
+    if (!inPlayer || !it || !it.bvid) return;
+    var want = !curFaved;
+    fetch('/api/plugins/bili/favorite', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({bvid: it.bvid, fav: want})
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.ok){
+        curFaved = want;
+        updateLikeFavUI();
+        statusEl.textContent = curFaved ? '已加入收藏夹 ⭐' : '已取消收藏';
+      } else {
+        statusEl.textContent = (d && d.error) || '收藏失败';
+      }
+    }).catch(function(e){ statusEl.textContent = '收藏请求失败 ' + e; });
   }
 
   /* ---------- 弹幕 ---------- */
@@ -1268,6 +1309,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     listEl.style.display = '';
     statusEl.textContent = '准备中…';
     probe('play-start', it.bvid);
+    syncRelation(it.bvid);
     fetch('/api/plugins/bili/player-stop').then(function(r){ return r.json(); }).catch(function(){}).then(function(st){
       /* 只有确实停掉了旧播放器才需要等它释放缓存文件 */
       return new Promise(function(res){ setTimeout(res, (st && st.stopped) ? 400 : 0); });
@@ -1546,6 +1588,10 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       }, 700);
     }
   }catch(e){}
+  var histBtn = document.getElementById('hist');
+  if (histBtn) histBtn.addEventListener('click', function(){
+    loadHome('history');
+  });
   document.getElementById('reload').addEventListener('click', function(){
     if (inPlayer){ document.getElementById('back').click(); }
     loadHome(homeTab);
@@ -1652,13 +1698,19 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       if (kind === 'back'){ loginEl.classList.remove('on'); stopQr(); return true; }
       return false;
     }
-    /* 列表页：1/2/3 切首页来源，0 打开搜索 */
+    /* 列表页：0 打开搜索，1-9 键直切前 9 个主要分类 */
     if (!inPlayer && kind === 'digit'){
       if (key === '0'){ if (window.E5IME) E5IME.open(); return true; }
-      var tabOf = { '1': 'rcmd', '2': 'hot', '3': 'rank', '4': 'history' }[key];
-      if (tabOf){ loadHome(tabOf); return true; }
+      var numIdx = parseInt(key, 10) - 1;
+      if (numIdx >= 0 && numIdx < HOME_ORDER.length){
+        loadHome(HOME_ORDER[numIdx]);
+        return true;
+      }
     }
     if (inPlayer){
+      /* 播放器快捷键：1 点赞 / 取消点赞，2 收藏 / 取消收藏 */
+      if (kind === 'digit' && key === '1'){ toggleLike(); return true; }
+      if (kind === 'digit' && key === '2'){ toggleFav(); return true; }
       if (kind === 'ok'){ cv.click(); return true; }
       /* 横屏时画面转了 90°：画面的左/右对应物理的上/下，按键跟着转 */
       if (rotOn()){
@@ -1679,13 +1731,12 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       }
       return false;
     }
-    /* 列表页：1/2/3/4 切首页来源，左右方向键也切 */
+    /* 列表页：左右方向键在全部 14 个分类间无缝循环切换并自动横向滚入视野 */
     if (kind === 'left' || kind === 'right'){
-      var order = ['rcmd', 'hot', 'rank', 'history'];
-      var i0 = order.indexOf(homeTab);
+      var i0 = HOME_ORDER.indexOf(homeTab);
       if (i0 < 0) i0 = 0;
-      i0 = kind === 'left' ? (i0 + order.length - 1) % order.length : (i0 + 1) % order.length;
-      loadHome(order[i0]);
+      i0 = kind === 'left' ? (i0 + HOME_ORDER.length - 1) % HOME_ORDER.length : (i0 + 1) % HOME_ORDER.length;
+      loadHome(HOME_ORDER[i0]);
       return true;
     }
     if (kind === 'up'){ selectCard(selIdx <= 0 ? cards().length - 1 : selIdx - 1); return true; }

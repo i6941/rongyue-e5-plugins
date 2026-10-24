@@ -64,6 +64,22 @@ return function (ctx) {
         if (index(c, '\n') >= 0) c = substr(c, 0, index(c, '\n'));
         return c;
     }
+    function user_csrf() {
+        let u = user_cookie();
+        let i = index(u, 'bili_jct=');
+        if (i < 0) return '';
+        let rest = substr(u, i + 9);
+        let j = index(rest, ';');
+        return j >= 0 ? substr(rest, 0, j) : rest;
+    }
+    function user_mid() {
+        let u = user_cookie();
+        let i = index(u, 'DedeUserID=');
+        if (i < 0) return '';
+        let rest = substr(u, i + 11);
+        let j = index(rest, ';');
+        return j >= 0 ? substr(rest, 0, j) : rest;
+    }
     function cookie_hdr() {
         let parts = '';
         let b = buvid3();
@@ -307,7 +323,67 @@ return function (ctx) {
             }
             return { ok: true, need_login: false, lan: `${first.lan ?? ''}`, list: out };
         },
-        /* 分区入口：首页第一排横着放这些入口 */
+        /* 视频互动关系：点赞、收藏状态 */
+        'GET /relation': function (req) {
+            let bvid = `${req.query?.bvid ?? ''}`;
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            let raw = api_get('/x/web-interface/archive/relation?bvid=' + bvid);
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api' };
+            let d = j.data ?? {};
+            return { ok: true, like: d.like === true, favorite: d.favorite === true };
+        },
+        /* 点赞 / 取消点赞 */
+        'POST /like': function (req) {
+            let b = req.body ?? {};
+            let bvid = `${b.bvid ?? ''}`;
+            let like = num(b.like);
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            let csrf = user_csrf();
+            if (!length(csrf)) return { ok: false, login: true, error: '未登录' };
+            let raw = ctx.sh("curl -s -m 15 -X POST -A '" + UA + "'" + cookie_hdr() +
+                             " -H 'Referer: " + REFERER + "' " +
+                             "--data 'bvid=" + bvid + "&like=" + (like == 2 ? 2 : 1) + "&csrf=" + csrf + "' " +
+                             "'https://api.bilibili.com/x/web-interface/archive/like'");
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: j?.message ?? 'api' };
+            return { ok: true, like: like !== 2 };
+        },
+        /* 收藏 / 取消收藏到默认收藏夹 */
+        'POST /favorite': function (req) {
+            let b = req.body ?? {};
+            let bvid = `${b.bvid ?? ''}`;
+            let fav = b.fav === true || b.fav === 1;
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            let csrf = user_csrf();
+            let mid = user_mid();
+            if (!length(csrf) || !length(mid)) return { ok: false, login: true, error: '未登录' };
+
+            let rawV = api_get('/x/web-interface/view?bvid=' + bvid);
+            let jv = null;
+            try { jv = json(rawV); } catch (e) { return { ok: false, error: 'view json' }; }
+            let aid = num(jv?.data?.aid);
+            if (!aid) return { ok: false, error: 'no aid' };
+
+            let rawF = api_get('/x/v3/fav/folder/created/list-all?up_mid=' + mid);
+            let jf = null;
+            try { jf = json(rawF); } catch (e) { return { ok: false, error: 'folder json' }; }
+            let fid = num(jf?.data?.list?.[0]?.id);
+            if (!fid) return { ok: false, error: 'no folder' };
+
+            let postData = 'rid=' + aid + '&type=2&csrf=' + csrf + (fav ? ('&add_media_ids=' + fid) : ('&del_media_ids=' + fid));
+            let rawD = ctx.sh("curl -s -m 15 -X POST -A '" + UA + "'" + cookie_hdr() +
+                              " -H 'Referer: " + REFERER + "' " +
+                              "--data '" + postData + "' " +
+                              "'https://api.bilibili.com/x/v3/fav/resource/deal'");
+            let jd = null;
+            try { jd = json(rawD); } catch (e) { return { ok: false, error: 'deal json' }; }
+            if (!jd || num(jd.code) !== 0) return { ok: false, error: jd?.message ?? 'api' };
+            return { ok: true, favorite: fav };
+        },
+        /* 分区入口列表（去掉了无内容的直播） */
         'GET /regions': function () {
             return { ok: true, list: [
                 { key: 'anime', name: '番剧', season_type: 1 },
