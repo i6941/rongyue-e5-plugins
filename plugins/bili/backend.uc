@@ -763,16 +763,55 @@ return function (ctx) {
             let covered = off <= have;
             if (hole > 0 && off < hole) covered = false;
             if (covered) return { ok: true, need: false, off: off };
-            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid');
+            /* 关键：MP4 的索引（moov）在文件头，通常 6MB 左右。
+               以前这里直接杀掉顺序下载再跳到目标位置续传，结果索引只下到
+               不到 1MB 就被掐断，文件头变成大片空洞（0 字节）。
+               播放器读到的 moov 是空的，解析出 frames=0，连上后一帧都发不
+               出来就断开——这才是"正在索引/播放中"来回跳的真正原因。
+               所以：先让文件头落盘（16MB 足够放下 6MB 的 moov），
+               再切到目标位置续传。 */
             let sh = '/tmp/bili-range.sh';
             let f = open(sh, 'w', 0o755);
             if (!f) return { ok: false, error: 'script' };
-            f.write("#!/bin/sh\ncurl -s --max-time 1800 -A '" + UA + "' -H 'Referer: " + REFERER + "'" +
-                    cookie_hdr() + " -r " + off + "- '" + url + "' | dd of=" + out +
+            f.write("#!/bin/sh\n" +
+                    "OUT=" + out + "\n" +
+                    "BUSY=/opt/e5/bin/busybox\n" +
+                    "# 判断文件头是否真的有效：moov 里不该有大段空白。\n" +
+                    "# 只比文件大小是不够的——dd seek= 会在截断过的文件上造出稀疏空洞，\n" +
+                    "# 大小看着很大，索引区却全是 0，播放器照样解析出 frames=0。\n" +
+                    "head_ok() {\n" +
+                    "  [ -f $OUT ] || return 1\n" +
+                    "  N=$(dd if=$OUT bs=1024 skip=1024 count=4 2>/dev/null | tr -d '\\000' | wc -c)\n" +
+                    "  [ \"$N\" -gt 512 ] || return 1\n" +
+                    "  N2=$(dd if=$OUT bs=1024 skip=4096 count=4 2>/dev/null | tr -d '\\000' | wc -c)\n" +
+                    "  [ \"$N2\" -gt 512 ] || return 1\n" +
+                    "  return 0\n" +
+                    "}\n" +
+                    "# 1. 等顺序下载把文件头写好，最多 30 秒\n" +
+                    "i=0\n" +
+                    "while [ $i -lt 150 ]; do\n" +
+                    "  head_ok && break\n" +
+                    "  $BUSY sleep 0.2\n" +
+                    "  i=$((i+1))\n" +
+                    "done\n" +
+                    "# 2. 头还是坏的：停掉顺序下载，自己把 0-16MB 补回来\n" +
+                    "if ! head_ok; then\n" +
+                    "  start-stop-daemon -K -q -p /var/run/bili-dl.pid 2>/dev/null\n" +
+                    "  rm -f /var/run/bili-dl.pid\n" +
+                    "  $BUSY sleep 1\n" +
+                    "  curl -s --max-time 400 -A '" + UA + "' -H 'Referer: " + REFERER + "'" +
+                    cookie_hdr() + " -r 0-16777215 '" + url + "' | dd of=$OUT bs=65536 seek=0 conv=notrunc 2>/dev/null\n" +
+                    "fi\n" +
+                    "# 3. 停掉顺序下载，从目标位置续传（两个进程同时写会互相踩）\n" +
+                    "start-stop-daemon -K -q -p /var/run/bili-dl.pid 2>/dev/null\n" +
+                    "rm -f /var/run/bili-dl.pid\n" +
+                    "curl -s --max-time 1800 -A '" + UA + "' -H 'Referer: " + REFERER + "'" +
+                    cookie_hdr() + " -r " + off + "- '" + url + "' | dd of=$OUT" +
                     " bs=65536 seek=" + sprintf('%d', off / 65536) + " conv=notrunc 2>/dev/null\n");
             f.close();
             ctx.sh("echo '" + off + "' > /tmp/bili-hole");
-            ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-dl.pid -x /bin/sh -- ' + sh);
+            /* 用独立的 pid 文件：脚本要杀的是 bili-dl，不能把自己的 pid 写进去 */
+            ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/bili-range.pid -x /bin/sh -- ' + sh);
             return { ok: true, need: true, off: off, have: have };
         },
         /* 前端每秒问一次：够不够开播／下完没有。
@@ -848,6 +887,14 @@ return function (ctx) {
                 return { ok: false, error: 'no player binary' };
             if (trim(`${ctx.sh('test -s ' + mp4 + ' && echo yes') ?? ''}`) !== 'yes')
                 return { ok: false, error: 'no cached video' };
+            /* 文件头校验：索引区如果是空的（上一次续传在索引写完前就把
+               顺序下载砍掉了，留下大片零），播放器会解析出 0 帧，连上之后
+               一帧都发不出来。这里提前判定并报错，让页面重新准备文件，
+               而不是让前端反复重连空转。 */
+            let h1 = num(`${ctx.sh("dd if=" + mp4 + " bs=1024 skip=1024 count=4 2>/dev/null | tr -d '\\\\000' | wc -c") ?? '0'}`);
+            let h2 = num(`${ctx.sh("dd if=" + mp4 + " bs=1024 skip=4096 count=4 2>/dev/null | tr -d '\\\\000' | wc -c") ?? '0'}`);
+            if (h1 < 512 || h2 < 512)
+                return { ok: false, error: 'index-broken' };
             if (!stop_player()) return { ok: false, error: '旧播放器没退出' };
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/e5play.pid -x ' + bin +
                    ' -- --serve ' + mp4 + ' 9511 --max ' + max + ' --audio-lead ' + lead);
@@ -856,6 +903,15 @@ return function (ctx) {
         /* 退出播放时一定要停掉：一个插件目录里只常驻一个解码进程 */
         'GET /player-stop': function () {
             return { ok: true, stopped: stop_player() };
+        },
+        /* 丢弃缓存（索引损坏时用）：删文件 + 清掉所有"缓存有效"的标记，
+           否则下一次 prepare 会以为还有可用缓存而直接返回 cached。 */
+        'GET /drop': function () {
+            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid 2>/dev/null; rm -f /var/run/bili-dl.pid');
+            ctx.sh('start-stop-daemon -K -q -p /var/run/bili-range.pid 2>/dev/null; rm -f /var/run/bili-range.pid');
+            ctx.sh('rm -f /etc/e5-infoscreen/plugins/bili/cache.mp4 /tmp/bili-cache-id ' +
+                   '/tmp/bili-hole /tmp/bili-total /tmp/bili-dl.res');
+            return { ok: true };
         },
         /* 封面代理：同样的 Referer 问题 */
         'GET /img': function (req) {

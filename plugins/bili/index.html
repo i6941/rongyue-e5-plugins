@@ -1728,6 +1728,28 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       .then(function(st){
         if (my !== playToken) return null;
         probe('start-done', st ? (st.ok ? 'ok' : ('err:' + st.error)) : 'null');
+        if (st && st.error === 'index-broken'){
+          /* 索引区是空的（上一次续传在索引写完前掐断了顺序下载）：
+             删掉缓存重新准备一次，别再对着坏文件反复重连。 */
+          probe('index-broken', 'repair');
+          statusEl.textContent = '索引损坏，重新下载…';
+          return fetch('/api/plugins/bili/player-stop')
+            .then(function(){ return fetch('/api/plugins/bili/drop'); })
+            .then(function(){ return fetch('/api/plugins/bili/prepare?bvid=' + encodeURIComponent(it.bvid) +
+                                          '&cid=' + (it.cid || 0) + '&qn=' + qnPref); })
+            .then(function(r){ return r ? r.json() : null; })
+            .then(function(d){
+              if (my !== playToken || !d || !d.ok) return null;
+              currentPrepare = d;
+              return waitReady(0, my);
+            })
+            .then(function(d2){
+              if (my !== playToken || !d2) return null;
+              return fetch('/api/plugins/bili/player-start?max=' + (window.__maxWant || 480) +
+                           '&lead=' + leadMs).then(function(r){ return r.json(); });
+            })
+            .then(function(st2){ return st2; });
+        }
         if (!st || !st.ok){ if (st) statusEl.textContent = '播放器启动失败：' + (st.error || '?'); return; }
         inPlayer = true;
         document.body.classList.add('in-player');

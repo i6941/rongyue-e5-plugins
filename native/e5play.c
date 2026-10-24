@@ -414,6 +414,13 @@ static bool play_open(play_t *p, const char *path)
     if (p->vtrack < 0) { fprintf(stderr, "e5play: no video track\n"); return false; }
     MP4D_track_t *t = &p->mp4.track[p->vtrack];
     p->frames = t->sample_count;
+    /* 解析出 0 帧说明 moov 是残缺的（常见于续传在索引写完之前就砍掉了
+       顺序下载，文件头留下大片零）。这种情况连上去也发不出任何一帧，
+       不如直接报告失败，让页面重新准备文件，而不是让前端一直重连。 */
+    if (!p->frames) {
+        fprintf(stderr, "e5play: moov has 0 samples (index incomplete)\n");
+        return false;
+    }
     p->timescale = t->timescale ? t->timescale : 1000;
     p->width = t->SampleDescription.video.width;
     p->height = t->SampleDescription.video.height;
