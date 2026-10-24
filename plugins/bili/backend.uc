@@ -748,7 +748,10 @@ return function (ctx) {
             if (!(total > 0)) {
                 ctx.sh("curl -s -D - -o /dev/null -r 0-0 -A '" + UA + "' -H 'Referer: " + REFERER + "'" + cookie_hdr() +
                        " '" + url + "' > /tmp/bili-head");
-                total = num(`${ctx.sh("tr -d '\r' < /tmp/bili-head | awk -F/ '/Content-Range/{print $2}'") ?? '0'}`);
+                /* upos 返回的响应头是小写 content-range，awk 的模式匹配区分大小写，
+                   原来写 /Content-Range/ 永远匹配不到，total 一直是 0，
+                   续传因此一直被 "no size" 拒绝。 */
+                total = num(`${ctx.sh("tr -d '\\r' < /tmp/bili-head | awk -F/ 'tolower($0) ~ /content-range/ {print $2}'") ?? '0'}`);
                 if (total > 0) ctx.sh("echo '" + total + "' > /tmp/bili-total");
             }
             if (!(total > 0)) return { ok: false, error: 'no size' };

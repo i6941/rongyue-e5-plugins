@@ -309,17 +309,24 @@ typedef struct {
     unsigned base_ts;
 } play_t;
 
+/* 读样本时数据还没下载到：返回 2 表示"暂时没有，等一会儿再来"，
+   和真正的读错误（返回 1）区分开。调用方遇到 2 不会跳过这一帧，
+   只睡一下重试，主循环因此不会被卡死，仍能 accept 新连接、收命令。 */
+#define MP4_READ_WAIT 2
+
 static int mp4_read_cb(int64_t offset, void *buffer, size_t size, void *token)
 {
     FILE *f = (FILE *)token;
     /* 边下边播：文件还在增长时，这个样本可能还没写到磁盘上。
-       等到足够字节再说，别把半帧送进解码器；等两分钟还不行才报错。 */
-    for (int waited = 0; ; waited += 100) {
+       这里只等很短一段时间就返回"待重试"，把控制权交回主循环——
+       原来等满 120 秒会把整个单线程服务器冻住（实测：此时第二条连接
+       握手会超时），页面就只能反复断开重连，表现是来回跳。 */
+    for (int waited = 0; ; waited += 50) {
         struct stat st;
         if (fstat(fileno(f), &st) != 0) break;
         if ((int64_t)st.st_size >= offset + (int64_t)size) break;
-        if (waited >= 120000) return 1;
-        usleep(100000);
+        if (waited >= 1000) return MP4_READ_WAIT;
+        usleep(50000);
     }
 #ifdef _WIN32
     if (_fseeki64(f, offset, SEEK_SET) != 0) return 1;
@@ -373,9 +380,32 @@ static bool play_open(play_t *p, const char *path)
     fseeko(p->f, 0, SEEK_END);
     p->size = (int64_t)ftello(p->f);
 #endif
-    if (!MP4D_open(&p->mp4, mp4_read_cb, p->f, p->size)) {
-        fprintf(stderr, "e5play: not a valid mp4\n");
-        return false;
+    /* 大片的 moov（索引）有 6MB 以上，起播时文件往往还没下到那么远。
+       MP4D_open 读不到完整 moov 会直接判"不是 mp4"，进程就此退出；
+       所以先等索引落盘：最多等 90 秒，边等边看文件增长，
+       并且只在文件确实变大时才重新尝试（避免几百次失败调用累积内存）。 */
+    {
+        int64_t try_size = -1;
+        bool ok = false;
+        for (int waited = 0; waited < 90000; waited += 200) {
+            if (p->size != try_size) {
+                try_size = p->size;
+                if (MP4D_open(&p->mp4, mp4_read_cb, p->f, p->size)) { ok = true; break; }
+                if (p->mp4.track) { MP4D_close(&p->mp4); memset(&p->mp4, 0, sizeof(p->mp4)); }
+            }
+            usleep(200000);
+#ifdef _WIN32
+            _fseeki64(p->f, 0, SEEK_END);
+            p->size = _ftelli64(p->f);
+#else
+            fseeko(p->f, 0, SEEK_END);
+            p->size = (int64_t)ftello(p->f);
+#endif
+        }
+        if (!ok) {
+            fprintf(stderr, "e5play: not a valid mp4 (size=%lld)\n", (long long)p->size);
+            return false;
+        }
     }
     p->vtrack = -1;
     for (unsigned i = 0; i < p->mp4.track_count; i++) {
@@ -695,7 +725,9 @@ static int player_decode_sample(player_t *pl, unsigned idx, const uint8_t **rgb,
         p->sample = q;
         p->sample_cap = frame_bytes;
     }
-    if (mp4_read_cb((int64_t)off, p->sample, frame_bytes, p->f)) return 3;
+    int rr = mp4_read_cb((int64_t)off, p->sample, frame_bytes, p->f);
+    if (rr == MP4_READ_WAIT) return 7;      /* 数据还没下载到，稍后重试 */
+    if (rr) return 3;
 
     bool idr = sample_is_idr(p->sample, frame_bytes, p->nal_len_size);
     size_t n = sample_to_annexb(p, p->sample, frame_bytes, idr || idx == 0);
@@ -850,8 +882,15 @@ static int run_server(const char *path, int port)
     else
         addr.sin_addr.s_addr = inet_addr(g_bind_addr);
     addr.sin_port = htons((uint16_t)port);
-    if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) < 0) { perror("bind"); close(ls); return 5; }
-    if (listen(ls, 4) < 0) { perror("listen"); close(ls); return 5; }
+    /* 端口可能还被上一个刚被杀的实例占着（内核要几百毫秒才回收）：
+       重试 40 次（约 4 秒），别让新进程直接失败退出。 */
+    int bind_ok = 0;
+    for (int i = 0; i < 40; i++) {
+        if (bind(ls, (struct sockaddr *)&addr, sizeof(addr)) == 0) { bind_ok = 1; break; }
+        usleep(100000);
+    }
+    if (!bind_ok) { perror("bind"); close(ls); return 5; }
+    if (listen(ls, 8) < 0) { perror("listen"); close(ls); return 5; }
     printf("E5PLAY listening %s:%d\n", g_bind_addr, port);
     fflush(stdout);
 
@@ -872,7 +911,8 @@ static int run_server(const char *path, int port)
         fflush(stdout);
 
         player_t pl;
-        if (!player_open(&pl, &p, g_max, g_max)) { close(cfd); break; }
+        /* 解码器初始化失败只影响这一个连接，不该把整个服务进程带走 */
+        if (!player_open(&pl, &p, g_max, g_max)) { close(cfd); continue; }
         paused = false;
         g_seek_ms = -1;
 
@@ -881,6 +921,7 @@ static int run_server(const char *path, int port)
         double audio_pending = 0.0;   /* >0 表示跳转后等第一帧再起声音 */
         bool audio_was_paused = false;
         unsigned long sent = 0;
+        int wait_retry = 0;           /* 等未下载数据的连续次数 */
         audio_start(p.path, (double)p.ts_ms[0] / 1000.0);
         /* 视频时钟对齐到「声音真正开始响」的时刻 */
         double start = now_ms() + (double)g_audio_lead - (double)p.ts_ms[0];
@@ -926,7 +967,19 @@ static int run_server(const char *path, int port)
             const uint8_t *rgb = NULL;
             int ow = 0, oh = 0;
             double pts = 0.0;
-            player_decode_sample(&pl, idx, &rgb, &ow, &oh, &pts);
+            int drc = player_decode_sample(&pl, idx, &rgb, &ow, &oh, &pts);
+            if (drc == 7) {
+                /* 这一帧的文件数据还没下载到：不跳过、不前进，
+                   睡 50ms 再试，同时让 ws_poll_cmd 有机会跑，
+                   命令和断连都能立刻被处理。最多等 60 秒（下载真断了就放弃连接）。 */
+                if (++wait_retry > 1200) {
+                    fprintf(stderr, "E5PLAY wait for data timeout at sample %u\n", idx);
+                    break;
+                }
+                sleep_ms(50);
+                continue;
+            }
+            wait_retry = 0;
             if (rgb && ow > 0 && oh > 0 && pts + 1.0 >= seek_until) {
                 unsigned ms = (unsigned)(pts + 0.5);
                 uint8_t hdr[8] = { (uint8_t)(ow & 0xff), (uint8_t)(ow >> 8),

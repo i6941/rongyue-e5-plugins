@@ -1748,6 +1748,21 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         }
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
+        /* 续播必须先让后端从目标位置续传：只有 9MB 的缓存根本覆盖不到
+           第 18 分钟，播放器跳过去只会一直等数据（表现为画面不动、随后断线）。 */
+        if (pendingSeekMs > 0 && curDurS > 0){
+          statusEl.textContent = '从目标位置续传…';
+          return fetch('/api/plugins/bili/seek?ms=' + Math.round(pendingSeekMs) +
+                       '&dur=' + Math.round(curDurS * 1000))
+            .then(function(r){ return r.json(); })
+            .then(function(sd){
+              probe('resume-seek', sd ? ('need=' + sd.need + ' off=' + (sd.off || 0)) : 'null');
+              /* 留 1.2 秒让续传真正开始写盘，再连播放器 */
+              return new Promise(function(res){ setTimeout(res, sd && sd.need ? 1200 : 0); });
+            })
+            .catch(function(){})
+            .then(function(){ connectPlayer(lastPort, 0); });
+        }
         connectPlayer(lastPort, 0);
       })
       .catch(function(e){ probe('play-fail', String(e)); statusEl.textContent = '请求失败 ' + e; });
