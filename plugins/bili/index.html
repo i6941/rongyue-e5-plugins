@@ -212,6 +212,18 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
 #login button{height:30px;padding:0 14px;font:inherit;font-size:13px;color:#dce8f8;
   background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
 
+/* 相关推荐抽屉 */
+#related-drawer{display:none;position:absolute;inset:0;z-index:25;background:rgba(8,13,20,.96);flex-direction:column;padding:0}
+#related-drawer.open{display:flex}
+body.rot-land #related-drawer{width:480px;height:320px;left:50%;top:50%;transform:translate(-50%,-50%) rotate(90deg);border:1px solid #243349}
+.rel-list{flex:1 1 auto;overflow-y:auto;padding:8px 10px;-webkit-overflow-scrolling:touch}
+.rel-item{display:flex;gap:8px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.rel-item.sel{background:rgba(76,154,255,.14)}
+.rel-cover{width:88px;height:50px;border-radius:4px;object-fit:cover;background:#1c2838;flex:0 0 auto}
+.rel-meta{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;justify-content:center}
+.rel-title{font-size:12px;line-height:1.35;color:#e6edf3;max-height:2.7em;overflow:hidden}
+.rel-sub{font-size:11px;color:#8fa3bd;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 /* 评论区抽屉：竖屏覆盖在播放器下方或全屏，横屏旋转 90° 铺满 */
 #comments-drawer{display:none;position:absolute;inset:0;z-index:25;background:rgba(8,13,20,.96);flex-direction:column;padding:0}
 #comments-drawer.open{display:flex}
@@ -303,6 +315,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
             <button type="button" id="land-btn-like">点赞</button>
             <button type="button" id="land-btn-fav">收藏</button>
             <button type="button" id="land-btn-comm">评论</button>
+            <button type="button" id="land-btn-rel">推荐</button>
             <button type="button" id="land-dm">弹幕</button>
             <button type="button" id="land-rot">竖屏</button>
           </div>
@@ -321,6 +334,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       <button type="button" id="btn-like">点赞</button>
       <button type="button" id="btn-fav">收藏</button>
       <button type="button" id="btn-comm">评论</button>
+      <button type="button" id="btn-rel">推荐</button>
       <button type="button" data-act="rot">横屏</button>
     </div>
   </div>
@@ -331,6 +345,15 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     </div>
     <div class="comm-list" id="comm-list">
       <div style="padding:20px;text-align:center;color:#8fa3bd">加载评论中…</div>
+    </div>
+  </div>
+  <div id="related-drawer">
+    <div class="comm-head">
+      <span id="rel-title">相关推荐</span>
+      <button type="button" id="rel-close" aria-label="关闭">×</button>
+    </div>
+    <div class="rel-list" id="rel-list">
+      <div style="padding:20px;text-align:center;color:#8fa3bd">加载中…</div>
     </div>
   </div>
 </div>
@@ -444,6 +467,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     if (b.id === 'btn-like'){ toggleLike(); return; }
     if (b.id === 'btn-fav'){ toggleFav(); return; }
     if (b.id === 'btn-comm'){ toggleComments(); return; }
+    if (b.id === 'btn-rel'){ toggleRelated(); return; }
     var act = b.getAttribute('data-act');
     if (act === 'back10') seekBy(-10000);
     else if (act === 'fwd10') seekBy(10000);
@@ -503,6 +527,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       else if (b.id === 'land-btn-like') toggleLike();
       else if (b.id === 'land-btn-fav') toggleFav();
       else if (b.id === 'land-btn-comm') toggleComments();
+      else if (b.id === 'land-btn-rel') toggleRelated();
       else if (b.id === 'land-rot' || b.id === 'land-btn-port') toggleRot();
       else if (b.id === 'land-btn-cfg'){
         var cfgBtn = document.getElementById('cfg');
@@ -1076,7 +1101,88 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     commList.innerHTML = h;
   }
 
-  /* ---------- 弹幕 ---------- */
+  /* ---------- 相关推荐 ---------- */
+  var relDrawer = document.getElementById('related-drawer');
+  var relTitleEl = document.getElementById('rel-title');
+  var relListEl = document.getElementById('rel-list');
+  var relCloseBtn = document.getElementById('rel-close');
+  var relOpen = false, relItems = [], relSel = 0, relFor = '';
+
+  function toggleRelated(){
+    if (!inPlayer) return;
+    if (relOpen) closeRelated(); else openRelated();
+  }
+  function openRelated(){
+    var it = nowPlaying();
+    if (!it || !it.bvid) return;
+    relOpen = true;
+    if (relDrawer) relDrawer.classList.add('open');
+    if (relTitleEl) relTitleEl.textContent = '相关推荐加载中…';
+    if (relListEl) relListEl.innerHTML = '<div style="padding:20px;text-align:center;color:#8fa3bd">加载中…</div>';
+    relItems = []; relSel = 0; relFor = it.bvid;
+    fetch('/api/plugins/bili/related?bvid=' + encodeURIComponent(it.bvid))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d || !d.ok){
+          if (relTitleEl) relTitleEl.textContent = '相关推荐不可用';
+          if (relListEl) relListEl.innerHTML = '<div style="padding:20px;text-align:center;color:#ff8585">' + ((d && d.error) || '加载失败') + '</div>';
+          return;
+        }
+        relItems = d.list || [];
+        if (relTitleEl) relTitleEl.textContent = '相关推荐 (' + relItems.length + ') · ↑↓选择 OK播放';
+        renderRelated();
+      }).catch(function(e){
+        if (relTitleEl) relTitleEl.textContent = '相关推荐请求失败';
+        if (relListEl) relListEl.innerHTML = '<div style="padding:20px;text-align:center;color:#ff8585">请求失败 ' + e + '</div>';
+      });
+  }
+  function closeRelated(){
+    relOpen = false;
+    if (relDrawer) relDrawer.classList.remove('open');
+  }
+  if (relCloseBtn) relCloseBtn.addEventListener('click', closeRelated);
+
+  function renderRelated(){
+    if (!relListEl) return;
+    if (!relItems.length){
+      relListEl.innerHTML = '<div style="padding:20px;text-align:center;color:#8fa3bd">没有相关推荐</div>';
+      return;
+    }
+    var h = '';
+    relItems.forEach(function(v, i){
+      h += '<div class="rel-item' + (i === relSel ? ' sel' : '') + '" data-ri="' + i + '">' +
+           '<img class="rel-cover" loading="lazy" src="/api/plugins/bili/img?u=' + encodeURIComponent(v.pic) + '" alt="">' +
+           '<div class="rel-meta"><div class="rel-title">' + esc(v.title) + '</div>' +
+           '<div class="rel-sub">' + esc(v.author) + (v.dur ? (' · ' + dur(v.dur)) : '') + '</div></div></div>';
+    });
+    relListEl.innerHTML = h;
+    var sel = relListEl.querySelector('.rel-item.sel');
+    if (sel) try{ sel.scrollIntoView({ block: 'nearest' }); }catch(e){}
+  }
+  if (relListEl) relListEl.addEventListener('click', function(e){
+    var row = e.target.closest ? e.target.closest('.rel-item') : null;
+    if (!row) return;
+    playRelated(Number(row.getAttribute('data-ri')));
+  });
+  /* 切到相关视频：把当前抽屉收起，用普通 play() 走完整起播流程 */
+  function playRelated(idx){
+    var v = relItems[idx];
+    if (!v || !v.bvid) return;
+    closeRelated();
+    closeComments();
+    items = [v];
+    curIndex = 0;
+    render();
+    listEl.style.display = '';
+    play(0);
+  }
+  function moveRelated(delta){
+    if (!relItems.length) return;
+    relSel = (relSel + delta + relItems.length) % relItems.length;
+    renderRelated();
+  }
+
+  /* ---------- 弹幕 ---------- */  /* ---------- 弹幕 ---------- */
   var dmAll = [], dmIdx = 0, dmLive = [], dmTrack = 0;
   /* 这里不能再赋初值：initCfg 已经从 localStorage 读回来了，
      再写一次 true/14 会把用户设置覆盖掉（之前弹幕设置存不住就是这个） */
@@ -1581,6 +1687,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
 
   function stopPlayback(){
     closeComments();
+    closeRelated();
     saveNow();
     closeWs();
     fetch('/api/plugins/bili/player-stop').catch(function(){});
@@ -1852,6 +1959,14 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       }
     }
     if (inPlayer){
+      /* 相关推荐打开时：上下选择、OK 播放、返回/4 关闭 */
+      if (relOpen){
+        if (kind === 'back' || (kind === 'digit' && key === '4')){ closeRelated(); return true; }
+        if (kind === 'up'){ moveRelated(-1); return true; }
+        if (kind === 'down'){ moveRelated(1); return true; }
+        if (kind === 'ok'){ playRelated(relSel); return true; }
+        return true;
+      }
       /* 评论区打开时：上下方向键滚动评论，3 键或返回键关闭评论区 */
       if (commOpen){
         if (kind === 'back' || (kind === 'digit' && key === '3')){ closeComments(); return true; }
@@ -1863,6 +1978,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       if (kind === 'digit' && key === '1'){ toggleLike(); return true; }
       if (kind === 'digit' && key === '2'){ toggleFav(); return true; }
       if (kind === 'digit' && key === '3'){ toggleComments(); return true; }
+      if (kind === 'digit' && key === '4'){ toggleRelated(); return true; }
       if (kind === 'ok'){ cv.click(); return true; }
       /* 横屏时画面转了 90°：画面的左/右对应物理的上/下，按键跟着转 */
       if (rotOn()){

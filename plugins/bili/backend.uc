@@ -383,6 +383,30 @@ return function (ctx) {
             if (!jd || num(jd.code) !== 0) return { ok: false, error: jd?.message ?? 'api' };
             return { ok: true, favorite: fav };
         },
+        /* 相关视频推荐：基于当前视频的关联推荐流 */
+        'GET /related': function (req) {
+            let bvid = `${req.query?.bvid ?? ''}`;
+            if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
+            let raw = api_get('/x/web-interface/archive/related?bvid=' + bvid);
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let out = [];
+            for (let it in (j.data ?? [])) {
+                let v = it?.videos;
+                push(out, {
+                    bvid: `${it?.bvid ?? ''}`,
+                    title: `${it?.title ?? ''}`,
+                    author: `${it?.owner?.name ?? ''}`,
+                    pic: httpsify(`${it?.pic ?? ''}`),
+                    dur: num(it?.duration),
+                    play: num(it?.stat?.view),
+                    cid: 0
+                });
+                if (length(out) >= 30) break;
+            }
+            return { ok: true, list: out };
+        },
         /* 视频评论区：获取主楼热门/排序评论 */
         'GET /comments': function (req) {
             let bvid = `${req.query?.bvid ?? ''}`;
