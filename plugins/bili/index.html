@@ -1326,23 +1326,6 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   qEl.addEventListener('click', function(){
     if (window.E5IME) E5IME.open();
   });
-  /* 返回键自检：?backtest=1 */
-  try{
-    if (new URLSearchParams(location.search).get('backtest') === '1'){
-      var seq = [];
-      setTimeout(function(){
-        seq.push('inPlayer=' + inPlayer + ' rot=' + rotOn() + ' mode=' + rotMode);
-        try{ onKey('back'); }catch(e){ seq.push('back1 ERR ' + e); }
-        seq.push('after1 inPlayer=' + inPlayer + ' mode=' + rotMode);
-        setTimeout(function(){
-          try{ onKey('back'); }catch(e){ seq.push('back2 ERR ' + e); }
-          seq.push('after2 inPlayer=' + inPlayer);
-          probe('backtest', seq.join(' | '));
-        }, 1200);
-      }, 8000);
-    }
-  }catch(e){}
-
   /* 进度记忆自检：?postest=1 */
   try{
     if (new URLSearchParams(location.search).get('postest') === '1'){
