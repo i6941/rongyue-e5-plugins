@@ -127,13 +127,14 @@ body.rot-land #land-ui.show { opacity: 1; pointer-events: auto; }
 }
 .land-top-btns button {
   height: 26px;
-  padding: 0 10px;
+  padding: 0 8px;
   font: inherit;
   font-size: 12px;
   color: #dce8f8;
   background: rgba(22, 32, 47, .85);
   border: 1px solid #3a4c6b;
   border-radius: 6px;
+  white-space: nowrap;
 }
 .land-bot {
   display: flex;
@@ -305,7 +306,10 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       <div class="land-top">
         <div class="land-title" id="land-title"></div>
         <div class="land-top-btns">
-          <button type="button" id="land-btn-cfg">≡ 设置</button>
+          <button type="button" id="land-btn-like">赞</button>
+          <button type="button" id="land-btn-fav">藏</button>
+          <button type="button" id="land-dm">弹幕</button>
+          <button type="button" id="land-btn-cfg">设置</button>
           <button type="button" id="land-btn-port">竖屏</button>
         </div>
       </div>
@@ -317,12 +321,8 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
             <button type="button" data-act="back10">« 10s</button>
             <button type="button" data-act="play" id="land-play">暂停</button>
             <button type="button" data-act="fwd10">10s »</button>
-            <button type="button" id="land-btn-like">点赞</button>
-            <button type="button" id="land-btn-fav">收藏</button>
             <button type="button" id="land-btn-comm">评论</button>
             <button type="button" id="land-btn-rel">推荐</button>
-            <button type="button" id="land-dm">弹幕</button>
-            <button type="button" id="land-rot">竖屏</button>
           </div>
         </div>
       </div>
@@ -480,6 +480,36 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     else if (act === 'rot') toggleRot();
     else if (act === 'exit') leavePlayer();
   });
+
+  /* 画面上任何触摸先取消"自动连播"倒计时 */
+  if (screenEl){
+    screenEl.addEventListener('touchstart', function(){
+      if (autoNextOn) cancelAutoNext();
+    }, { passive: true });
+  }
+
+  /* 画面上/下划动调亮度：向上滑调亮、向下滑调暗（竖屏用，横屏方向另有按键） */
+  (function(){
+    var sy = 0, sx = 0, active = false;
+    var el = screenEl;
+    if (!el) return;
+    el.addEventListener('touchstart', function(e){
+      if (!inPlayer || !e.touches || e.touches.length !== 1){ active = false; return; }
+      sx = e.touches[0].clientX; sy = e.touches[0].clientY; active = true;
+    }, { passive: true });
+    el.addEventListener('touchend', function(e){
+      if (!active || !e.changedTouches || e.changedTouches.length !== 1){ active = false; return; }
+      active = false;
+      var dx = e.changedTouches[0].clientX - sx;
+      var dy = e.changedTouches[0].clientY - sy;
+      /* 明显是纵向划动（屏幕坐标），横向就别抢进度条的手势 */
+      if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx) * 1.5) return;
+      blIdx = dy < 0 ? Math.min(BL_STEPS.length - 1, blIdx + 1)
+                     : Math.max(0, blIdx - 1);
+      applyBrightness(true);
+    }, { passive: true });
+    el.addEventListener('touchcancel', function(){ active = false; }, { passive: true });
+  })();
 
   /* 横屏浮层：有交互就亮出来，3.5 秒无操作自动收起 */
   function flashBar(){
@@ -1220,7 +1250,69 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     renderRelated();
   }
 
-  /* ---------- 弹幕 ---------- */  /* ---------- 弹幕 ---------- */
+  /* ---------- 播放结束 -> 相关视频 + 5 秒自动连播 ---------- */
+  var autoNextTimer = 0, autoNextList = [], autoNextSel = 0, autoNextOn = false;
+
+  function onPlaybackEnded(){
+    autoNextOn = true;
+    autoNextSel = 0;
+    autoNextList = [];
+    try{ loadTip(true, '播放结束 · 正在找相关视频…', 0); }catch(e){}
+    var it = nowPlaying();
+    if (!it || !it.bvid){ finishEnded(); return; }
+    fetch('/api/plugins/bili/related?bvid=' + encodeURIComponent(it.bvid))
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!autoNextOn) return;
+        autoNextList = (d && d.ok) ? (d.list || []) : [];
+        if (!autoNextList.length){ finishEnded(); return; }
+        startAutoNextCountdown(5);
+      })
+      .catch(function(){ if (autoNextOn) finishEnded(); });
+  }
+
+  function clearAutoNext(){
+    if (autoNextTimer){ clearTimeout(autoNextTimer); autoNextTimer = 0; }
+  }
+
+  function startAutoNextCountdown(sec){
+    clearAutoNext();
+    var left = sec;
+    var first = autoNextList[0] || {};
+    function tick(){
+      if (!autoNextOn) return;
+      if (left <= 0){
+        autoNextOn = false;
+        clearAutoNext();
+        try{ loadTip(false, '', 0); }catch(e){}
+        playRelated(0);
+        return;
+      }
+      try{ loadTip(true, '播放结束 · ' + left + ' 秒后播放：' + (first.title || ''), 0); }catch(e){}
+      left--;
+      autoNextTimer = setTimeout(tick, 1000);
+    }
+    tick();
+  }
+
+  /* 用户有任何按键/触摸就取消自动连播 */
+  function cancelAutoNext(){
+    if (!autoNextOn) return false;
+    autoNextOn = false;
+    clearAutoNext();
+    try{ loadTip(false, '', 0); }catch(e){}
+    statusEl.textContent = '已取消自动连播';
+    return true;
+  }
+
+  function finishEnded(){
+    autoNextOn = false;
+    clearAutoNext();
+    try{ loadTip(false, '', 0); }catch(e){}
+    leavePlayer();
+  }
+
+  /* ---------- 弹幕 ---------- */
   var dmAll = [], dmIdx = 0, dmLive = [], dmTrack = 0;
   /* 这里不能再赋初值：initCfg 已经从 localStorage 读回来了，
      再写一次 true/14 会把用户设置覆盖掉（之前弹幕设置存不住就是这个） */
@@ -1490,8 +1582,16 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 250);
         return;
       }
+      /* 真到了结尾才提示：播放器正常退出（视频放完）时画面会冻在最后一帧，
+         以前只改了列表页的状态栏（播放时看不见），用户以为卡死了。 */
       statusEl.textContent = '播放结束';
       probe('ws-close', 'ended');
+      try{ loadTip(true, '播放结束 · 正在返回列表…', 0); }catch(e){}
+      setTimeout(function(){
+        if (!inPlayer) return;
+        try{ loadTip(false, '', 0); }catch(e){}
+        leavePlayer();
+      }, 2000);
     };
   }
 
@@ -1724,6 +1824,9 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   });
 
   function stopPlayback(){
+    autoNextOn = false;
+    clearAutoNext();
+    try{ loadTip(false, '', 0); }catch(e){}
     closeComments();
     closeRelated();
     saveNow();
@@ -1997,6 +2100,13 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       }
     }
     if (inPlayer){
+      /* 播放刚结束、正在倒计时自动连播：任何键都先取消，再交回原逻辑 */
+      if (autoNextOn){
+        cancelAutoNext();
+        if (kind === 'back'){ leavePlayer(); return true; }
+        if (listEl) listEl.style.display = '';
+        return true;
+      }
       /* 相关推荐打开时：上下选择、OK 播放、返回/4 关闭 */
       if (relOpen){
         if (kind === 'back' || (kind === 'digit' && key === '4')){ closeRelated(); return true; }
