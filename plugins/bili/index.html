@@ -1265,6 +1265,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       .then(function(d){
         if (!autoNextOn) return;
         autoNextList = (d && d.ok) ? (d.list || []) : [];
+        relItems = autoNextList;
         if (!autoNextList.length){ finishEnded(); return; }
         startAutoNextCountdown(5);
       })
@@ -1582,16 +1583,10 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         setTimeout(function(){ if (inPlayer) connectPlayer(port, tries + 1); }, 250);
         return;
       }
-      /* 真到了结尾才提示：播放器正常退出（视频放完）时画面会冻在最后一帧，
-         以前只改了列表页的状态栏（播放时看不见），用户以为卡死了。 */
+      /* 到结尾了：调用 onPlaybackEnded 展开相关推荐并 5 秒倒计时自动切播 */
       statusEl.textContent = '播放结束';
       probe('ws-close', 'ended');
-      try{ loadTip(true, '播放结束 · 正在返回列表…', 0); }catch(e){}
-      setTimeout(function(){
-        if (!inPlayer) return;
-        try{ loadTip(false, '', 0); }catch(e){}
-        leavePlayer();
-      }, 2000);
+      onPlaybackEnded();
     };
   }
 

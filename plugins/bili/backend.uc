@@ -667,9 +667,19 @@ return function (ctx) {
                             '&fnval=0&platform=pc&fourk=1');
             let j = null;
             try { j = json(q); } catch (e) { }
-            if (!j || num(j.code) !== 0) return { ok: false, error: 'playurl' };
-            let d = j.data?.durl?.[0];
-            if (!d || !d.url) return { ok: false, error: 'no durl' };
+            let d = j?.data?.durl?.[0];
+            /* 电影、番剧、电视剧等版权内容（PGC）在普通接口会报 -404 啥都木有，
+               必须走 /pgc/player/web/playurl 才能拿到流 */
+            if (!d || !d.url) {
+                let q_pgc = api_get('/pgc/player/web/playurl?bvid=' + bvid + '&cid=' + cid + '&qn=' + qn + '&fnval=0');
+                let j_pgc = null;
+                try { j_pgc = json(q_pgc); } catch (e) { }
+                d = j_pgc?.result?.durl?.[0] ?? j_pgc?.data?.durl?.[0];
+                if (!d || !d.url) {
+                    let err = j_pgc?.message ?? j?.message ?? (j ? 'playurl ' + j.code : 'no durl');
+                    return { ok: false, error: err };
+                }
+            }
             let u = `${d.url}`;
             if (!host_ok(u, VID_DOMAINS) || index(u, "'") >= 0) return { ok: false, error: 'bad url' };
 
