@@ -48,7 +48,11 @@ body.tempview #tabs { display: none !important; }
 #list{flex:1 1 auto;overflow-y:auto;padding:6px;touch-action:pan-y;-webkit-overflow-scrolling:touch}
 .card{display:flex;gap:7px;padding:6px;border-bottom:1px solid #16202f}
 .card:active{background:#16202f}
-.card.sel{background:#16202f;box-shadow:inset 3px 0 0 var(--accent)}
+/* 选中项要一眼看出来：底色、左侧色条、外描边、标题变白 */
+.card.sel{background:rgba(251,114,153,.18);border-radius:6px;
+  box-shadow:inset 4px 0 0 var(--accent),0 0 0 2px rgba(251,114,153,.55)}
+.card.sel .t{color:#fff;font-weight:600}
+.card.sel .m{color:#e6b9c8}
 .card img{width:96px;height:54px;object-fit:cover;border-radius:4px;background:#16202f;flex:0 0 auto}
 .card .info{min-width:0;flex:1 1 auto}
 .card .t{font-size:12px;line-height:1.35;max-height:2.7em;overflow:hidden}
@@ -971,6 +975,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         items = d.list || [];
         statusEl.textContent = '搜索 “' + q + '” · ' + items.length + ' 个 · 返回键回首页';
         render();
+        selectCard(0);
       }).catch(function(e){ statusEl.textContent = '搜索请求失败 ' + e; });
   }
 
