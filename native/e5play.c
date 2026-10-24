@@ -1017,8 +1017,11 @@ static int run_server(const char *path, int port)
             if (drc == 7) {
                 /* 这一帧的文件数据还没下载到：不跳过、不前进，
                    睡 50ms 再试，同时让 ws_poll_cmd 有机会跑，
-                   命令和断连都能立刻被处理。最多等 60 秒（下载真断了就放弃连接）。 */
-                if (++wait_retry > 1200) {
+                   命令和断连都能立刻被处理。
+                   现在续播完全依赖顺序下载追上（不再跳跃续写），
+                   2 小时电影从 0 下到第 18 分钟约需 1~2 分钟，
+                   所以等待上限给到 5 分钟。 */
+                if (++wait_retry > 6000) {
                     fprintf(stderr, "E5PLAY wait for data timeout at sample %u\n", idx);
                     break;
                 }

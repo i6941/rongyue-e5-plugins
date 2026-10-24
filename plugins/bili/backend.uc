@@ -759,16 +759,17 @@ return function (ctx) {
             let off = (total * ms) / dur - 2097152;
             if (off < 0) off = 0;
             off = off - (off % 65536);
-            if (off <= have) return { ok: true, need: false, off: off };
-            /* 目标位置还没下载到：**绝不**用 dd seek= 去中间写。
+            /* 关键帧之间的数据也要够往后解码一小段，光 off <= have 不算覆盖：
+               给 8MB 余量，避免跳到"刚好下到那一点"的位置后又卡在等数据。 */
+            if (off + 8388608 <= have) return { ok: true, need: false, off: off };
+            /* 目标位置的数据还没下载到：**绝不**用 dd seek= 去中间写。
                原因（实测）：Audio 采样和视频交织在同一个 mdat 里，
                从 off 处往回写会在"当前末尾 ~ off"之间留下全零稀疏空洞，
                音频轨因此变成一堆零字节，ffmpeg 报
                "channel element 0.0 duplicate"，播放器能出画面但完全没声音。
                正确做法：让顺序下载继续往后写（文件始终连续、无空洞），
-               这里只告诉页面"还在下、请等"。播放器读到未到达的样本时会
-               自己等（MP4_READ_WAIT），下载追上后自动继续播。 */
-            return { ok: true, need: false, off: off, waiting: true, have: have };
+               并明确告诉页面 waiting，由页面决定"从头播"而不是盲目 seek。 */
+            return { ok: true, need: false, off: off, waiting: true, have: have, need_bytes: off + 8388608 };
         },
         /* 前端每秒问一次：够不够开播／下完没有。
            边下边播：下载直接写 cache.mp4，够 12MB 就先让播放器读，
