@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ZeroTier</title>
+<style>
+html,body{margin:0;background:#0b111b;color:#e6edf3;font:13px/1.4 "Noto Sans CJK SC",sans-serif}
+header{padding:6px 8px;border-bottom:1px solid #243349}
+h1{font-size:16px;margin:0 0 2px}#status{font-size:12px;color:#a8bad0;overflow-wrap:anywhere}
+main{padding:8px 8px 10px}button{display:block;width:100%;margin:0 0 6px;padding:9px;background:#192438;color:inherit;
+  border:1px solid transparent;border-radius:8px;font:inherit;text-align:left;cursor:pointer}
+button:focus{outline:2px solid #65bdff;background:#203b59}button:disabled{opacity:.45}
+small{display:block;color:#a8bad0;font-size:12px;margin-top:3px}
+.field{background:#131d2b;border:1px solid #243349;border-radius:8px;padding:8px;margin:0 0 6px;font-size:12px}
+nav{padding:8px;color:#a8bad0;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+</style></head>
+<body>
+<header><h1 id="title">ZeroTier</h1><div id="status">正在读取…</div></header>
+<main><div id="message" role="status" aria-live="polite"></div><div id="list"></div></main>
+<nav id="help">↑↓ 选择　确认 执行　返回 上一级</nav>
+<script src="/sdk/e5.js"></script><script>
+'use strict';
+const $=id=>document.getElementById(id);
+let page='home', state=null, focus=0, busy=false, polling=false;
+let form='', confirmation=null, keyboardMode=0;
+const alphabets=['0123456789','abcdef','ABCDEF'];
+const items=()=>[...$('list').querySelectorAll('button:not(:disabled)')];
+function note(t){$('message').textContent=t||'';}
+function move(i){const a=items();if(!a.length)return;focus=(i+a.length)%a.length;a[focus].focus({preventScroll:true});a[focus].scrollIntoView({block:'nearest'});}
+function button(label,detail,fn,disabled=false){const b=document.createElement('button');b.type='button';b.disabled=disabled;b.textContent=label;
+ if(detail){const s=document.createElement('small');s.textContent=detail;b.append(s);}b.onclick=fn;b.onfocus=()=>{focus=items().indexOf(b);};$('list').append(b);}
+function field(text){const d=document.createElement('div');d.className='field';d.textContent=text;$('list').append(d);}
+function summary(){
+ if(!state)return '正在读取…';
+ const node=state.node||{};
+ if(!state.enabled)return '已停用（网络配置保留）';
+ if(!node.address)return '服务未运行';
+ return '节点 '+node.address+' · '+(node.online?'已连接':'离线')+' · v'+(node.version||'?');
+}
+function go(next){page=next;focus=0;note('');draw();}
+function draw(){
+ $('title').textContent=page==='join'?'加入网络':page==='confirm'?'确认操作':page==='keyboard'?'输入网络 ID':'ZeroTier';
+ $('status').textContent=summary();$('list').replaceChildren();
+ $('help').textContent=page==='keyboard'?'数字/字母键输入　#删除　*切换　确认完成':'↑↓ 选择　确认 执行　返回 上一级';
+ if(page==='home'){
+  if(!state){button('读取中…','',()=>{},true);}
+  else {
+   button(state.enabled?'停止服务':'启动服务', state.enabled?'保留网络配置，随时可再开':'恢复上次加入的网络',
+     ()=>ask('toggle',{enabled:!state.enabled}), busy);
+   button('加入网络','输入 16 位网络 ID（在 my.zerotier.com 上创建）',()=>go('join'),busy);
+   for(const n of state.networks){
+     button((n.name||n.id)+' · '+n.status,(n.ips.length?n.ips.join(' ')+' · ':'')+'离开：确认后从本机移除该网络',
+       ()=>{confirmation={action:'leave',payload:{id:n.id},label:n.name||n.id};go('confirm');},busy);
+   }
+   button('刷新状态','节点 ID 首次显示可能需要几秒',()=>refresh(true),busy);
+  }
+ }else if(page==='join'){
+  field('网络 ID 是 16 位十六进制，例如 8056c2e21c000001。');
+  field('当前输入：'+(form||'（空）'));
+  button('输入网络 ID','确认打开字符盘',()=>{keyboardMode=0;go('keyboard');},busy);
+  button('确认加入','加入后可能还需要在后台批准本节点',()=>{
+    if(!/^[0-9a-fA-F]{16}$/.test(form)){note('网络 ID 必须是 16 位十六进制');return;}
+    confirmation={action:'join',payload:{id:form.toLowerCase()},label:form};go('confirm');},busy||!/^[0-9a-fA-F]{16}$/.test(form));
+  button('取消','返回',()=>go('home'),busy);
+ }else if(page==='confirm'){
+  field(confirmation.action==='join'?'加入网络 '+(confirmation.label||confirmation.payload.id):
+    confirmation.action==='leave'?'离开网络 '+(confirmation.label||confirmation.payload.id):
+    '切换 ZeroTier 服务状态');
+  field('只修改 ZeroTier 自己的配置，不改路由、防火墙和 Nikki。');
+  button('取消','返回，不执行',()=>go('home'),busy);
+  button('确认执行','立即生效',runAction,busy);
+ }else if(page==='keyboard'){
+  note('当前：'+(form||'（空）'));
+  for(const c of alphabets[keyboardMode])button(c,'',()=>append(c));
+  button('删除','',erase);button('切换','',()=>{keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();});
+  button('完成','',()=>go('join'));
+ }
+ if(!items().length)note('没有可选项');else move(focus);
+}
+function ask(action,payload){confirmation={action,payload,label:''};go('confirm');}
+function append(c){if(form.length<16){form+=c;draw();}}
+function erase(){form=form.slice(0,-1);draw();}
+function back(){
+ if(page==='keyboard'){go('join');return;}
+ if(page==='home'){e5.exit();return;}
+ go('home');
+}
+async function api(path,body){const r=await e5.api(path,body===undefined?undefined:{body});if(r?.ok!==true)throw new Error(r?.error||'操作失败');return r;}
+async function runAction(){
+ if(busy)return;busy=true;draw();
+ try{
+  const a=confirmation.action, p=confirmation.payload;
+  if(a==='toggle'){await api('/toggle',p);note(p.enabled?'服务已启动':'服务已停止');}
+  else if(a==='join'){await api('/join',p);note('已加入 '+p.id+'，等待网络分配地址');form='';}
+  else if(a==='leave'){await api('/leave',p);note('已离开 '+(confirmation.label||p.id));}
+ }catch(e){note('操作失败：'+e.message);}
+ finally{busy=false;page='home';focus=0;draw();await refresh();}
+}
+async function refresh(explicit=false){
+ if(polling)return;polling=true;
+ try{state=await api('/status');if(explicit)note('状态已刷新');draw();}
+ catch(e){note('读取失败：'+e.message);}
+ finally{polling=false;}
+}
+e5.onKey(k=>{
+ if(page==='keyboard'){
+  if(k.kind==='digit'){if(k.key==='#')erase();else if(k.key==='*'){keyboardMode=(keyboardMode+1)%alphabets.length;focus=0;draw();}else append(k.key);return true;}
+  if(k.kind==='other'&&k.key&&k.key.length===1&&/^[0-9a-fA-F]$/.test(k.key)){append(k.key);return true;}
+  if(['up','down','left','right'].includes(k.kind)){move(focus+({up:-6,down:6,left:-1,right:1}[k.kind]));return true;}
+ }else if(k.kind==='up'||k.kind==='down'){move(focus+(k.kind==='up'?-1:1));return true;}
+ else if(k.kind==='ok'){const b=items()[focus];if(b)b.click();return true;}
+ else if(k.kind==='back'){back();return true;}
+ return false;
+});
+refresh(true);
+setInterval(()=>{if(page==='home'&&!busy)refresh();},4000);
+</script></body></html>

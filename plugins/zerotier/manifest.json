@@ -1,0 +1,16 @@
+{
+  "id": "zerotier",
+  "api_version": 2,
+  "version": "1.0.0",
+  "name": {
+    "zh": "ZeroTier",
+    "en": "ZeroTier"
+  },
+  "description": {
+    "zh": "虚拟局域网：查看节点、加入网络",
+    "en": "Virtual LAN: node and networks"
+  },
+  "entry": "index.html",
+  "order": 8,
+  "keep_awake": false
+}
