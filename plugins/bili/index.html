@@ -45,7 +45,7 @@ header button svg{display:block}
   background:#16202f;border:1px solid #243349;border-radius:14px}
 #tabs button.on{color:#fff;background:#2a3c55;border-color:#3f5876;box-shadow:inset 0 -2px 0 var(--accent)}
 body.tempview #tabs { display: none !important; }
-#list{flex:1 1 auto;overflow-y:auto;padding:6px}
+#list{flex:1 1 auto;overflow-y:auto;padding:6px;touch-action:pan-y;-webkit-overflow-scrolling:touch}
 .card{display:flex;gap:7px;padding:6px;border-bottom:1px solid #16202f}
 .card:active{background:#16202f}
 .card.sel{background:#16202f;box-shadow:inset 3px 0 0 var(--accent)}
@@ -1419,7 +1419,58 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     }
   });
 
+  /* 列表页左右滑动手势切 Tab */
+  var touchStartX = 0, touchStartY = 0, touchStartTime = 0, touchActive = false, swipedUntil = 0;
+  listEl.addEventListener('touchstart', function(e){
+    if (inPlayer || tempView || !e.touches || e.touches.length !== 1){
+      touchActive = false;
+      return;
+    }
+    var t = e.touches[0];
+    touchStartX = t.clientX;
+    touchStartY = t.clientY;
+    touchStartTime = Date.now();
+    touchActive = true;
+  }, { passive: true });
+
+  listEl.addEventListener('touchmove', function(e){
+    if (!touchActive || inPlayer || tempView || !e.touches || e.touches.length !== 1){
+      touchActive = false;
+      return;
+    }
+  }, { passive: true });
+
+  listEl.addEventListener('touchend', function(e){
+    if (!touchActive || inPlayer || tempView || !e.changedTouches || e.changedTouches.length !== 1){
+      touchActive = false;
+      return;
+    }
+    touchActive = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - touchStartX;
+    var dy = t.clientY - touchStartY;
+    var dt = Date.now() - touchStartTime;
+
+    /* 必须是明显的横向划动：|dx| >= 45px 且 横向位移显著大于纵向 (|dx| > 1.4 * |dy|) */
+    if (dt < 700 && Math.abs(dx) >= 45 && Math.abs(dx) > Math.abs(dy) * 1.4){
+      swipedUntil = Date.now() + 450;
+      var i0 = HOME_ORDER.indexOf(homeTab);
+      if (i0 < 0) i0 = 0;
+      /* 向左划 = 看右边下一个分类；向右划 = 看左边上一个分类 */
+      if (dx < 0){
+        loadHome(HOME_ORDER[(i0 + 1) % HOME_ORDER.length]);
+      } else {
+        loadHome(HOME_ORDER[(i0 - 1 + HOME_ORDER.length) % HOME_ORDER.length]);
+      }
+    }
+  }, { passive: true });
+
+  listEl.addEventListener('touchcancel', function(){
+    touchActive = false;
+  }, { passive: true });
+
   listEl.addEventListener('click', function(e){
+    if (Date.now() < swipedUntil) return;   /* 刚刚划动手势切页，450ms 内防止误触卡片起播 */
     var c = e.target.closest ? e.target.closest('.card') : null;
     if (!c) return;
     var idx = Number(c.getAttribute('data-i'));
