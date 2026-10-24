@@ -329,7 +329,7 @@ body.in-player #tabs { display: none !important; }
   var lastFrameAt = 0, bufShown = 0, restartTried = 0, everFrame = 0, srcAspect = 0;
   /* 字幕：默认打开；B站要登录才有字幕（接口返回 need_login 时提示一次） */
   var subOn = localStorage.getItem('bili-sub') !== '0';
-  var subs = [], subsEl = document.getElementById('subs'), subHinted = 0;
+  var subs = [], subsEl = document.getElementById('subs'), subHinted = 0, subReq = 0;
   var shotAt = (function(){ var m = /shotat=(\d+)/.exec(location.search); return m ? +m[1] : 20; })();
   var segs = [], segIdx = 0, segSkipUntil = -1;
 
@@ -611,7 +611,7 @@ body.in-player #tabs { display: none !important; }
       subOn = !subOn;
       try{ localStorage.setItem('bili-sub', subOn ? '1' : '0'); }catch(e){}
       setSubBtn.textContent = subOn ? '开' : '关';
-      if (!subOn && subsEl){ subsEl.style.display = 'none'; subs = []; }
+      if (!subOn && subsEl){ subReq++; subsEl.style.display = 'none'; subs = []; }
       if (subOn && inPlayer && current) loadSubs(current.bvid, curCid);
       statusEl.textContent = '字幕 ' + (subOn ? '开' : '关');
     });
@@ -715,14 +715,22 @@ body.in-player #tabs { display: none !important; }
 
   /* 字幕：二分找当前时间那一行；换了视频要重新拉 */
   function loadSubs(bvid, cid){
+    /* 切视频时上一个请求可能还在飞：先作废所有在飞的请求（包括下面提前 return 的分支），
+       只认最后一次请求的结果，否则会把旧视频的字幕贴上来 */
+    var my = ++subReq;
     subs = [];
     if (subsEl) subsEl.style.display = 'none';
     if (!subOn || !cid) return;
     fetch('/api/plugins/bili/subtitle?bvid=' + encodeURIComponent(bvid) + '&cid=' + cid)
       .then(function(r){ return r.json(); })
       .then(function(d){
-        if (!d || !d.ok) return;
+        if (my !== subReq) return;
+        if (!d || !d.ok){
+          probe('subs-fail', bvid + ' ' + (d && d.error ? d.error : '?'));
+          return;
+        }
         subs = d.list || [];
+        probe('subs', bvid + ' cid=' + cid + ' lan=' + (d.lan || '-') + ' n=' + subs.length);
         if (!subs.length && d.need_login && !subHinted){
           subHinted = 1;
           statusEl.textContent = '这个视频的字幕需要登录后才能看';

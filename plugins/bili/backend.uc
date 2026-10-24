@@ -172,8 +172,11 @@ return function (ctx) {
             q += `${n}=${params[n]}`;
         }
         /* 签的是 query + mixinKey，两段一起哈希 */
-        ctx.sh("printf '%s' '" + q + mix + "' > /tmp/bili-wbi-q");
-        let rid = trim(`${ctx.sh('md5sum /tmp/bili-wbi-q | cut -c1-32') ?? ''}`);
+        let tmp = trim(`${ctx.sh('mktemp /tmp/bili-wbiq.XXXXXX 2>/dev/null') ?? ''}`);
+        if (!length(tmp) || index(tmp, '/tmp/bili-wbiq.') < 0) return '';
+        ctx.sh("printf '%s' '" + q + mix + "' > " + tmp);
+        let rid = trim(`${ctx.sh('md5sum ' + tmp + ' | cut -c1-32') ?? ''}`);
+        ctx.sh('rm -f ' + tmp);
         if (length(rid) != 32) return '';
         return q + '&w_rid=' + rid;
     }
@@ -255,21 +258,47 @@ return function (ctx) {
             let cid = num(req.query?.cid);
             if (bad_bvid(bvid)) return { ok: false, error: 'bad bvid' };
             if (!cid) return { ok: false, error: 'no cid' };
+            /* 必须走签名接口：未签名的 /x/player/v2 在登录态下会随机返回别的视频的字幕 */
+            let q = wbi_sign({ bvid: bvid, cid: `${cid}`, wts: `${time()}` });
+            let path = length(q) >= 10
+                ? '/x/player/wbi/v2?' + q
+                : '/x/player/v2?bvid=' + bvid + '&cid=' + cid;
             let j = null;
-            try { j = json(api_get('/x/player/v2?bvid=' + bvid + '&cid=' + cid)); } catch (e) { }
+            try { j = json(api_get(path)); } catch (e) { }
             if (!j || num(j.code) !== 0) return { ok: false, error: 'api' };
+            /* 这个接口会把实际返回的 bvid/cid 一起带上；对不上就说明拿的不是这部片子的字幕 */
+            let gotCid = num(j.data?.cid);
+            let gotBvid = `${j.data?.bvid ?? ''}`;
+            if (gotCid && gotCid !== cid) return { ok: false, error: 'cid mismatch' };
+            if (length(gotBvid) > 2 && gotBvid !== bvid) return { ok: false, error: 'bvid mismatch' };
             let need_login = j.data?.need_login_subtitle === true;
             let tracks = j.data?.subtitle?.subtitles ?? [];
-            let first = null;
-            for (let t in tracks) { if (t?.subtitle_url) { first = t; break; } }
+            /* 多轨时优先人工中文，其次 AI 中文，最后才是第一条 */
+            let manual = null, zh = null, any = null;
+            for (let t in tracks) {
+                if (!t?.subtitle_url) continue;
+                let lan = `${t?.lan ?? ''}`;
+                if (!any) any = t;
+                if (!zh && index(lan, 'zh') >= 0) zh = t;
+                if (!manual && index(lan, 'ai') < 0 && index(lan, 'zh') >= 0) manual = t;
+            }
+            let first = manual ? manual : (zh ? zh : any);
             if (!first) return { ok: true, need_login: need_login, lan: '', list: [] };
             let u = `${first.subtitle_url ?? ''}`;
             if (substr(u, 0, 2) === '//') u = 'https:' + u;
-            if (!host_ok(u, IMG_DOMAINS)) return { ok: false, error: 'bad url' };
-            ctx.sh("curl -s --max-time 20 -A '" + UA + "' '" + u + "' > /tmp/bili-sub.json");
+            if (!host_ok(u, IMG_DOMAINS) || index(u, "'") >= 0) return { ok: false, error: 'bad url' };
+            /* 每次请求单独一个临时文件：共用一个文件时，curl 失败会把上一个视频的字幕留下来 */
+            let tmp = trim(`${ctx.sh('mktemp /tmp/bili-sub.XXXXXX 2>/dev/null') ?? ''}`);
+            if (!length(tmp) || index(tmp, '/tmp/bili-sub.') < 0) return { ok: false, error: 'tmp' };
+            let code = trim(`${ctx.sh("curl -s -o " + tmp + " -w '%{http_code}' --max-time 20 -A '" + UA + "' '" + u + "'") ?? ''}`);
+            if (code !== '200') { ctx.sh('rm -f ' + tmp); return { ok: false, error: 'sub http ' + code }; }
+            let raw = '';
+            try { raw = readfile(tmp) ?? ''; } catch (e) { }
+            ctx.sh('rm -f ' + tmp);
+            if (length(raw) < 20) return { ok: false, error: 'sub empty' };
             let sj = null;
-            try { sj = json(readfile('/tmp/bili-sub.json')); } catch (e) { }
-            if (!sj) return { ok: false, error: 'sub json' };
+            try { sj = json(raw); } catch (e) { }
+            if (!sj || type(sj.body) !== 'array') return { ok: false, error: 'sub json' };
             let out = [];
             for (let line in (sj.body ?? [])) {
                 let t = `${line?.content ?? ''}`;
