@@ -307,6 +307,95 @@ return function (ctx) {
             }
             return { ok: true, need_login: false, lan: `${first.lan ?? ''}`, list: out };
         },
+        /* 分区入口：首页第一排横着放这些入口 */
+        'GET /regions': function () {
+            /* 只列实测能出数据的视频分区。
+               番剧/影视/电影/电视剧的 pgc 接口在本机一律 -400/-404（带 wbi 签名也是），
+               所以先不放进来，点了会空白反而更差。 */
+            return { ok: true, list: [
+                { key: 'douga', name: '动画', rid: 1 },
+                { key: 'game', name: '游戏', rid: 4 },
+                { key: 'music', name: '音乐', rid: 3 },
+                { key: 'dance', name: '舞蹈', rid: 129 },
+                { key: 'tech', name: '科技', rid: 188 },
+                { key: 'life', name: '生活', rid: 160 },
+                { key: 'cinephile', name: '影视', rid: 181 },
+                { key: 'documentary', name: '纪录片', rid: 177 }
+            ] };
+        },
+        /* 某个分区的视频（走排行榜的 rid 过滤，不需要额外签名） */
+        'GET /region': function (req) {
+            let rid = num(req.query?.rid);
+            if (rid < 0) rid = 0;
+            let raw = api_get('/x/web-interface/ranking/v2?rid=' + rid + '&type=all');
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j || num(j.code) !== 0) return { ok: false, error: 'api ' + (j ? j.code : '?') };
+            let out = [];
+            for (let it in (j.data?.list ?? [])) {
+                push(out, {
+                    bvid: `${it.bvid ?? ''}`,
+                    title: `${it.title ?? ''}`,
+                    author: `${it.owner?.name ?? ''}`,
+                    pic: httpsify(`${it.pic ?? ''}`),
+                    dur: num(it.duration),
+                    play: num(it.stat?.view),
+                    cid: 0
+                });
+                if (length(out) >= 40) break;
+            }
+            return { ok: true, list: out };
+        },
+        /* 直播分区推荐：用直播专区接口，不靠推荐流过滤 */
+        'GET /live': function () {
+            let raw = api_get('/x/web-interface/wbi/index/top/feed/rcmd?ps=20&fresh_type=4&feed_version=V8');
+            let j = null;
+            try { j = json(raw); } catch (e) { }
+            let out = [];
+            /* 推荐流里 goto=live 的项就是直播间；没有就返回空，页面显示提示 */
+            for (let it in (j?.data?.item ?? [])) {
+                let g = `${it?.goto ?? ''}`;
+                if (g !== 'live') continue;
+                push(out, {
+                    bvid: '', title: `${it?.title ?? ''}`, author: `${it?.uname ?? ''}`,
+                    pic: httpsify(`${it?.cover ?? ''}`), dur: 0, play: num(it?.online),
+                    cid: 0, live: true
+                });
+                if (length(out) >= 20) break;
+            }
+            return { ok: true, list: out };
+        },
+        /* 观看历史：必须登录，未登录时返回 login:true 让页面提示去扫码 */
+        'GET /history': function (req) {
+            let pn = num(req.query?.pn);
+            if (pn < 1) pn = 1;
+            let raw = api_get('/x/web-interface/history/cursor?ps=20&pn=' + pn + '&type=archive');
+            let j = null;
+            try { j = json(raw); } catch (e) { return { ok: false, error: 'bad json' }; }
+            if (!j) return { ok: false, error: 'api' };
+            if (num(j.code) === -101 || num(j.code) === -400) return { ok: false, login: true, error: '需要登录' };
+            if (num(j.code) !== 0) return { ok: false, error: 'api ' + `${j.code ?? '?'}` };
+            let out = [];
+            for (let it in (j.data?.list ?? [])) {
+                let h = it?.history ?? {};
+                let bvid = `${h.bvid ?? ''}`;
+                if (substr(bvid, 0, 2) !== 'BV') continue;
+                push(out, {
+                    bvid: bvid,
+                    title: `${it?.title ?? ''}`,
+                    author: `${it?.author_name ?? ''}`,
+                    pic: httpsify(`${it?.cover ?? ''}`),
+                    dur: num(it?.duration),
+                    play: 0,
+                    cid: num(it?.videos) > 0 ? 0 : 0,
+                    progress: num(h.view_at) > 0 ? num(h.progress) : -1,
+                    viewed: num(it?.view_at)
+                });
+                if (length(out) >= 20) break;
+            }
+            return { ok: true, list: out };
+        },
+
         /* 搜索：这个接口不带签名也能用（设备上实测 code=0） */
         'GET /search': function (req) {
             let q = clean_text(`${req.query?.q ?? ''}`);
