@@ -368,7 +368,9 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   }
   /* 切换横竖屏：播放中要按新尺寸重启播放器，并跳回原来的进度 */
   function toggleRot(){
-    rotMode = rotMode === 1 ? 0 : 1;
+    /* 目标由「现在看起来是横还是竖」决定，不能在 1/0 之间硬切：
+       自动模式（2）下画面已经是横的，硬切会让第一次按键毫无视觉变化 */
+    rotMode = rotOn() ? 0 : 1;
     try{ localStorage.setItem('bili-rot', String(rotMode)); }catch(x){}
     layout();
     if (!inPlayer) return;
@@ -1324,6 +1326,23 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   qEl.addEventListener('click', function(){
     if (window.E5IME) E5IME.open();
   });
+  /* 返回键自检：?backtest=1 */
+  try{
+    if (new URLSearchParams(location.search).get('backtest') === '1'){
+      var seq = [];
+      setTimeout(function(){
+        seq.push('inPlayer=' + inPlayer + ' rot=' + rotOn() + ' mode=' + rotMode);
+        try{ onKey('back'); }catch(e){ seq.push('back1 ERR ' + e); }
+        seq.push('after1 inPlayer=' + inPlayer + ' mode=' + rotMode);
+        setTimeout(function(){
+          try{ onKey('back'); }catch(e){ seq.push('back2 ERR ' + e); }
+          seq.push('after2 inPlayer=' + inPlayer);
+          probe('backtest', seq.join(' | '));
+        }, 1200);
+      }, 8000);
+    }
+  }catch(e){}
+
   /* 进度记忆自检：?postest=1 */
   try{
     if (new URLSearchParams(location.search).get('postest') === '1'){
@@ -1545,7 +1564,11 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       }
       if (kind === 'back'){
         /* 横屏先回竖屏（符合直觉：退一步先退到竖屏），再按才退出播放 */
-        if (rotOn()){ toggleRot(); return true; }
+        if (rotOn()){
+          probe('back', 'landscape->portrait mode=' + rotMode);
+          toggleRot(); return true;
+        }
+        probe('back', 'leave player mode=' + rotMode + ' bg=' + bgAudio);
         leavePlayer(); return true;
       }
       return false;
@@ -1567,7 +1590,10 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       play(selIdx < 0 ? 0 : selIdx);
       return true;
     }
-    if (kind === 'back'){ exitApp(); return true; }
+    if (kind === 'back'){
+      probe('back', 'exit app inPlayer=false mode=' + rotMode);
+      exitApp(); return true;
+    }
     return false;
   }
 
