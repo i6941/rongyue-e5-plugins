@@ -235,6 +235,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     <div class="row"><span>首页默认</span><button id="sethome" type="button">推荐</button></div>
     <div class="row"><span>字幕（竖屏）</span><button id="setsub" type="button">开</button></div>
     <div class="row"><span>字幕（横屏）</span><button id="setsubland" type="button">关</button></div>
+    <div class="row"><span>音画补偿</span><button id="setlead" type="button">120ms</button></div>
     <div class="row"><span>画质</span><button id="setqn" type="button">720P</button></div>
     <div class="row"><span>视频缓存</span><button id="setclear" type="button">清空</button></div>
     <div class="row"><span>账号</span><button id="setlogout" type="button">退出登录</button></div>
@@ -764,6 +765,24 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     if (b) loadHome(b.getAttribute('data-tab'));
   });
 
+  /* 音画补偿：声音进程启动有几十毫秒延迟，e5play 会把视频时钟后移这么多。
+     听感上声音落后就调大，声音超前就调小。 */
+  var LEAD_STEPS = [0, 60, 120, 180];
+  var leadMs = +(loadCfg('lead', '120'));
+  if (LEAD_STEPS.indexOf(leadMs) < 0) leadMs = 120;
+  var setLeadBtn = document.getElementById('setlead');
+  function syncLeadUi(){ if (setLeadBtn) setLeadBtn.textContent = leadMs + 'ms'; }
+  if (setLeadBtn){
+    syncLeadUi();
+    setLeadBtn.addEventListener('click', function(){
+      var i = LEAD_STEPS.indexOf(leadMs);
+      leadMs = LEAD_STEPS[(i + 1) % LEAD_STEPS.length];
+      saveCfg('lead', String(leadMs));
+      syncLeadUi();
+      statusEl.textContent = '音画补偿 ' + leadMs + 'ms，下次起播生效';
+    });
+  }
+
   var setSubLandBtn = document.getElementById('setsubland');
   if (setSubLandBtn){
     setSubLandBtn.textContent = subOnLand ? '开' : '关';
@@ -884,6 +903,39 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       g.fillText(e.text, e.x, e.y);
     }
   }
+
+  /* ---------- 播放进度记忆 ----------
+     和手机客户端一样按视频记住"看到哪了"：退出、暂停、每 5 秒存一次，
+     再进来同一部片子自动跳回去；快到结尾（最后 15 秒）就当作看完了清掉。 */
+  var POS_KEY = 'bili-pos', posLastSave = 0;
+  function posAll(){
+    try{ var v = JSON.parse(localStorage.getItem(POS_KEY) || '{}'); return (v && typeof v === 'object') ? v : {}; }
+    catch(e){ return {}; }
+  }
+  function posSave(bvid, ms, durS){
+    if (!bvid || !(ms > 1000)) return;
+    var all = posAll(), keep = {}, ks = Object.keys(all), n = 0;
+    for (var i = ks.length - 1; i >= 0 && n < 200; i--){ keep[ks[i]] = all[ks[i]]; n++; }
+    keep[bvid] = { p: Math.round(ms), d: Math.round(durS || 0), t: Date.now() };
+    try{ localStorage.setItem(POS_KEY, JSON.stringify(keep)); }catch(e){}
+  }
+  function posGet(bvid){
+    var r = posAll()[bvid];
+    return (r && r.p > 5000) ? r : null;
+  }
+  function posClear(bvid){
+    var all = posAll();
+    if (!all[bvid]) return;
+    delete all[bvid];
+    try{ localStorage.setItem(POS_KEY, JSON.stringify(all)); }catch(e){}
+  }
+  function saveNow(){
+    if (!inPlayer || !current) return;
+    /* 只用 playerMs()：后退之后 curMs 还停在旧位置，取最大值会把进度存回远处 */
+    posSave(posKey(current.bvid, curCid), playerMs(), curDurS);
+    posLastSave = Date.now();
+  }
+  function posKey(bvid, cid){ return cid ? bvid + '@' + cid : bvid; }
 
   /* 字幕：二分找当前时间那一行；换了视频要重新拉 */
   function loadSubs(bvid, cid){
@@ -1028,8 +1080,10 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
         var at = pendingSeekMs; pendingSeekMs = -1;
         try{ ws.send(seekCmd(at)); }catch(e){}
         playOffsetMs = at; playTickAt = Date.now();
+      } else {
+        playOffsetMs = 0;
       }
-      playOffsetMs = 0; playTickAt = Date.now(); playing = true;
+      playTickAt = Date.now(); playing = true;
       probe('ws-open', url);
     };
     ws.onmessage = function(ev){ onFrame(ev.data); };
@@ -1131,7 +1185,8 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
         loadDanmaku(curCid);
         loadSubs(it.bvid, curCid);
         statusEl.textContent = '启动播放器…';
-        return fetch('/api/plugins/bili/player-start?max=' + (window.__maxWant || 480)).then(function(r){ return r.json(); });
+        return fetch('/api/plugins/bili/player-start?max=' + (window.__maxWant || 480) +
+                     '&lead=' + leadMs).then(function(r){ return r.json(); });
       })
       .then(function(st){
         if (my !== playToken) return null;
@@ -1144,6 +1199,13 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
         player.classList.add('on');
         /* 进播放器时先按当前横竖屏设置摆一次画面 */
         try{ layout(); }catch(e){}
+        /* 上次看到一半：跳到那个位置继续（最后 15 秒内视为看完，不跳） */
+        var resume = posGet(posKey(it.bvid, curCid)) || posGet(it.bvid);
+        if (resume && (!(it.dur) || resume.p < (it.dur * 1000) - 15000)){
+          pendingSeekMs = resume.p;
+          var rm = Math.floor(resume.p / 60000), rs = Math.floor((resume.p % 60000) / 1000);
+          statusEl.textContent = '从上次位置继续 ' + rm + ':' + (rs < 10 ? '0' : '') + rs;
+        }
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
         connectPlayer(lastPort, 0);
@@ -1194,7 +1256,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   cv.addEventListener('click', function(){
     if (ws && ws.readyState === 1){
       try { ws.send(new Uint8Array([4])); } catch(e){}
-      if (playing){ playOffsetMs = playerMs(); }
+      if (playing){ playOffsetMs = playerMs(); saveNow(); }
       playing = !playing;
       playTickAt = Date.now();
       statusEl.textContent = statusEl.textContent === '已暂停' ? '播放中' : '已暂停';
@@ -1208,6 +1270,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   });
 
   function stopPlayback(){
+    saveNow();
     closeWs();
     fetch('/api/plugins/bili/player-stop').catch(function(){});
     cv.width = 320; cv.height = 180;
@@ -1228,6 +1291,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
 
   function leavePlayer(){
     if (!inPlayer) return;
+    saveNow();
     if (bgAudio){
       /* 后台播放是手动开的：画面收起来，播放器进程和声音继续 */
       inPlayer = false; bgPlaying = true;
@@ -1260,6 +1324,31 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
   qEl.addEventListener('click', function(){
     if (window.E5IME) E5IME.open();
   });
+  /* 进度记忆自检：?postest=1 */
+  try{
+    if (new URLSearchParams(location.search).get('postest') === '1'){
+      setTimeout(function(){
+        var r = {};
+        try{
+          var k1 = posKey('BVtest000001', 12345), k2 = posKey('BVtest000001', 0);
+          r.key = k1; r.keyNoCid = k2;
+          posSave(k1, 123456, 600);
+          posSave(k2, 65000, 600);
+          r.get1 = (posGet(k1) || {}).p;
+          r.get2 = (posGet(k2) || {}).p;
+          posClear(k1);
+          r.cleared = posGet(k1);
+          r.otherKept = (posGet(k2) || {}).p;
+          posClear(k2);
+          r.ok = r.key === 'BVtest000001@12345' && r.keyNoCid === 'BVtest000001' &&
+                 r.get1 === 123456 && r.get2 === 65000 &&
+                 r.cleared === null && r.otherKept === 65000;
+        }catch(e){ r.ok = false; r.err = '' + e; }
+        probe('postest', JSON.stringify(r));
+      }, 1200);
+    }
+  }catch(e){}
+
   /* 横屏 UI 自检：?landtest=1 时自动验证全套横屏界面与菜单尺寸 */
   try{
     if (new URLSearchParams(location.search).get('landtest') === '1'){
@@ -1520,6 +1609,18 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     if (pb) pb.textContent = playing ? '暂停' : '播放';
     var lpb = document.getElementById('land-play');
     if (lpb) lpb.textContent = playing ? '暂停' : '播放';
+
+    /* 每 5 秒记一次进度；播到最后 15 秒就清掉，下次从头开始 */
+    if (inPlayer && current && playing){
+      var nowPos = playerMs();
+      var pk = posKey(current.bvid, curCid);
+      if (curDurS > 0 && nowPos > curDurS * 1000 - 15000){
+        if (posLastSave){ posClear(pk); posLastSave = 0; }
+      } else if (Date.now() - posLastSave > 5000){
+        posSave(pk, nowPos, curDurS);
+        posLastSave = Date.now();
+      }
+    }
 
     if (curDurS > 0){
       var ratio = Math.max(0, Math.min(1, (playerMs() / 1000) / curDurS));

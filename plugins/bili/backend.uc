@@ -515,6 +515,10 @@ return function (ctx) {
             /* 输出尺寸跟着页面当前的横竖屏走：画布多大就输出多大，页面不再缩放 */
             let max = num(req.query?.max);
             if (max < 64 || max > 1920) max = 480;
+            /* 声音起进程到出声的延迟（毫秒）：e5play 用它把视频时钟往后压，
+               让快进/恢复后音画仍然对齐 */
+            let lead = num(req.query?.lead);
+            if (lead < 0 || lead > 1000) lead = 120;
             let dir = '/etc/e5-infoscreen/plugins/bili';
             let bin = dir + '/e5play';
             let mp4 = dir + '/cache.mp4';
@@ -524,7 +528,7 @@ return function (ctx) {
                 return { ok: false, error: 'no cached video' };
             if (!stop_player()) return { ok: false, error: '旧播放器没退出' };
             ctx.sh('start-stop-daemon -S -q -b -m -p /var/run/e5play.pid -x ' + bin +
-                   ' -- --serve ' + mp4 + ' 9511 --max ' + max);
+                   ' -- --serve ' + mp4 + ' 9511 --max ' + max + ' --audio-lead ' + lead);
             return { ok: true, port: 9511 };
         },
         /* 退出播放时一定要停掉：一个插件目录里只常驻一个解码进程 */
