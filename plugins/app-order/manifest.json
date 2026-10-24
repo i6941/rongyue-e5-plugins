@@ -1,0 +1,15 @@
+{
+  "id": "app-order",
+  "api_version": 2,
+  "version": "0.1.0",
+  "name": {
+    "zh": "应用排序",
+    "en": "App Order"
+  },
+  "description": {
+    "zh": "调整应用列表里的先后顺序（写回每个插件的 order）",
+    "en": "Reorder the app list by rewriting each plugin's order"
+  },
+  "entry": "index.html",
+  "order": 15
+}
