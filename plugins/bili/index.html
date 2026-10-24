@@ -805,7 +805,7 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
       try{ localStorage.setItem('bili-sub', subOn ? '1' : '0'); }catch(e){}
       setSubBtn.textContent = subOn ? '开' : '关';
       if (!subOn && subsEl){ subReq++; subsEl.style.display = 'none'; subs = []; }
-      if (subOn && inPlayer && current) loadSubs(current.bvid, curCid);
+      if (subOn && inPlayer && nowPlaying()) loadSubs(nowPlaying().bvid, curCid);
       statusEl.textContent = '字幕 ' + (subOn ? '开' : '关');
     });
   }
@@ -931,11 +931,18 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     delete all[bvid];
     try{ localStorage.setItem(POS_KEY, JSON.stringify(all)); }catch(e){}
   }
+  function nowPlaying(){
+    /* 当前视频就是 items[curIndex]；这个页面没有 current 变量 */
+    return items[curIndex] || null;
+  }
   function saveNow(){
-    if (!inPlayer || !current) return;
-    /* 只用 playerMs()：后退之后 curMs 还停在旧位置，取最大值会把进度存回远处 */
-    posSave(posKey(current.bvid, curCid), playerMs(), curDurS);
-    posLastSave = Date.now();
+    try{
+      var it = nowPlaying();
+      if (!inPlayer || !it) return;
+      /* 只用 playerMs()：后退之后 curMs 还停在旧位置，取最大值会把进度存回远处 */
+      posSave(posKey(it.bvid, curCid), playerMs(), curDurS);
+      posLastSave = Date.now();
+    }catch(e){ /* 存档失败绝不能影响退出播放 */ }
   }
   function posKey(bvid, cid){ return cid ? bvid + '@' + cid : bvid; }
 
@@ -1620,9 +1627,10 @@ body.rot-land #settings .hd, body.rot-land #settings #setclose{grid-column:1 / -
     if (lpb) lpb.textContent = playing ? '暂停' : '播放';
 
     /* 每 5 秒记一次进度；播到最后 15 秒就清掉，下次从头开始 */
-    if (inPlayer && current && playing){
+    var playingItem = nowPlaying();
+    if (inPlayer && playingItem && playing){
       var nowPos = playerMs();
-      var pk = posKey(current.bvid, curCid);
+      var pk = posKey(playingItem.bvid, curCid);
       if (curDurS > 0 && nowPos > curDurS * 1000 - 15000){
         if (posLastSave){ posClear(pk); posLastSave = 0; }
       } else if (Date.now() - posLastSave > 5000){
