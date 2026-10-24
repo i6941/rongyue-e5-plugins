@@ -1752,14 +1752,15 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         /* 续播必须先让后端从目标位置续传：只有 9MB 的缓存根本覆盖不到
            第 18 分钟，播放器跳过去只会一直等数据（表现为画面不动、随后断线）。 */
         if (pendingSeekMs > 0 && curDurS > 0){
-          statusEl.textContent = '从目标位置续传…';
+          statusEl.textContent = '准备续播…';
           return fetch('/api/plugins/bili/seek?ms=' + Math.round(pendingSeekMs) +
                        '&dur=' + Math.round(curDurS * 1000))
             .then(function(r){ return r.json(); })
             .then(function(sd){
-              probe('resume-seek', sd ? ('need=' + sd.need + ' off=' + (sd.off || 0)) : 'null');
-              /* 留 1.2 秒让续传真正开始写盘，再连播放器 */
-              return new Promise(function(res){ setTimeout(res, sd && sd.need ? 1200 : 0); });
+              probe('resume-seek', sd ? ('need=' + sd.need + ' off=' + (sd.off || 0) + ' waiting=' + (sd.waiting ? 1 : 0)) : 'null');
+              /* 目标位置还没下载到：文件是连续下载的，播放器读到没下载的样本
+                 会自己等，下载追上就自动继续。这里只把状态说清楚。 */
+              if (sd && sd.waiting) statusEl.textContent = '正在下载到目标位置…';
             })
             .catch(function(){})
             .then(function(){ connectPlayer(lastPort, 0); });
