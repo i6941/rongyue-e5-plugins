@@ -13,3 +13,9 @@
 原插件安装器安装发布tar.gz；卸载`/usr/libexec/e5-infoscreen/plugin remove wifi-control`只移除界面，不主动改动网络或删除私有已保存网络。不要删除其他插件或运行整包恢复。
 
 tests/test_wifi_control.py验证密码脱敏、输入校验、配置快照/恢复、失败回滚和stdin传参。tests/e2e_wifi_control.py在设备上实际测试扫描、重连、AP/STA切换、失败回滚和恢复，需始终保留USB维护连接。操作会短暂断开设备上联，测试后恢复原SSID。
+
+## 重启无线
+
+首页「重启无线」调用 POST /restart：只执行 wifi down / wifi up，不改任何配置。
+重启后最多等 20 秒确认 wlan0 的默认网关可达，把地址、网关和结论一起返回。
+用于「显示已连接、IP 和路由都在，但一个包也发不出去」这类驱动假死（SC2355 hif 通道退出）。

@@ -24,6 +24,7 @@ return function(ctx) {
         'POST /connect': req => call('connect', req.body),
         'POST /hotspot': () => call('hotspot'),
         'POST /forget': req => call('forget', req.body),
-        'POST /restore': () => call('restore')
+        'POST /restore': () => call('restore'),
+        'POST /restart': () => call('restart')
     };
 };

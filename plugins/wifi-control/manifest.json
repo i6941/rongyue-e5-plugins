@@ -1,7 +1,7 @@
 {
   "id": "wifi-control",
   "api_version": 2,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "name": {
     "zh": "Wi-Fi 管理",
     "en": "Wi-Fi"

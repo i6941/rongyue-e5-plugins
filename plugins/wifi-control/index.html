@@ -43,7 +43,7 @@ function go(next){page=next;focus=0;note('');draw();}
 function ask(action,payload){confirmation={action,payload};go('confirm');}
 function openForm(network,saved=false){form={ssid:network?.ssid||'',band:network?.band||'5g',encryption:network?.encryption||'psk2',password:'',useSaved:saved,scanned:!!network};go('form');}
 function draw(){
- $('title').textContent=page==='keyboard'?(editField==='password'?'输入密码':'输入 Wi-Fi 名称'):page==='scan'?'扫描结果':page==='saved'?'已保存网络':page==='form'?'连接设置':page==='confirm'?'确认操作':'Wi-Fi 管理';
+ $('title').textContent=page==='keyboard'?(editField==='password'?'输入密码':'输入 Wi-Fi 名称'):page==='scan'?'扫描结果':page==='saved'?'已保存网络':page==='form'?'连接设置':page==='confirm'?'确认操作':page==='restart'?'重启无线':'Wi-Fi 管理';
  $('status').textContent=summary();$('list').replaceChildren();$('list').className=page==='keyboard'?'keyboard':'';
  $('help').textContent=page==='keyboard'?'方向键选字符　确认输入　#删除　*切换':'↑↓ 选择　确认 执行　返回 上一级';
  const blocked=busy||working();
@@ -53,6 +53,7 @@ function draw(){
   button('手动添加网络','可输入名称并选择2.4/5GHz',()=>openForm(),blocked);
   button('开启热点','将断开 Wi-Fi 上联；无SIM时无法上网',()=>ask('hotspot',{}),blocked);
   button('恢复上次配置','连接失败或误操作时使用',()=>ask('restore',{}),blocked||!state?.canRestore);
+  button('重启无线','连着但上不了网时软重启 radio，不改配置',()=>go('restart'),blocked);
   button('刷新状态','USB管理始终保留',()=>refresh(true),busy);
  }else if(page==='saved'){
   for(const p of state.profiles)button(p.ssid,(state.connected&&state.ssid===p.ssid?'已连接 · ':'')+(p.band==='2g'?'2.4GHz':'5GHz'),()=>{chosen=p;go('savedActions');},blocked);
@@ -77,6 +78,11 @@ function draw(){
   button('取消','返回，不执行操作',back);
   const warning=confirmation.action==='hotspot'?'将断开 Wi-Fi 上联；无SIM时热点不能上网':confirmation.action==='connect'?(confirmation.payload.encryption==='none'?'开放网络未加密；连接失败自动回滚':'连接失败自动回滚，USB管理保持可用'):confirmation.action==='restore'?'恢复上一次保存的无线/网络配置':'删除已保存网络；当前网络会断开';
   button('确认'+actions[confirmation.action],warning,runJob,blocked);
+ }else if(page==='restart'){
+  field('界面显示已连接但上不了网时使用。');
+  field('只重启无线服务，不改任何配置；约 20 秒，期间主屏会短暂断网，USB 管理不受影响。');
+  button('取消','返回，不执行操作',()=>go('home'),busy);
+  button('确认重启无线','重新关联并等待网关可达',runRestart,busy||working());
  }else if(page==='keyboard'){
   note(editField==='password'?'密码：'+'*'.repeat(editValue.length):'名称：'+editValue);
   for(const c of alphabets[keyboardMode])button(c===' '?'空格':c,'',()=>append(c));
@@ -105,6 +111,14 @@ async function refresh(explicit=false){
  }catch(e){note('读取失败：'+e.message);}finally{polling=false;}
 }
 async function scan(){if(busy||working())return;busy=true;note('正在扫描…');draw();try{networks=(await api('/scan')).networks;page='scan';focus=0;note('');}catch(e){note(e.message);}finally{busy=false;draw();}}
+async function runRestart(){
+ if(busy||working())return;busy=true;note('正在重启无线，约 20 秒…');draw();
+ try{
+  const r=await api('/restart',{});
+  note(r.online?('无线已重启 · 网关 '+(r.gateway||'')+' 可达'):(r.message||'无线已重启'));
+ }catch(e){note('重启失败：'+e.message);}
+ finally{busy=false;go('home');await refresh();}
+}
 async function runJob(){
  if(busy||working())return;busy=true;draw();
  try{const r=await api('/'+confirmation.action,confirmation.payload);state={...state,job:r.job};wasWorking=true;page='home';focus=0;form=null;note(actions[confirmation.action]+'中…');}

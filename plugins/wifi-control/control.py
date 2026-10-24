@@ -150,6 +150,74 @@ def status():
             'job': public_job(read_json(RUN / 'job.json'))}
 
 
+def gateway(device='wlan0'):
+    """wlan0 的默认网关；没有默认路由或在别的网卡上时返回空串。
+
+    只认 wlan0：设备上还有 USB(usb0) 与热点出口，按"第一条 default"取会取错。
+    """
+    rc, out = command(['/sbin/ip', 'route', 'show', 'default', 'dev', device], timeout=5)
+    if rc != 0:
+        return ''
+    for line in out.decode(errors='replace').splitlines():
+        parts = line.split()
+        if parts[:1] == ['default'] and 'via' in parts:
+            return parts[parts.index('via') + 1]
+    return ''
+
+
+def wlan_address(device='wlan0'):
+    """wlan0 的 IPv4 地址；没有就返回空串。"""
+    rc, out = command(['/sbin/ip', '-4', '-o', 'addr', 'show', device], timeout=5)
+    if rc != 0:
+        return ''
+    match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', out.decode(errors='replace'))
+    return match.group(1) if match else ''
+
+
+def reachable(host, timeout=2):
+    if not host:
+        return False
+    rc, _ = command(['/bin/ping', '-c', '1', '-W', str(timeout), host], timeout=timeout + 3)
+    return rc == 0
+
+
+def restart():
+    """软重启无线：radio 重启后等网关重新可达。
+
+    只重启服务，不改配置；不动 UCI，所以失败也无需回滚。
+    """
+    with lock():
+        before = reachable(gateway())
+        down_rc, down_out = command(['/sbin/wifi', 'down'], timeout=20)
+        if down_rc != 0:
+            return {'ok': False, 'status': 500, 'restarted': False,
+                    'error': '关闭无线失败：' + down_out.decode(errors='replace').strip()[:120]}
+        time.sleep(2)
+        up_rc, up_out = command(['/sbin/wifi', 'up'], timeout=30)
+        if up_rc != 0:
+            return {'ok': False, 'status': 500, 'restarted': False,
+                    'error': '启动无线失败：' + up_out.decode(errors='replace').strip()[:120]}
+
+        # radio 重新关联 + DHCP 需要几秒，最多等 20 秒
+        gateway_ip, address, ok = '', '', False
+        for _ in range(10):
+            time.sleep(2)
+            gateway_ip = gateway()
+            address = wlan_address()
+            if reachable(gateway_ip):
+                ok = True
+                break
+        if not ok and not address:
+            message = '无线已重启，但还没拿到地址（可能连不上已知网络）'
+        elif not ok:
+            message = '无线已重启并拿到 ' + address + '，但网关不可达'
+        else:
+            message = '无线已重启 · ' + address + ' · 网关 ' + gateway_ip + ' 可达'
+        return {'ok': True, 'restarted': True, 'online': ok,
+                'gateway': gateway_ip, 'address': address, 'wasOnline': before,
+                'message': message}
+
+
 def scan():
     result = json_command(['/bin/ubus', 'call', 'iwinfo', 'scan', '{"device":"wlan0"}'], timeout=12)
     if 'results' not in result:
@@ -354,6 +422,8 @@ def dispatch(action, body):
         return status()
     if action == 'scan':
         return scan()
+    if action == 'restart':
+        return restart()
     if action in ('connect', 'hotspot', 'restore', 'forget'):
         return enqueue(action, body)
     raise WifiError('不支持的网络操作')
