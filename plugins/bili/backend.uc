@@ -694,8 +694,13 @@ return function (ctx) {
                当缓存用会播到缺口就停，所以有空洞一律重下 */
             let hole = num(`${ctx.sh('cat /tmp/bili-hole 2>/dev/null') ?? '0'}`);
             ctx.sh("echo '" + id + "' > /tmp/bili-req");
+            let v2_raw = api_get('/x/player/v2?bvid=' + bvid + '&cid=' + cid);
+            let v2_j = null;
+            try { v2_j = json(v2_raw); } catch (e) { }
+            let cloud_ms = num(v2_j?.data?.last_play_time);
+
             if (cached === id && have > 1048576 && !(hole > 0))
-                return { ok: true, state: 'cached', size: have, cid: cid };
+                return { ok: true, state: 'cached', size: have, cid: cid, cloud_ms: cloud_ms };
             /* 边下边播：直接写 cache.mp4，播放器读这个正在增长的文件 */
             ctx.sh('start-stop-daemon -K -q -p /var/run/bili-dl.pid; rm -f /var/run/bili-dl.pid ' + res);
             ctx.sh('rm -f ' + out);
@@ -707,9 +712,27 @@ return function (ctx) {
             /* 记下直链和总大小：快进时要按字节位置续传 */
             ctx.sh("printf '%s' '" + u + "' > /tmp/bili-url");
             ctx.sh('rm -f /tmp/bili-total /tmp/bili-hole');
-            return { ok: true, state: 'downloading', quality: num(j.data.quality), cid: cid };
+            return { ok: true, state: 'downloading', quality: num(j.data.quality), cid: cid, cloud_ms: cloud_ms };
         },
 
+        /* 云端播放进度上报（心跳）：同步到 B 站账号个人观看历史 */
+        'POST /heartbeat': function (req) {
+            let b = req.body ?? {};
+            let bvid = `${b.bvid ?? ''}`;
+            let cid = num(b.cid);
+            let played = num(b.played_time);
+            if (bad_bvid(bvid) || !cid) return { ok: false, error: 'bad args' };
+            let csrf = user_csrf();
+            if (!length(csrf)) return { ok: false, login: true, error: '未登录' };
+            let postData = 'bvid=' + bvid + '&cid=' + cid + '&played_time=' + played +
+                           '&realtime=' + played + '&start_ts=' + time() + '&csrf=' + csrf;
+            let raw = ctx.sh("curl -s -m 10 -X POST -A '" + UA + "'" + cookie_hdr() +
+                             " -H 'Referer: " + REFERER + "' --data '" + postData +
+                             "' 'https://api.bilibili.com/x/click-interface/web/heartbeat'");
+            let j = null;
+            try { j = json(raw); } catch (e) { }
+            return { ok: true, synced: j?.code === 0 };
+        },
         /* 快进到还没下载的位置：按时间估算字节位置，从那里续传。
            跳过的部分不需要下载——原来顺序下载必须把中间几十兆等完。 */
         'GET /seek': function (req) {

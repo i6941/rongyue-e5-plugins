@@ -638,7 +638,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
 
 
   /* ---------- 设置 ---------- */
-  var qnPref = 80, curCid = 0;
+  var qnPref = 80, curCid = 0, currentPrepare = null;
   var settingsEl = document.getElementById('settings');
   var setDm = document.getElementById('setdm');
   var setSz = document.getElementById('setsz');
@@ -1410,13 +1410,29 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     /* 当前视频就是 items[curIndex]；这个页面没有 current 变量 */
     return items[curIndex] || null;
   }
+  function syncCloudHeartbeat(bvid, cid, posMs){
+    if (!bvid || !cid || !(posMs > 0)) return;
+    try{
+      fetch('/api/plugins/bili/heartbeat', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          bvid: bvid,
+          cid: cid,
+          played_time: Math.round(posMs / 1000)
+        })
+      }).catch(function(){});
+    }catch(e){}
+  }
+
   function saveNow(){
     try{
       var it = nowPlaying();
       if (!inPlayer || !it) return;
-      /* 只用 playerMs()：后退之后 curMs 还停在旧位置，取最大值会把进度存回远处 */
-      posSave(posKey(it.bvid, curCid), playerMs(), curDurS);
+      var pos = playerMs();
+      posSave(posKey(it.bvid, curCid), pos, curDurS);
       posLastSave = Date.now();
+      syncCloudHeartbeat(it.bvid, curCid, pos);
     }catch(e){ /* 存档失败绝不能影响退出播放 */ }
   }
   function posKey(bvid, cid){ return cid ? bvid + '@' + cid : bvid; }
@@ -1657,6 +1673,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         probe('prepare-done', d ? (d.ok ? 'ok' : ('err:' + d.error)) : 'null');
         if (!d || !d.ok){ statusEl.textContent = '取流失败：' + ((d && d.error) || '?'); return null; }
         curCid = d.cid || it.cid || 0;
+        currentPrepare = d;
         pinfo.textContent = it.title;
     var lt = document.getElementById('land-title'); if (lt) lt.textContent = it.title;
         statusEl.textContent = '下载中…';
@@ -1686,12 +1703,15 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         player.classList.add('on');
         /* 进播放器时先按当前横竖屏设置摆一次画面 */
         try{ layout(); }catch(e){}
-        /* 上次看到一半：跳到那个位置继续（最后 15 秒内视为看完，不跳） */
-        var resume = posGet(posKey(it.bvid, curCid)) || posGet(it.bvid);
-        if (resume && (!(it.dur) || resume.p < (it.dur * 1000) - 15000)){
-          pendingSeekMs = resume.p;
-          var rm = Math.floor(resume.p / 60000), rs = Math.floor((resume.p % 60000) / 1000);
-          statusEl.textContent = '从上次位置继续 ' + rm + ':' + (rs < 10 ? '0' : '') + rs;
+        /* 对比云端历史进度与本地进度，取更新、更靠后的位置断点续看 */
+        var localResume = posGet(posKey(it.bvid, curCid)) || posGet(it.bvid);
+        var cloudMs = (currentPrepare && currentPrepare.cloud_ms) ? currentPrepare.cloud_ms : 0;
+        var resumeMs = Math.max(localResume ? localResume.p : 0, cloudMs);
+        if (resumeMs > 5000 && (!(it.dur) || resumeMs < (it.dur * 1000) - 15000)){
+          pendingSeekMs = resumeMs;
+          var rm = Math.floor(resumeMs / 60000), rs = Math.floor((resumeMs % 60000) / 1000);
+          var isCloud = cloudMs > (localResume ? localResume.p : 0);
+          statusEl.textContent = (isCloud ? '云端进度：' : '从上次位置继续 ') + rm + ':' + (rs < 10 ? '0' : '') + rs;
         }
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
@@ -2240,6 +2260,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       } else if (Date.now() - posLastSave > 5000){
         posSave(pk, nowPos, curDurS);
         posLastSave = Date.now();
+        syncCloudHeartbeat(playingItem.bvid, curCid, nowPos);
       }
     }
 
