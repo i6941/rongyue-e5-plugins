@@ -3,8 +3,8 @@
    www/roms 只是软链；每次 API 调用都检查一次，更新后第一次打开应用就自动补回。 */
 const ROMDIR = '/etc/e5-infoscreen/roms';
 const ROMLINK = '/usr/share/e5-infoscreen/www/roms';
-/* 三个原生核心二进制：FC / MD / GBA（GB） */
-const CORE_BINS = ['/usr/bin/e5emu', '/usr/bin/e5emu-genesis', '/usr/bin/e5emu-gba', '/usr/bin/e5emu-arcade'];
+/* 三个原生核心二进制：FC / MD / GBA（GB）/ 街机 / DOS */
+const CORE_BINS = ['/usr/bin/e5emu', '/usr/bin/e5emu-genesis', '/usr/bin/e5emu-gba', '/usr/bin/e5emu-arcade', '/usr/bin/e5emu-dos'];
 import { open } from 'fs';
 
 // 前端把状态（帧率、核心、错误）POST 过来，写进 /tmp 供 SSH 侧读取。
@@ -197,14 +197,16 @@ return function (ctx) {
                 || index(clean, '..') >= 0) {
                 return { ok: false, error: 'bad rom name' };
             }
-            /* 按扩展名挑内核：每个内核编成一个独立二进制，互不干扰 */
+            /* 按扩展名与目录挑内核：每个内核编成一个独立二进制，互不干扰 */
             let tail3 = substr(clean, length(clean) - 3, 3);
             let tail4 = substr(clean, length(clean) - 4, 4);
+            let tail5 = substr(clean, length(clean) - 5, 5);
             let bin = '';
             if (tail4 === '.nes') bin = '/usr/bin/e5emu';
             else if (tail3 === '.md') bin = '/usr/bin/e5emu-genesis';
             else if (tail4 === '.gba') bin = '/usr/bin/e5emu-gba';
-            else if (tail3 === 'zip') bin = '/usr/bin/e5emu-arcade';   /* 街机：FBNeo，ROM 是 .zip */
+            else if (tail5 === '.dosz' || tail4 === '.dos' || index(clean, 'dos/') === 0) bin = '/usr/bin/e5emu-dos';
+            else if (tail3 === 'zip' || index(clean, 'arc/') === 0) bin = '/usr/bin/e5emu-arcade';   /* 街机：FBNeo，ROM 是 .zip */
             if (bin === '') return { ok: false, error: 'unsupported rom' };
 
             try {
@@ -283,7 +285,13 @@ return function (ctx) {
                     return out === '0';
                 } catch (e) { return false; }
             }
-            let bins = { nes: has('/usr/bin/e5emu'), md: has('/usr/bin/e5emu-genesis'), gba: has('/usr/bin/e5emu-gba') };
+            let bins = {
+                nes: has('/usr/bin/e5emu'),
+                md: has('/usr/bin/e5emu-genesis'),
+                gba: has('/usr/bin/e5emu-gba'),
+                arcade: has('/usr/bin/e5emu-arcade'),
+                dos: has('/usr/bin/e5emu-dos')
+            };
             let pid = read_text('/var/run/e5emu.pid');
             return { ok: true, installed: bins.nes, bins: bins, pid: pid };
         }

@@ -136,7 +136,7 @@ body.ingame main{top:0;bottom:0}
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
 <header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button></header>
-<div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button><button type="button" data-sys="ARC"><b>5</b> 街机</button></div>
+<div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button><button type="button" data-sys="ARC"><b>5</b> 街机</button><button type="button" data-sys="DOS"><b>6</b> DOS</button></div>
 <main>
   <div id="menu"></div>
   <div id="stage"><div id="ejs_game"></div>
@@ -1339,9 +1339,9 @@ function handleKey(kind,key,repeat,id,code){
     if(kind==='left'){ selectIdx(sel-1); return true; }
     if(kind==='right'){ selectIdx(sel+1); return true; }
     if(kind==='ok'){ if(cells[sel]) cells[sel].click(); return true; }
-    if(kind==='digit'&&key>='1'&&key<='5'){
-      /* 数字 1-4 切机种 tab（列表上的序号角标已去掉） */
-      var t=['ALL','FC','MD','GBA','ARC'][parseInt(key,10)-1];
+    if(kind==='digit'&&key>='1'&&key<='6'){
+      /* 数字 1-6 切机种 tab */
+      var t=['ALL','FC','MD','GBA','ARC','DOS'][parseInt(key,10)-1];
       setTab(t);
       return true;
     }
