@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>仙剑奇侠传</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font-family: sans-serif; }
+
+#view {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: #000;
+}
+#screen {
+  image-rendering: pixelated;
+  image-rendering: -webkit-optimize-contrast;
+  object-fit: contain;
+  background: #000;
+}
+#tip {
+  position: absolute; bottom: 8px; left: 0; right: 0;
+  text-align: center; color: rgba(255,255,255,0.4); font-size: 11px;
+  pointer-events: none; transition: opacity 0.5s;
+}
+#loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: #0b0d13;
+  color: #e0d0b0; font-size: 14px; gap: 12px; z-index: 10;
+}
+.spinner {
+  width: 24px; height: 24px; border: 3px solid rgba(224,208,176,0.2);
+  border-top-color: #e0d0b0; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+<script src="/sdk/e5.js"></script>
+</head>
+<body>
+
+<div id="view">
+  <canvas id="screen"></canvas>
+  <div id="tip">按键：OK/Enter 调查/确认 · 返回/3 菜单/取消 · 长按返回 退出</div>
+  <div id="loading"><div class="spinner"></div><div>正在启动仙剑奇侠传…</div></div>
+</div>
+
+<script>
+(function() {
+  var cvs = document.getElementById('screen');
+  var ctx = cvs.getContext('2d', { alpha: false });
+  var loading = document.getElementById('loading');
+  var tip = document.getElementById('tip');
+  var ws = null;
+  var running = false;
+  var btnMask = 0;
+  var backDownAt = 0;
+  var backGuardUntil = 0;
+
+  /* 画面自适应缩放（物理屏 320x480，游戏 320x200） */
+  function fit() {
+    var ww = window.innerWidth || 320, wh = window.innerHeight || 480;
+    var gw = 320, gh = 200;
+    var scale = Math.min(ww / gw, wh / gh);
+    cvs.style.width = Math.round(gw * scale) + 'px';
+    cvs.style.height = Math.round(gh * scale) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+
+  /* 隐藏宿主工具栏，保持全屏沉浸感（带卸载与看门狗清理） */
+  var STYLE_ID = 'e5-pal-hide-bar';
+  function applyHideBar() {
+    try {
+      if (window.parent && window.parent.document) {
+        var style = window.parent.document.getElementById(STYLE_ID);
+        if (!style) {
+          style = window.parent.document.createElement('style');
+          style.id = STYLE_ID;
+          style.textContent = '#mobile-toolbar, #mobile-nav { display: none !important; } #app-frame { top: 0 !important; height: 100% !important; }';
+          window.parent.document.head.appendChild(style);
+        }
+      }
+    } catch(e) {}
+  }
+  function removeHideBar() {
+    try {
+      if (window.parent && window.parent.document) {
+        var el = window.parent.document.getElementById(STYLE_ID);
+        if (el) el.remove();
+      }
+    } catch(e) {}
+  }
+  function stopBackend() {
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/plugins/e5-pal/emu/stop');
+      } else {
+        fetch('/api/plugins/e5-pal/emu/stop', { method: 'POST', keepalive: true });
+      }
+    } catch(e) {}
+  }
+
+  function onExitCleanup() {
+    removeHideBar();
+    stopBackend();
+  }
+  applyHideBar();
+  window.addEventListener('pagehide', onExitCleanup);
+  window.addEventListener('beforeunload', onExitCleanup);
+  window.addEventListener('unload', onExitCleanup);
+
+  function leave() {
+    if (window._left) return;
+    window._left = true;
+    onExitCleanup();
+    setTimeout(function() {
+      if (window.e5 && window.e5.exit) window.e5.exit();
+      else location.href = '/';
+    }, 80);
+  }
+
+  /* 键盘位图映射：
+     bit0: B(菜单/取消, Esc)
+     bit1: Y(逃跑)
+     bit2: SELECT(状态, Tab)
+     bit3: START(确认/调查, Enter)
+     bit4: UP
+     bit5: DOWN
+     bit6: LEFT
+     bit7: RIGHT
+     bit8: A(确认/调查, Space)
+     bit9: X(重复)
+     bit12: L2(菜单)
+     bit13: R2(自动战斗)
+  */
+  function sendButtons(mask) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    var b = new ArrayBuffer(4);
+    var v = new DataView(b);
+    v.setUint32(0, mask, true);
+    ws.send(b);
+  }
+
+  function keyBit(code, key) {
+    if (code === 'ArrowUp' || key === '1') return 4;
+    if (code === 'ArrowDown' || key === '7') return 5;
+    if (code === 'ArrowLeft' || key === '4') return 6;
+    if (code === 'ArrowRight' || key === '5') return 7;
+    if (code === 'Enter' || key === '6' || code === 'Space') return 3; /* START/Enter */
+    if (code === 'Backspace' || code === 'Escape' || key === '3') return 0; /* B/Esc */
+    if (key === '9' || code === 'Tab') return 2; /* SELECT/Tab */
+    if (key === '0') return 13; /* 自动战斗 */
+    return -1;
+  }
+
+  function onKeyDown(e) {
+    if (e.repeat) return;
+    if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
+      if (Date.now() < backGuardUntil) { e.preventDefault(); return; }
+      backDownAt = Date.now();
+    }
+    var b = keyBit(e.code, e.key);
+    if (b >= 0) {
+      btnMask |= (1 << b);
+      sendButtons(btnMask);
+      e.preventDefault();
+    }
+  }
+
+  function onKeyUp(e) {
+    if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
+      var held = Date.now() - backDownAt;
+      backDownAt = 0;
+      if (held >= 800) { leave(); return; }
+    }
+    var b = keyBit(e.code, e.key);
+    if (b >= 0) {
+      btnMask &= ~(1 << b);
+      sendButtons(btnMask);
+      e.preventDefault();
+    }
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  try {
+    if (window.parent && window.parent.document) {
+      window.parent.document.addEventListener('keydown', onKeyDown);
+      window.parent.document.addEventListener('keyup', onKeyUp);
+    }
+  } catch(e) {}
+
+  /* 核心拉起与 WebSocket 连接 */
+  function connect() {
+    var wsUrl = 'ws://127.0.0.1:9510';
+    ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function() {
+      console.log('WS connected');
+      if (loading) loading.style.display = 'none';
+      setTimeout(function() { if (tip) tip.style.opacity = '0'; }, 4000);
+    };
+
+    ws.onmessage = function(ev) {
+      if (!(ev.data instanceof ArrayBuffer)) return;
+      var bytes = new Uint8Array(ev.data);
+      if (bytes.length < 4) return;
+      var w = bytes[0] | (bytes[1] << 8);
+      var h = bytes[2] | (bytes[3] << 8);
+      if (w <= 0 || h <= 0) return;
+
+      if (cvs.width !== w || cvs.height !== h) {
+        cvs.width = w; cvs.height = h;
+        fit();
+      }
+      var imgData = ctx.createImageData(w, h);
+      var pix32 = new Uint32Array(imgData.data.buffer);
+      var pix16 = new Uint16Array(ev.data, 4);
+      var len = Math.min(pix32.length, pix16.length);
+
+      for (var i = 0; i < len; i++) {
+        var v = pix16[i];
+        var r = (v >> 11) & 0x1f; r = (r << 3) | (r >> 2);
+        var g = (v >> 5) & 0x3f;  g = (g << 2) | (g >> 4);
+        var b = v & 0x1f;         b = (b << 3) | (b >> 2);
+        pix32[i] = 0xff000000 | (b << 16) | (g << 8) | r;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    };
+
+    ws.onclose = function() {
+      console.log('WS closed');
+      if (!window._left) {
+        setTimeout(connect, 1000);
+      }
+    };
+  }
+
+  /* 页面加载时自动拉起后端并连接 */
+  fetch('/api/plugins/e5-pal/emu/start', { method: 'POST' })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        setTimeout(connect, 200);
+      } else {
+        if (loading) loading.textContent = '启动失败: ' + (d.error || '未知错误');
+      }
+    })
+    .catch(function(err) {
+      if (loading) loading.textContent = '网络错误: ' + err;
+    });
+
+  if (window.e5 && window.e5.keepAwake) window.e5.keepAwake(true);
+})();
+</script>
+</body>
+</html>

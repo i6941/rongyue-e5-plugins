@@ -128,6 +128,33 @@ body.ingame footer{display:none}
 /* 进游戏后页头/页脚那些字没信息量，却白占竖向空间：藏掉，把画面让出来 */
 body.ingame header{display:none}
 body.ingame main{top:0;bottom:0}
+/* ---- 横屏三态 + 虚拟按键 ----
+   键右 = rotate(-90deg)：机身逆时针转、实体键盘落在右手（与 DOS 插件同一套方向）；
+   键左 = rotate(90deg)：实体键盘在左手，画面铺满后整体转回来。
+   旋转只作用在 #ejs_game（顶条/操作条/虚拟按键都保持屏幕方向）。 */
+body.rot-r #ejs_game{transform:rotate(-90deg)}
+body.rot-l #ejs_game{transform:rotate(90deg)}
+#vpad{position:absolute;left:0;right:0;top:18px;bottom:40px;z-index:9;display:none;
+  pointer-events:none;user-select:none;-webkit-user-select:none}
+#vpad.on{display:block}
+#vpad .vb{position:absolute;display:flex;align-items:center;justify-content:center;pointer-events:auto;
+  width:58px;height:58px;border-radius:50%;background:rgba(19,29,44,.55);border:1px solid rgba(89,121,170,.65);
+  color:#dce8f8;font-size:20px;font-weight:700;touch-action:none;-webkit-tap-highlight-color:transparent}
+#vpad .vb.hit{background:rgba(96,146,224,.8);color:#fff;border-color:#8fb4e8}
+#vpad .vb.sm{width:70px;height:32px;border-radius:6px;font-size:10px}
+#vpad .vb.dp{width:50px;height:50px;border-radius:9px;font-size:13px}
+#vpad .vb.tur{width:70px;height:32px;border-radius:6px;font-size:10px;font-weight:600;
+  border-color:rgba(201,161,90,.7);color:#ffd479}
+#vpad .vb.tur.hit{background:rgba(255,196,80,.55);border-color:#ffd479;color:#fff}
+#vpadclose{position:absolute;right:6px;top:6px;z-index:2;display:none;width:28px;height:28px;border-radius:14px;
+  align-items:center;justify-content:center;background:rgba(19,29,44,.6);border:1px solid rgba(89,121,170,.5);
+  color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
+#vpad.on #vpadclose{display:flex}
+#vpadclose.hit{background:rgba(96,146,224,.8);color:#fff}
+#vpadshow{position:absolute;left:6px;top:24px;z-index:9;display:none;width:30px;height:30px;border-radius:8px;
+  align-items:center;justify-content:center;background:rgba(19,29,44,.6);border:1px solid rgba(89,121,170,.5);
+  color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
+#vpadshow.on{display:flex}
 /* 运行库自带的 UI 全部藏掉：菜单栏、上下文菜单、弹窗、开始按钮、虚拟手柄、设置页… */
 .ejs_menu_bar,.ejs_menu_button,.ejs_context_menu,.ejs_popup_container,.ejs_popup_box,.ejs_popup_body,
 .ejs_start_button,.ejs_message,.ejs_control_bar,.ejs_control_body,.ejs_settings_parent,.ejs_settings_main_bar,
@@ -136,13 +163,14 @@ body.ingame main{top:0;bottom:0}
 .ejs_game_background,.ejs_loading_text{display:none !important}
 </style></head><body>
 <header><h1 id="title">复古游戏机</h1><div id="status">选择游戏</div><button id="bcore" type="button" hidden>核心</button></header>
-<div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button><button type="button" data-sys="FC"><b>2</b> FC</button><button type="button" data-sys="MD"><b>3</b> MD</button><button type="button" data-sys="GBA"><b>4</b> GBA</button><button type="button" data-sys="ARC"><b>5</b> 街机</button><button type="button" data-sys="DOS"><b>6</b> DOS</button><button type="button" data-sys="PAL"><b>7</b> 仙剑</button></div>
+<div id="tabs"><button type="button" data-sys="ALL" class="on"><b>1</b> 全部</button></div>
 <main>
   <div id="menu"></div>
   <div id="stage"><div id="ejs_game"></div>
     <div id="topbar"><span id="tname">—</span><span id="tres">—</span><span class="sp"></span><span id="tkey"></span><span id="tfps">FPS --</span></div>
     <div id="hud"><span class="sp"></span>
       <button id="bview" type="button" title="画面模式" aria-label="画面模式">铺</button>
+      <button id="brot" type="button" title="横屏方向：键左/键右/竖屏" aria-label="横屏方向">转</button>
       <button id="bslot" type="button" title="存档槽" aria-label="存档槽">槽</button>
       <button id="bsave" type="button" title="存档" aria-label="存档">存</button>
       <button id="bload" type="button" title="读档" aria-label="读档">取</button>
@@ -166,7 +194,7 @@ body.ingame main{top:0;bottom:0}
 <div id="cfg">
   <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button" aria-label="关闭" style="font-size:18px;line-height:28px">×</button></div>
   <div id="cfgrid"></div>
-  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgengine" type="button">引擎 原生</button></div>
+  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgrot" type="button">方向：键左</button><button id="cfgengine" type="button">引擎 原生</button></div>
   <div id="cfgfoot"><button id="cfgdef" type="button">默认按键</button><button id="cfgnum" type="button">九键方案</button><button id="cfgdone" type="button">完成</button></div>
 </div>
 <script src="/sdk/e5.js"></script>
@@ -618,6 +646,20 @@ var GAMES=[
   ]}
 ];
 
+/* ==== 机种范围（拆分插件用）====
+   同一份页面代码可以派生成多个插件：复古游戏机（FC/MD/GBA/街机）、
+   DOS 游戏、仙剑。SCOPES 为空表示不限制；tools/split-emulator-plugins.py
+   生成子插件时会把这一行替换成对应的机种列表，其余代码完全一致，
+   避免三份副本各自漂移。
+   这样做的前提：页面里没有任何按机种写死的分支（已核对，sys 只用于
+   标签高亮和游戏表分组），所以过滤只是"少显示几组"而已。 */
+var SCOPES=['FC','MD','GBA','ARC'];
+
+function gamesInScope(){
+  if(!SCOPES.length) return GAMES;
+  return GAMES.filter(function(g){ return SCOPES.indexOf(g.sys)>=0; });
+}
+
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
 var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
 /* ?auto=N 自动开局。这个参数和"断点续玩"标记可能同时指向一个游戏，
@@ -634,8 +676,41 @@ var selftestWant=false, selftestDone=false;
 try{ selftestWant=(new URLSearchParams(location.search).get('selftest')==='1'); }catch(e){}
 
 function note(t){ }
-function flat(){ var o=[]; GAMES.forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
+function flat(){ var o=[]; gamesInScope().forEach(function(g){ g.games.forEach(function(x,i){ o.push({sys:g.sys,core:g.core,key:g.key+'-'+i,n:x.n,f:x.f,w:x.w,h:x.h}); }); }); return o; }
 function hue(s){ var h=0; for(var i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))%360; return h; }
+
+/* 标签按当前插件的机种范围动态生成：复古游戏机显示 FC/MD/GBA/街机，
+   DOS 插件只显示 DOS，仙剑插件只有一项时连标签都不必给。
+   顺序固定，数字键 1..N 的映射也就稳定。 */
+var SYS_ORDER=['FC','MD','GBA','ARC','DOS','PAL'];
+var SYS_LABEL={FC:'FC',MD:'MD',GBA:'GBA',ARC:'街机',DOS:'DOS',PAL:'仙剑'};
+function buildTabs(){
+  var hosts=gamesInScope().map(function(g){ return g.sys; });
+  var uniq=[];
+  SYS_ORDER.forEach(function(s){ if(hosts.indexOf(s)>=0) uniq.push(s); });
+  /* SCOPES 里可能有开空表的机种，按实际上架的游戏再收一次 */
+  uniq=uniq.filter(function(s){
+    return gamesInScope().some(function(g){ return g.sys===s && g.games.length>0; });
+  });
+  var bar=$('tabs'); if(!bar) return;
+  bar.replaceChildren();
+  var total=flat().length;
+  var defs=[{sys:'ALL',label:'全部'}].concat(uniq.map(function(s){ return {sys:s,label:SYS_LABEL[s]||s}; }));
+  /* 只有一个机种、且没有"全部"的必要性时，去掉 ALL，避免出现两个等价标签 */
+  if(uniq.length===1) defs=[{sys:uniq[0],label:SYS_LABEL[uniq[0]]||uniq[0]}];
+  defs.forEach(function(d,i){
+    var b=document.createElement('button');
+    b.type='button'; b.setAttribute('data-sys',d.sys);
+    b.className=(i===0?'on':'');
+    var em=document.createElement('b'); em.textContent=String(i+1);
+    b.appendChild(em);
+    b.appendChild(document.createTextNode(' '+d.label));
+    b.addEventListener('click',function(){ setTab(d.sys); });
+    bar.appendChild(b);
+  });
+  tabSys=defs[0].sys;
+  return defs;
+}
 
 /* 九宫格：3 列，纵向滚动；序号按“当前可见的第一格”往后排 */
 function drawMenu(){
@@ -684,14 +759,8 @@ function setTab(sys){
   sel=0;
   drawMenu();
 }
-(function(){
-  try{
-    var bs=document.querySelectorAll('#tabs button');
-    for(var i=0;i<bs.length;i++){
-      (function(b){ bindTap(b,function(){ setTab(b.getAttribute('data-sys')); }); })(bs[i]);
-    }
-  }catch(e){}
-})();
+/* 标签按钮由 buildTabs() 动态创建，点击绑定也在那里完成；
+   原来这里有一段给写死的静态标签绑事件的 IIFE，拆分后已无意义。 */
 function renumber(){
   /* 序号角标已经去掉（数字键改成切 tab），这里只保留"当前可见第一项"的计算，
      十字键翻页仍然需要它。 */
@@ -1082,6 +1151,7 @@ function reallyStart(i){
   $('stage').style.display='flex';
   $('stage').classList.add('on');
   document.body.classList.add('ingame');
+  try{ setGameRotate(g); }catch(e){}
   try{
     $('hint').textContent=hintText();
     $('hint').classList.add('show');
@@ -1178,6 +1248,7 @@ function leave(){
      而那台 WebKit 不执行注入脚本 —— 所以退出后主页只剩中间内容。 */
   hostChrome(false);
   releaseAll();
+  try{ stopTurbo(); vpadUpdate(); }catch(e){}   /* 退出把虚拟键/连发都清掉，别带进菜单 */
   $('menu').style.display='grid';
   $('title').textContent='复古游戏机';
   try{ clearInterval(backTick); }catch(e){} backTick=0;
@@ -1361,11 +1432,16 @@ function handleKey(kind,key,repeat,id,code){
     if(kind==='left'){ selectIdx(sel-1); return true; }
     if(kind==='right'){ selectIdx(sel+1); return true; }
     if(kind==='ok'){ if(cells[sel]) cells[sel].click(); return true; }
-    if(kind==='digit'&&key>='1'&&key<='7'){
-      /* 数字 1-7 切机种 tab */
-      var t=['ALL','FC','MD','GBA','ARC','DOS','PAL'][parseInt(key,10)-1];
-      setTab(t);
-      return true;
+    if(kind==='digit'&&key>='1'&&key<='9'){
+      /* 数字键切换标签：按当前插件实际生成的标签顺序，不再写死机种数组，
+         这样 DOS / 仙剑 插件只有自己的标签也不会错位。 */
+      var idx=parseInt(key,10)-1;
+      var bs=document.querySelectorAll('#tabs button');
+      if(idx>=0&&idx<bs.length){
+        var target=bs[idx].getAttribute('data-sys');
+        if(target){ setTab(target); return true; }
+      }
+      return false;
     }
     /* 菜单里按 # 进按键设置；9 作为备用。
        # 在 WPE 上可能没有 key 名、只有 keyCode 51，见 keyKindOf。 */
@@ -1510,7 +1586,7 @@ function cfgLabel(tok){
 /* 开局提示：按当前键位配置生成，改了配置提示也跟着变 */
 function hintText(){
   function k(id){ var ks=keymap[id]||[]; return ks.length?ks.map(cfgLabel).join('/'):'—'; }
-  return '方向 '+k('up')+k('left')+k('down')+k('right')+'　A '+k('a')+'　B '+k('b')+'　START '+k('start')+'　SELECT '+k('select');
+  return '方向 '+k('up')+k('left')+k('down')+k('right')+'　A '+k('a')+'　B '+k('b')+'　START '+k('start')+'　SELECT '+k('select')+'　「转」=键左/键右/竖屏';
 }
 function buildCfg(){
   var g=$('cfgrid');
@@ -1648,6 +1724,165 @@ function cycleFit(){
 bindTap($('bview'),cycleFit);
 bindTap($('cfgscale'),cycleFit);
 
+/* ---- 横屏三态（键左/键右/竖屏）+ 虚拟按键 ----
+   键左（默认）：掌机握法——机身顺时针转，实体键盘落在左手当方向键，
+   右手在屏幕右侧点虚拟动作键（A/B/START/SELECT，FC 还有连发，GBA/MD/街机补 L/R）。
+   键右：实体键盘在右手当动作键，左手在屏幕左侧点虚拟十字键。
+   两种横屏里虚拟键和实体键共用同一张按键位图（pressBtn/releaseBtn），同时生效。
+   方向语义与 DOS 插件一致：键右 = 旋转 -90°，键左 = 旋转 +90°。
+   每个游戏单独记忆（e5rot:<机种>-<游戏名>），按机种的默认值开场。 */
+var ROT_MODES=['left','right','portrait'];
+var ROT_LABEL={left:'键左',right:'键右',portrait:'竖'};
+var rotateMode='left';
+function rotKeyFor(g){ return 'e5rot:'+(g&&g.sys?g.sys:'?')+'-'+(g&&g.n?g.n:'?'); }
+function loadRotateFor(g){
+  rotGKey=rotKeyFor(g);   /* rotGKey 由 setRotate 的调用方保证已有值——见下 */
+  var m='left';
+  try{ var s=localStorage.getItem(rotGKey); if(ROT_MODES.indexOf(s)>=0) m=s; }catch(e){}
+  /* 先有 key 才能存；setRotate 里 saveRot 空转一次没关系 */
+  setRotate(m);
+}
+var rotGKey='';
+function saveRot(){ try{ if(rotGKey) localStorage.setItem(rotGKey,rotateMode); }catch(e){} }
+function setRotate(m){
+  rotateMode=ROT_MODES.indexOf(m)>=0?m:'left';
+  try{
+    document.body.classList.remove('rot-l','rot-r');
+    if(rotateMode==='left') document.body.classList.add('rot-l');
+    else if(rotateMode==='right') document.body.classList.add('rot-r');
+  }catch(e){}
+  var h=$('brot'); if(h){ h.textContent=ROT_LABEL[rotateMode];
+    h.title='横屏方向：'+(rotateMode==='left'?'键左（键盘在左手）':(rotateMode==='right'?'键右（键盘在右手）':'竖屏')); }
+  var c=$('cfgrot'); if(c) c.textContent='方向：'+ROT_LABEL[rotateMode];
+  vpadUpdate();
+  if(running&&current){ try{ fit(); }catch(e){} }
+}
+function cycleRotate(){
+  setRotate(ROT_MODES[(ROT_MODES.indexOf(rotateMode)+1)%ROT_MODES.length]);
+  saveRot();
+}
+bindTap($('brot'),cycleRotate);
+bindTap($('cfgrot'),cycleRotate);
+
+/* ---------- 虚拟按键层 ----------
+   只在游戏内 + 横屏两种模式下出现；位置固定在屏幕坐标，不随画面旋转。
+   右上角 × 收起，收起后左侧留一个小按钮随时唤回（本次会话内生效）。 */
+var vpadOn=true, vpadEl=null, turbo={};
+function vpadUpdate(){
+  if(vpadEl) vpadEl.classList.toggle('on',!!running&&rotateMode!=='portrait'&&vpadOn);
+  var s=$('vpadshow');
+  if(s) s.classList.toggle('on',!!running&&rotateMode!=='portrait'&&!vpadOn);
+}
+/* 连发：每 100ms 把这个按钮在按下/松开之间来回切换 */
+function toggleTurbo(btn,el){
+  var t=turbo[btn];
+  if(t&&t.on){
+    t.on=false; try{ clearInterval(t.iv); }catch(e){} t.iv=0;
+    if(held[btn]) releaseBtn(btn);
+    el.classList.remove('hit');
+  }else{
+    if(t&&t.iv){ try{ clearInterval(t.iv); }catch(e){} }
+    turbo[btn]={on:true,iv:setInterval(function(){
+      try{ if(held[btn]) releaseBtn(btn); else pressBtn(btn); }catch(e){}
+    },100)};
+    el.classList.add('hit');
+  }
+}
+function stopTurbo(){
+  for(var k in turbo){
+    var t=turbo[k];
+    if(t&&t.iv){ try{ clearInterval(t.iv); }catch(e){} }
+    if(t&&t.on&&held[+k]) releaseBtn(+k);
+    turbo[k]={on:false,iv:0};
+  }
+}
+/* 常按兜底：按住方向键跑图超过 pressBtn 的自动松开时限时，
+   touchmove 反复给定时器续期，长按不会断 */
+function vKeepAlive(btns){
+  for(var i=0;i<btns.length;i++){
+    (function(b){
+      if(held[b]){
+        try{ clearTimeout(held['t'+b]); }catch(e){}
+        held['t'+b]=setTimeout(function(){ releaseBtn(b); },15000);
+      }
+    })(btns[i]);
+  }
+}
+function vbindGroup(btns,el){
+  function press(){ el.classList.add('hit'); for(var i=0;i<btns.length;i++) pressBtn(btns[i]); }
+  function release(){ el.classList.remove('hit'); for(var i=0;i<btns.length;i++) releaseBtn(btns[i]); }
+  return {press:press,release:release,keep:function(){ vKeepAlive(btns); }};
+}
+function addVB(txt,cls,pos,btns){
+  var d=document.createElement('div');
+  d.className='vb'+(cls?' '+cls:''); d.textContent=txt;
+  for(var k in pos) d.style[k]=pos[k];
+  var g=vbindGroup(btns,d);
+  d.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} g.press(); },{passive:false});
+  d.addEventListener('touchmove',function(){ g.keep(); },{passive:true});
+  d.addEventListener('touchend',function(){ g.release(); },{passive:false});
+  d.addEventListener('touchcancel',function(){ g.release(); },{passive:true});
+  d.addEventListener('mousedown',function(e){ try{ e.preventDefault(); }catch(x){} g.press(); });
+  d.addEventListener('mouseup',function(){ g.release(); });
+  d.addEventListener('mouseleave',function(){ g.release(); });
+  vpadEl.appendChild(d);
+  return d;
+}
+function addTurboVB(txt,btn,pos){
+  var d=document.createElement('div');
+  d.className='vb tur'; d.textContent=txt;
+  for(var k in pos) d.style[k]=pos[k];
+  function tg(){ toggleTurbo(btn,d); }
+  d.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} tg(); },{passive:false});
+  d.addEventListener('mousedown',function(){ tg(); });
+  vpadEl.appendChild(d);
+  return d;
+}
+function ensureVpad(sys){
+  var st=$('stage');
+  if(!vpadEl){
+    vpadEl=document.createElement('div'); vpadEl.id='vpad';
+    var close=document.createElement('div'); close.id='vpadclose'; close.textContent='×';
+    var hide=function(){ vpadOn=false; vpadUpdate(); };
+    close.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} hide(); },{passive:false});
+    close.addEventListener('mousedown',hide);
+    vpadEl.appendChild(close);
+    st.appendChild(vpadEl);
+    var show=document.createElement('div'); show.id='vpadshow'; show.textContent='⌨';
+    var unhide=function(){ vpadOn=true; vpadUpdate(); };
+    show.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} unhide(); },{passive:false});
+    show.addEventListener('mousedown',unhide);
+    st.appendChild(show);
+  }
+  /* 连发状态要跟着这一局清零，上一局的 A 连发不能带进新游戏 */
+  stopTurbo();
+  while(vpadEl.childNodes.length>1) vpadEl.removeChild(vpadEl.lastChild);
+  if(rotateMode==='left'){
+    /* 键左：右侧虚拟动作键。A 在下、B 在左上（经典斜位），
+       下面一行是 L/R（若机种没有 L/R 动作则是 FC 的连发）和 START/SELECT。 */
+    addVB('A','',        {right:'20px',bottom:'120px'},[8]);
+    addVB('B','',        {right:'94px',bottom:'90px'},[0]);
+    if(sys==='FC'){ addTurboVB('A连',8,{right:'20px',bottom:'62px'}); addTurboVB('B连',0,{right:'94px',bottom:'62px'}); }
+    else{ addVB('R','sm',{right:'20px',bottom:'62px'},[11]); addVB('L','sm',{right:'94px',bottom:'62px'},[10]); }
+    addVB('ST','sm',     {right:'20px',bottom:'26px'},[3]);
+    addVB('SE','sm',     {right:'94px',bottom:'26px'},[2]);
+  }else if(rotateMode==='right'){
+    /* 键右：左侧虚拟十字键。两个手指可以同时点相邻两键出斜向。 */
+    addVB('↑','dp',{left:'62px',bottom:'146px'},[4]);
+    addVB('←','dp',{left:'14px',bottom:'96px'},[6]);
+    addVB('→','dp',{left:'110px',bottom:'96px'},[7]);
+    addVB('↓','dp',{left:'62px',bottom:'46px'},[5]);
+  }
+  vpadUpdate();
+}
+/* 开局就按这一局游戏的记忆切方向、装虚拟键 */
+function setGameRotate(g){
+  stopTurbo();
+  rotGKey=rotKeyFor(g);
+  loadRotateFor(g);
+  ensureVpad(g&&g.sys);
+}
+
 /* 画面滤镜：关 / 扫描线 / LCD 网格。只往画面上叠一层 CSS，不改核心、不加每帧开销。 */
 var FXS=['off','scan','lcd'], FXN={off:'关',scan:'扫描线',lcd:'LCD 网格'};
 var fxMode='off';
@@ -1784,7 +2019,15 @@ function fit(){
   var availW=Math.floor(stage.width), availH=Math.floor(stage.height-58);   /* 顶部条 18 + 操作条 40 */
   if(!availW||!availH) return;
   var cw,ch,note;
-  if(fitMode==='int'){
+  if(rotateMode==='left'||rotateMode==='right'){
+    /* 横屏：旋转后的外框是 gh×gw，所以按「屏宽/游戏高、屏高/游戏宽」取一个
+       统一缩放（不拉伸）；容器仍设成 gw×ch，整体再转 ±90°。
+       「1:1」模式在横屏下取不超过可用区的最大整数倍。 */
+    var kR=Math.min(availW/g.h, availH/g.w);
+    if(fitMode==='int') kR=Math.max(1,Math.floor(kR));
+    cw=Math.floor(g.w*kR); ch=Math.floor(g.h*kR);
+    note=kR.toFixed(2)+'× · '+(rotateMode==='left'?'键左':'键右');
+  }else if(fitMode==='int'){
     /* 点对点：整数倍放大，像素不糊也不变形，四周留黑边 */
     var ki=Math.max(1,Math.floor(Math.min(availW/g.w,availH/g.h)));
     cw=g.w*ki; ch=g.h*ki; note=ki+'× 原始大小';
@@ -2204,6 +2447,8 @@ try{
 applyFitMode();
 applyFx();
 applyEngine();
+/* 标签必须先按本插件的机种范围生成，drawMenu 才有 tabSys 可用 */
+try{ buildTabs(); }catch(e){}
 drawMenu();
 /* 清掉上一次可能留下的宿主菜单栏隐藏标记 */
 /* 插件整个生命周期都藏起宿主的工具栏与底部导航：列表页也藏，

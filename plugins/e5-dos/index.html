@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>DOS 游戏</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #d0d8e8; }
+
+#app { position: absolute; inset: 0; display: flex; flex-direction: column; }
+
+/* 顶部简洁标题栏 */
+#topbar {
+  height: 38px; display: flex; align-items: center; justify-content: space-between;
+  padding: 0 12px; background: #0f1726; border-bottom: 1px solid #1c2738; flex-shrink: 0;
+}
+#topbar .title { font-size: 14px; font-weight: bold; color: #f0f4fc; }
+#topbar .tip { font-size: 11px; color: #7a8a9e; }
+
+/* 游戏选择列表：网格卡片 */
+#menu {
+  flex: 1 1 auto; overflow-y: auto; padding: 12px;
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; align-content: start;
+}
+.card {
+  background: #131d2e; border: 2px solid #23324a; border-radius: 8px;
+  padding: 12px 10px; display: flex; flex-direction: column; align-items: center;
+  gap: 8px; cursor: pointer; transition: background 0.15s, border-color 0.15s, transform 0.15s;
+}
+.card.sel {
+  background: #1d2e4a; border-color: #6ba4ff; box-shadow: 0 0 10px rgba(107,164,255,0.3);
+  transform: scale(1.02);
+}
+.card .icon {
+  width: 44px; height: 44px; border-radius: 6px; background: #1c2a40;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px; font-weight: bold; color: #8ab4f8;
+}
+.card.sel .icon { background: #28446e; color: #ffffff; }
+.card .name { font-size: 13px; font-weight: bold; color: #e2eafc; text-align: center; }
+.card .desc { font-size: 10px; color: #7d90aa; text-align: center; line-height: 1.3; }
+
+/* 底部操作指引 */
+#botbar {
+  height: 32px; display: flex; align-items: center; justify-content: center;
+  background: #0d1420; border-top: 1px solid #1c2738; font-size: 11px; color: #7a8a9e;
+}
+
+/* 运行视图 */
+#gameview {
+  position: absolute; inset: 0; display: none; flex-direction: column;
+  background: #000; align-items: center; justify-content: center; z-index: 20;
+}
+#gameview.active { display: flex; }
+#canvas-wrap {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+}
+#screen {
+  position: absolute; left: 50%; top: 50%;
+  transform-origin: center center;
+  image-rendering: pixelated;
+  image-rendering: -webkit-optimize-contrast;
+  background: #000; touch-action: none;
+}
+#osd {
+  position: absolute; top: 6px; right: 8px; display: flex; gap: 8px; z-index: 30;
+}
+#osd button {
+  height: 28px; padding: 0 10px; background: rgba(20,30,45,0.85);
+  border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
+  color: #fff; font-size: 12px; cursor: pointer;
+}
+#osd button:active { background: rgba(50,75,110,0.95); }
+#gametip {
+  position: absolute; bottom: 6px; left: 0; right: 0; text-align: center;
+  font-size: 11px; color: rgba(255,255,255,0.5); pointer-events: none;
+}
+#loading {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; background: #080c14;
+  color: #8ab4f8; font-size: 14px; gap: 12px; z-index: 25;
+}
+.spinner {
+  width: 24px; height: 24px; border: 3px solid rgba(138,180,248,0.2);
+  border-top-color: #8ab4f8; border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+<script src="/sdk/e5.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <div id="topbar">
+    <span class="title">DOS 经典</span>
+    <span class="tip">1~4 或 方向键选择</span>
+  </div>
+  <div id="menu"></div>
+  <div id="botbar">↑↓←→ 选游戏 · OK 启动 · 返回 退出</div>
+</div>
+
+<div id="gameview">
+  <div id="osd">
+    <button id="btn-rotate" type="button">键右→</button>
+    <button id="btn-quit" type="button">退出游戏</button>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="screen"></canvas>
+  </div>
+  <div id="gametip">触屏可直接点 · OK确认/返回取消 · 横屏按钮可切换键左/键右 · 长按返回退出</div>
+  <div id="loading" style="display:none;"><div class="spinner"></div><div id="load-text">正在启动…</div></div>
+</div>
+
+<script>
+(function() {
+  var GAMES = [
+    { name: '大富翁 3', rom: 'dos/rich3.zip', desc: '纯鼠标/触屏操作 经典大富翁' },
+    { name: '金庸群侠传', rom: 'dos/jyxz.zip', desc: '经典武侠 RPG 客栈ESC存盘' },
+    { name: '大航海时代 2', rom: 'dos/uncharted2.zip', desc: '光荣经典航海冒险' },
+    { name: '仙剑奇侠传 DOS', rom: 'dos/pal.zip', desc: 'DOS 原版 经典OPL电音' }
+  ];
+
+  var menu = document.getElementById('menu');
+  var gameview = document.getElementById('gameview');
+  var cvs = document.getElementById('screen');
+  var ctx = cvs.getContext('2d', { alpha: false });
+  var loading = document.getElementById('loading');
+  var loadText = document.getElementById('load-text');
+  var btnQuit = document.getElementById('btn-quit');
+  var btnRotate = document.getElementById('btn-rotate');
+  var gametip = document.getElementById('gametip');
+
+  var ws = null;
+  var running = false;
+  var btnMask = 0;
+  var curRom = '';
+  var selIdx = 0;
+  var backDownAt = 0;
+  var cardEls = [];
+  var lastRawKeyAt = 0;
+  var padPrev = {};
+  var padRaf = 0;
+  /* 320x480 竖屏上看 640x400 的 DOS 游戏太小。
+     大富翁默认“横屏·键右”：把机身逆时针转 90°，实体键盘落在右手边；
+     也可以在游戏里循环切换 竖屏 / 横屏键右 / 横屏键左。 */
+  var rotateMode = 'right';       /* portrait | right | left */
+  var rotateKey = 'e5dosRotate:rich3';
+  try {
+    var savedRotate = localStorage.getItem(rotateKey);
+    if (savedRotate === '0') rotateMode = 'portrait';
+    else if (savedRotate === '1') rotateMode = 'right';
+    else if (savedRotate === 'portrait' || savedRotate === 'right' || savedRotate === 'left') rotateMode = savedRotate;
+  } catch(e) {}
+  function rotateKeyFor(rom) {
+    return 'e5dosRotate:' + String(rom || '').replace(/[^a-z0-9]+/gi, '_');
+  }
+
+  /* 清理残留缓存 */
+  try {
+    localStorage.removeItem('e5resume');
+    localStorage.removeItem('e5stallcount');
+  } catch(e) {}
+
+  /* 渲染游戏选择列表 */
+  GAMES.forEach(function(g, idx) {
+    var c = document.createElement('div');
+    c.className = 'card' + (idx === 0 ? ' sel' : '');
+    c.innerHTML = '<div class="icon">' + (idx + 1) + '</div>' +
+                  '<div class="name">' + g.name + '</div>' +
+                  '<div class="desc">' + g.desc + '</div>';
+    c.addEventListener('click', function() {
+      setSel(idx);
+      startGame(g.rom, g.name);
+    });
+    menu.appendChild(c);
+    cardEls.push(c);
+  });
+
+  function setSel(idx) {
+    if (idx < 0) idx = 0;
+    if (idx >= GAMES.length) idx = GAMES.length - 1;
+    selIdx = idx;
+    cardEls.forEach(function(el, i) {
+      el.classList.toggle('sel', i === selIdx);
+    });
+  }
+
+  function fit() {
+    var ww = window.innerWidth || 320, wh = window.innerHeight || 480;
+    var gw = cvs.width || 320, gh = cvs.height || 200;
+    var scale;
+    if (rotateMode === 'right' || rotateMode === 'left') {
+      /* 旋转后画布在屏幕上占 gh*scale 宽、gw*scale 高 */
+      scale = Math.min(ww / gh, wh / gw);
+      cvs.style.width = Math.round(gw * scale) + 'px';
+      cvs.style.height = Math.round(gh * scale) + 'px';
+      /* 键右：机身逆时针转 90°，键盘落在右手；画面相对逆时针 -90°。
+         键左：机身顺时针转 90°，键盘落在左手；画面相对顺时针 +90°。 */
+      var deg = rotateMode === 'right' ? -90 : 90;cvs.style.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
+    } else {
+      scale = Math.min(ww / gw, wh / gh);
+      cvs.style.width = Math.round(gw * scale) + 'px';
+      cvs.style.height = Math.round(gh * scale) + 'px';
+      cvs.style.transform = 'translate(-50%, -50%)';
+    }
+    if (btnRotate) {
+      btnRotate.textContent = rotateMode === 'portrait' ? '横屏' :
+        (rotateMode === 'right' ? '键右→' : '键左←');
+    }
+  }
+
+  function setRotate(mode) {
+    rotateMode = (mode === 'portrait' || mode === 'left') ? mode : 'right';
+    try { localStorage.setItem(rotateKey, rotateMode); } catch(e) {}
+    fit();
+  }
+
+  function cycleRotate() {
+    setRotate(rotateMode === 'portrait' ? 'right' :
+              (rotateMode === 'right' ? 'left' : 'portrait'));
+  }
+
+  window.addEventListener('resize', fit);
+
+  /* 心跳看门狗机制隐藏宿主菜单栏，退出时保证恢复 */
+  var STYLE_ID = 'e5-dos-style';
+  function applyHideBar() {
+    try {
+      if (window.parent && window.parent.document) {
+        var s = window.parent.document.getElementById(STYLE_ID);
+        if (!s) {
+          s = window.parent.document.createElement('style');
+          s.id = STYLE_ID;
+          s.textContent = '#mobile-toolbar, #mobile-nav { display: none !important; } #app-frame { top: 0 !important; height: 100% !important; }';
+          window.parent.document.head.appendChild(s);
+        }
+      }
+    } catch(e) {}
+  }
+  function removeHideBar() {
+    try {
+      if (window.parent && window.parent.document) {
+        var el = window.parent.document.getElementById(STYLE_ID);
+        if (el) el.remove();
+      }
+    } catch(e) {}
+  }
+  function stopBackend() {
+    try {
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/plugins/e5-dos/emu/stop');
+      } else {
+        fetch('/api/plugins/e5-dos/emu/stop', { method: 'POST', keepalive: true });
+      }
+    } catch(e) {}
+  }
+
+  function onExitCleanup() {
+    removeHideBar();
+    stopBackend();
+  }
+  applyHideBar();
+  window.addEventListener('pagehide', onExitCleanup);
+  window.addEventListener('beforeunload', onExitCleanup);
+  window.addEventListener('unload', onExitCleanup);
+
+  function leaveApp() {
+    onExitCleanup();
+    setTimeout(function() {
+      if (window.e5 && window.e5.exit) window.e5.exit();
+      else location.href = '/';
+    }, 80);
+  }
+
+  function startGame(rom, name) {
+    curRom = rom;
+    loadText.textContent = '正在启动 ' + name + '…';
+    loading.style.display = 'flex';
+    gameview.classList.add('active');
+    /* DOS 游戏普遍是横向 4:3 画面，竖屏看字太小；默认横屏键右，用户可按需切竖屏。 */
+    rotateKey = rotateKeyFor(rom);
+    try {
+      var saved = localStorage.getItem(rotateKey);
+      setRotate(saved === 'portrait' || saved === 'left' || saved === 'right'
+        ? saved : 'right');
+    } catch(e) {
+      setRotate('right');
+    }
+
+    fetch('/api/plugins/e5-dos/emu/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rom: rom })
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (d.ok) {
+        setTimeout(connectWS, 300);
+      } else {
+        alert('启动失败: ' + (d.error || '未知错误'));
+        quitGame();
+      }
+    })
+    .catch(function(err) {
+      alert('启动错误: ' + err);
+      quitGame();
+    });
+  }
+
+  function quitGame() {
+    running = false;
+    if (ws) {
+      try { ws.close(); } catch(e) {}
+      ws = null;
+    }
+    fetch('/api/plugins/e5-dos/emu/stop', { method: 'POST' }).finally(function() {
+      gameview.classList.remove('active');
+      loading.style.display = 'none';
+      ctx.clearRect(0, 0, cvs.width, cvs.height);
+    });
+  }
+  btnQuit.addEventListener('click', quitGame);
+  if (btnRotate) btnRotate.addEventListener('click', cycleRotate);
+
+  /* WebSocket 建立与帧渲染 */
+  function connectWS() {
+    ws = new WebSocket('ws://127.0.0.1:9510');
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = function() {
+      running = true;
+      loading.style.display = 'none';
+      setTimeout(function() { gametip.style.opacity = '0'; }, 4000);
+    };
+
+    ws.onmessage = function(ev) {
+      if (!(ev.data instanceof ArrayBuffer)) return;
+      var bytes = new Uint8Array(ev.data);
+      if (bytes.length < 4) return;
+      var w = bytes[0] | (bytes[1] << 8);
+      var h = bytes[2] | (bytes[3] << 8);
+      if (w <= 0 || h <= 0) return;
+
+      if (cvs.width !== w || cvs.height !== h) {
+        cvs.width = w; cvs.height = h;
+        fit();
+      }
+      var imgData = ctx.createImageData(w, h);
+      var pix32 = new Uint32Array(imgData.data.buffer);
+      var pix16 = new Uint16Array(ev.data, 4);
+      var len = Math.min(pix32.length, pix16.length);
+
+      for (var i = 0; i < len; i++) {
+        var v = pix16[i];
+        var r = (v >> 11) & 0x1f; r = (r << 3) | (r >> 2);
+        var g = (v >> 5) & 0x3f;  g = (g << 2) | (g >> 4);
+        var b = v & 0x1f;         b = (b << 3) | (b >> 2);
+        pix32[i] = 0xff000000 | (b << 16) | (g << 8) | r;
+      }
+      ctx.putImageData(imgData, 0, 0);
+    };
+
+    ws.onclose = function() {
+      if (running) {
+        setTimeout(connectWS, 1000);
+      }
+    };
+  }
+
+  /* ---------------- 触屏绝对坐标 -> libretro RETRO_DEVICE_POINTER ---------------- */
+  function sendTouch(pressed, clientX, clientY) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    var rect = cvs.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    var relX = (clientX - rect.left) / rect.width;
+    var relY = (clientY - rect.top) / rect.height;
+    relX = Math.max(0, Math.min(1, relX));
+    relY = Math.max(0, Math.min(1, relY));
+
+    if (rotateMode === 'right') {
+      /* 画面 -90°（逆时针）：屏幕横轴对应游戏纵轴的反向 */
+      var u = relX, v = relY;
+      relX = 1 - v;
+      relY = u;
+    } else if (rotateMode === 'left') {
+      /* 画面 +90°（顺时针） */
+      var u2 = relX, v2 = relY;
+      relX = v2;
+      relY = 1 - u2;
+    }
+
+    var px = Math.round(relX * 65534 - 32767);
+    var py = Math.round(relY * 65534 - 32767);
+
+    var buf = new ArrayBuffer(6);
+    var v = new DataView(buf);
+    v.setUint8(0, 0x54); /* 'T' */
+    v.setUint8(1, pressed ? 1 : 0);
+    v.setInt16(2, px, true);
+    v.setInt16(4, py, true);
+    ws.send(buf);
+  }
+
+  cvs.addEventListener('pointerdown', function(e) {
+    sendTouch(true, e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  cvs.addEventListener('pointermove', function(e) {
+    if (e.buttons) {
+      sendTouch(true, e.clientX, e.clientY);
+      e.preventDefault();
+    }
+  });
+  cvs.addEventListener('pointerup', function(e) {
+    sendTouch(false, e.clientX, e.clientY);
+    e.preventDefault();
+  });
+  cvs.addEventListener('pointercancel', function(e) {
+    sendTouch(false, e.clientX, e.clientY);
+    e.preventDefault();
+  });
+
+  /* WPE/WebKit 触摸事件兜底：部分固件只发 touch*，不发 pointer*。 */
+  function onTouchEvent(e) {
+    var t = (e.changedTouches && e.changedTouches[0]) ||
+            (e.touches && e.touches[0]);
+    if (!t) return;
+    var down = e.type !== 'touchend' && e.type !== 'touchcancel';
+    sendTouch(down, t.clientX, t.clientY);
+    e.preventDefault();
+  }
+  ['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach(function(type) {
+    cvs.addEventListener(type, onTouchEvent, { passive: false });
+  });
+
+  /* ---------------- 物理按键处理 ---------------- */
+  function sendButtons(mask) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    var b = new ArrayBuffer(4);
+    var v = new DataView(b);
+    v.setUint32(0, mask, true);
+    ws.send(b);
+  }
+
+  function keyBit(code, key, keyCode) {
+    if (code === 'ArrowUp' || key === '1' || keyCode === 38) return 4;
+    if (code === 'ArrowDown' || key === '7' || keyCode === 40) return 5;
+    if (code === 'ArrowLeft' || key === '4' || keyCode === 37) return 6;
+    if (code === 'ArrowRight' || key === '5' || keyCode === 39) return 7;
+    if (code === 'Enter' || key === 'Enter' || key === 'Select' || key === 'Accept' || key === '6' || code === 'Space' || keyCode === 13 || keyCode === 32) return 3; /* START / 左键 */
+    if (code === 'Backspace' || code === 'Escape' || key === 'Backspace' || key === 'Escape' || key === 'BrowserBack' || key === '3' || keyCode === 8 || keyCode === 27 || keyCode === 166) return 0; /* B / Esc / 右键 */
+    if (key === '9' || code === 'Tab' || keyCode === 9) return 2; /* SELECT */
+    return -1;
+  }
+
+  function menuMove(delta) {
+    setSel((selIdx + GAMES.length + delta) % GAMES.length);
+    var el = cardEls[selIdx];
+    if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' });
+  }
+
+  function menuSelect() {
+    if (GAMES[selIdx]) startGame(GAMES[selIdx].rom, GAMES[selIdx].name);
+  }
+
+  function onKeyDown(e) {
+    if (e.repeat) return;
+    lastRawKeyAt = Date.now();
+    if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
+      backDownAt = Date.now();
+    }
+
+    if (running) {
+      var b = keyBit(e.code, e.key, e.keyCode);
+      if (b >= 0) {
+        btnMask |= (1 << b);
+        sendButtons(btnMask);
+        e.preventDefault();
+      }
+    } else {
+      /* 选单界面：支持实体方向键导航、OK 进入、数字键直达 */
+      if (e.code === 'ArrowDown' || e.code === 'ArrowRight' || e.keyCode === 40 || e.keyCode === 39) {
+        menuMove(1);
+        e.preventDefault();
+      } else if (e.code === 'ArrowUp' || e.code === 'ArrowLeft' || e.keyCode === 38 || e.keyCode === 37) {
+        menuMove(-1);
+        e.preventDefault();
+      } else if (e.code === 'Enter' || e.key === 'Enter' || e.key === 'Select' || e.key === 'Accept' || e.keyCode === 13) {
+        menuSelect();
+        e.preventDefault();
+      } else if (e.key >= '1' && e.key <= '4') {
+        var idx = parseInt(e.key, 10) - 1;
+        setSel(idx);
+        menuSelect();
+        e.preventDefault();
+      }
+    }
+  }
+
+  function onKeyUp(e) {
+    if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
+      var held = Date.now() - backDownAt;
+      backDownAt = 0;
+      if (held >= 600 || !running) {
+        if (running) {
+          quitGame();
+        } else {
+          leaveApp();
+        }
+        e.preventDefault();
+        return;
+      }
+    }
+    if (running) {
+      var b = keyBit(e.code, e.key, e.keyCode);
+      if (b >= 0) {
+        btnMask &= ~(1 << b);
+        sendButtons(btnMask);
+        e.preventDefault();
+      }
+    }
+  }
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  try {
+    if (window.parent && window.parent.document) {
+      window.parent.document.addEventListener('keydown', onKeyDown);
+      window.parent.document.addEventListener('keyup', onKeyUp);
+    }
+  } catch(e) {}
+
+  /* 标准手柄/实体方向键兜底：有些固件只把手柄当 Gamepad 暴露，
+     不发 keydown。每 50ms 读一次，按键位图变化处理。 */
+  function pollPad() {
+    try {
+      var pads = navigator.getGamepads ? navigator.getGamepads() : [];
+      var pad = null;
+      for (var i = 0; i < pads.length; i++) if (pads[i] && pads[i].connected) { pad = pads[i]; break; }
+      if (pad) {
+        var btn = function(n) { return !!(pad.buttons[n] && pad.buttons[n].pressed); };
+        var now = {
+          up: btn(12) || btn(4), down: btn(13) || btn(5),
+          left: btn(14) || btn(6), right: btn(15) || btn(7),
+          ok: btn(0) || btn(3) || btn(9), back: btn(1) || btn(8)
+        };
+        var changed = false;
+        for (var k in now) if (now[k] !== !!padPrev[k]) { changed = true; break; }
+        if (changed && Date.now() - lastRawKeyAt > 250) {
+          if (running) {
+            var bitMap = { up: 4, down: 5, left: 6, right: 7, ok: 3, back: 0 };
+            for (var k2 in bitMap) {
+              if (!!now[k2] !== !!padPrev[k2]) {
+                var bit = bitMap[k2];
+                if (now[k2]) btnMask |= (1 << bit); else btnMask &= ~(1 << bit);
+                sendButtons(btnMask);
+              }
+            }
+          } else {
+            if (now.up !== !!padPrev.up) menuMove(-1);
+            if (now.down !== !!padPrev.down) menuMove(1);
+            if (now.ok !== !!padPrev.ok) menuSelect();
+            if (now.back !== !!padPrev.back) leaveApp();
+          }
+        }
+        padPrev = now;
+      }
+    } catch(e) {}
+    padRaf = setTimeout(pollPad, 50);
+  }
+  padRaf = setTimeout(pollPad, 50);
+
+  if (window.e5 && window.e5.keepAwake) window.e5.keepAwake(true);
+})();
+</script>
+</body>
+</html>

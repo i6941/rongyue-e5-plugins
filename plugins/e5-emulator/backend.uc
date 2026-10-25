@@ -218,7 +218,7 @@ return function (ctx) {
             }
 
             /* 先收掉上一个实例，避免端口占用 */
-            ctx.sh('start-stop-daemon -K -q -p /var/run/e5emu.pid; rm -f /var/run/e5emu.pid');
+            ctx.sh('killall -9 e5emu-pal e5emu-dos e5emu e5emu-arcade e5emu-gba e5emu-genesis paplay 2>/dev/null; rm -f /var/run/e5emu.pid /var/run/e5pal.pid');
             /* 旧核心收到 TERM 后还要把存档写完才退（几百毫秒）。不等它退，
                新核心 bind 9510 会撞 "Address in use"，自己就退出了。 */
             for (let i = 0; i < 50; i++) {

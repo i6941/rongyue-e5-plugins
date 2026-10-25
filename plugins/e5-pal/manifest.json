@@ -1,0 +1,15 @@
+{
+  "id": "e5-pal",
+  "api_version": 2,
+  "version": "1.1.0",
+  "name": {
+    "zh": "仙剑奇侠传",
+    "en": "Sword and Fairy"
+  },
+  "description": {
+    "zh": "SDLPAL 极简独立版（秒进全屏、原生声音、开箱即玩）",
+    "en": "SDLPAL standalone native edition"
+  },
+  "entry": "index.html",
+  "order": 8
+}
