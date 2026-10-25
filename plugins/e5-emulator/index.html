@@ -299,14 +299,26 @@ var nat={ws:null,cvs:null,ctx:null,img:null,w:0,h:0,frames:0,lastFrames:0,fpsAt:
 var susp={on:false,count:0,at:0,why:'',ticks:0};
 function nativeActive(){ return ENGINE==='native'; }
 /* 每个内核编译成一个独立二进制：fceumm → e5emu，genesis_plus_gx → e5emu-genesis，
-   mgba → e5emu-gba。哪个装了就走原生，没装就退回运行库。 */
+   mgba → e5emu-gba，fbneo → e5emu-arcade，dosbox_pure → e5emu-dos，
+   sdlpal → e5emu-pal。哪个装了就走原生，没装就退回运行库。
+
+   注意：dosbox_pure 和 sdlpal 是「只有原生实现」的机种——EmulatorJS 的
+   data/ 里根本没有这两个核心的 wasm 包。它们一旦落到 nativeWanted()==false，
+   就会去加载不存在的网页核心，页面报「无法加载运行库」。
+   所以这两类必须走原生，没有网页兜底。 */
 function nativeCoreKey(g){
   if(!g) return '';
   if(g.core==='fceumm') return 'nes';
   if(g.core==='genesis_plus_gx') return 'md';
   if(g.core==='mgba') return 'gba';
   if(g.core==='fbneo') return 'arc';
+  if(g.core==='dosbox_pure') return 'dos';
+  if(g.core==='sdlpal') return 'pal';
   return '';
+}
+/* 这些机种没有网页版核心，只能走原生 */
+function nativeOnly(g){
+  return !!g && (g.core==='dosbox_pure' || g.core==='sdlpal');
 }
 function nativeWanted(g){
   if(!nativeActive()||!g) return false;
@@ -1088,6 +1100,16 @@ function reallyStart(i){
     nat.savedAgo=0; nat.autoLoaded=false;
     $('status').textContent='启动原生核心 …';
     natBegin(g);
+    return;
+  }
+  /* DOS / 仙剑没有网页核心可退回：直接说明缺的是原生二进制，
+     不要让用户看到「无法加载运行库」这种指向错误的提示。 */
+  if(nativeOnly(g)){
+    var missKey=nativeCoreKey(g);
+    var missBin='/usr/bin/e5emu-'+missKey;
+    $('status').textContent='缺少原生核心 '+missBin;
+    try{ loadTip(true, '这个机种只能走原生核心，但 '+missBin+' 没安装', 0); }catch(e){}
+    probe('native-missing', missBin);
     return;
   }
   window.EJS_player='#ejs_game';

@@ -228,6 +228,14 @@ return function (ctx) {
                 ctx.sh('sleep 0.1');
             }
             let romfile = ROMDIR + '/' + clean;
+            /* 文件不存在时绝不能直接拉进程：那样会返回 ok+pid，页面以为启动成功，
+               实际核心起来就因为读不到文件退出了，用户只看到一直连不上。 */
+            try {
+                let exist = trim(`${ctx.sh('[ -e ' + romfile + ' ] && echo yes') ?? ''}`);
+                if (exist !== 'yes') return { ok: false, error: 'rom not found: ' + clean };
+            } catch (e) {
+                return { ok: false, error: 'cannot check rom: ' + clean };
+            }
             let cmd = 'start-stop-daemon -S -q -b -m -p /var/run/e5emu.pid -x ' + bin
                 + ' -- --serve ' + romfile + ' 9510 --log /tmp/e5emu.log';
             let out = ctx.sh(cmd);
