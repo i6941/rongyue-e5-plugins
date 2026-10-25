@@ -149,13 +149,15 @@ body.rot-l #ejs_game{transform:rotate(-90deg)}
   color:#dce8f8;font-size:20px;font-weight:700;touch-action:none;-webkit-tap-highlight-color:transparent}
 #vpad .vb.hit{background:rgba(96,146,224,.8);color:#fff;border-color:#8fb4e8}
 #vpad .vb.sm{width:70px;height:32px;border-radius:6px;font-size:10px}
-/* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，输出四方向，斜向=两键同按）。
+/* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，8 向输出，斜向=两键同按）。
    位置落在用户视角左下角：CSS 左边缘 + 上边缘（横屏后 CSS 的 y 轴是用户的左右轴）。 */
-#vpad .joy{position:absolute;left:22px;top:24px;width:104px;height:104px;border-radius:50%;
+#vpad .joy{position:absolute;left:20px;top:22px;width:112px;height:112px;border-radius:50%;
   background:rgba(19,29,44,.45);border:1px solid rgba(89,121,170,.6);pointer-events:auto;touch-action:none}
 #vpad .joy.hit{border-color:#8fb4e8}
-#vpad .joy .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
-  border-radius:50%;background:rgba(96,146,224,.65);border:1px solid #8fb4e8;pointer-events:none}
+#vpad .joy .nub{position:absolute;left:50%;top:50%;width:50px;height:50px;margin:-25px 0 0 -25px;
+  border-radius:50%;background:rgba(96,146,224,.65);border:1px solid #8fb4e8;pointer-events:none;
+  transition:background .08s}
+#vpad .joy.hit .nub{background:rgba(120,170,240,.85)}
 #vpadclose{position:absolute;right:6px;top:6px;z-index:2;display:none;width:28px;height:28px;border-radius:14px;
   align-items:center;justify-content:center;background:rgba(19,29,44,.6);border:1px solid rgba(89,121,170,.5);
   color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
@@ -1907,12 +1909,43 @@ function addVB(txt,cls,pos,btns){
   return d;
 }
 /* 虚拟摇杆（键右模式的左手方向）：圆盘 + 可拖动帽。
-   输出上下左右四个按钮位，斜向=两键同时置位；松手回中并全部松开。 */
+   手感参数（可在 URL 里临时调：?jtune=死区,行程,迟滞）：
+   - 死区 7px：手指轻微抖动不误触；
+   - 行程 36px：从中心到最大位移；
+   - 8 向扇区（每 45°）+ 6° 迟滞：过边界不会来回抖，斜向很好出。 */
 var joyCtl=null, joyDocBound=false;
+var JOY_DEAD=8, JOY_R=36, JOY_HYST=6;
+try{
+  var jt=(new URLSearchParams(location.search).get('jtune')||'').split(',');
+  if(jt.length===3){
+    JOY_DEAD=Math.max(2,Math.min(20,parseFloat(jt[0])||JOY_DEAD));
+    JOY_R=Math.max(20,Math.min(48,parseFloat(jt[1])||JOY_R));
+    JOY_HYST=Math.max(0,Math.min(15,parseFloat(jt[2])||JOY_HYST));
+  }
+}catch(e){}
+/* 扇区中心角（用户坐标系：0=右，90=上，逆时针为正）与对应按键组合 */
+var JOY_CENTERS=[0,45,90,135,180,-135,-90,-45];
+var JOY_DIRS=[{right:1},{right:1,up:1},{up:1},{up:1,left:1},
+              {left:1},{left:1,down:1},{down:1},{down:1,right:1}];
+function joySector(ang, prev){
+  var HY=22.5+JOY_HYST;
+  if(prev!==null && prev!==undefined){
+    var pc=JOY_CENTERS[prev];
+    var dd=Math.abs(((ang-pc+540)%360)-180);
+    if(dd<=HY) return prev;
+  }
+  var best=0,bd=999;
+  for(var i=0;i<8;i++){
+    var d=Math.abs(((ang-JOY_CENTERS[i]+540)%360)-180);
+    if(d<bd){ bd=d; best=i; }
+  }
+  return best;
+}
 function joyStart(px,py){
   if(!joyCtl) return;
   if(!joyCtl.active){
     joyCtl.active=true;
+    joyCtl.prev=null;
     joyCtl.jIv=setInterval(function(){ try{ vKeepAlive([4,5,6,7]); }catch(e){} },4000);
   }
   joyMove(px,py);
@@ -1922,11 +1955,10 @@ function joyMove(px,py){
   var base=joyCtl.base, nub=joyCtl.nub;
   var r=base.getBoundingClientRect();
   var dx=px-(r.left+r.width/2), dy=py-(r.top+r.height/2);
-  var len=Math.sqrt(dx*dx+dy*dy)||1, R=32, T=13;
-  if(len>R){ dx=dx/len*R; dy=dy/len*R; }
+  var len=Math.sqrt(dx*dx+dy*dy)||1;
+  if(len>JOY_R){ dx=dx/len*JOY_R; dy=dy/len*JOY_R; }
   nub.style.transform='translate('+Math.round(dx)+'px,'+Math.round(dy)+'px)';
   base.classList.add('hit');
-  var want={up:dy<-T,down:dy>T,left:dx<-T,right:dx>T};  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
   /* 横屏后 CSS 坐标轴和用户看到的轴差 90°：
      键右（机身逆时针）：CSS +x = 用户上，CSS +y = 用户右；
      键左（机身顺时针）：CSS +x = 用户下，CSS +y = 用户左。
@@ -1935,7 +1967,24 @@ function joyMove(px,py){
   if(rotateMode==='right'){ ux=dy; uy=dx; }
   else if(rotateMode==='left'){ ux=-dy; uy=-dx; }
   else { ux=dx; uy=-dy; }
-  want={up:uy>T,down:uy<-T,left:ux<-T,right:ux>T};
+  var ulen=Math.sqrt(ux*ux+uy*uy);
+  var want={};
+  if(ulen>=JOY_DEAD){
+    var ang=Math.atan2(uy,ux)*180/Math.PI;
+    var idx=joySector(ang,joyCtl.prev);
+    joyCtl.prev=idx;
+    want=JOY_DIRS[idx];
+    /* 斜向要"推得更出去"才算：刚出死区的轻微偏移只给主导轴，
+       否则拇指轻轻一碰就判成斜走，平台游戏会感觉在抖。 */
+    var diag=(want.up&&want.left)||(want.up&&want.right)||(want.down&&want.left)||(want.down&&want.right);
+    if(diag && ulen < JOY_DEAD*1.8){
+      if(Math.abs(ux)>=Math.abs(uy)) want=ux>0?{right:1}:{left:1};
+      else want=uy>0?{up:1}:{down:1};
+    }
+  }else{
+    joyCtl.prev=null;
+  }
+  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
   for(var i=0;i<DIRS.length;i++){
     var k2=DIRS[i];
     if(want[k2]&&!joyCtl.cur[k2]){ pressBtn(MAP[k2]); joyCtl.cur[k2]=1; }
@@ -1945,6 +1994,7 @@ function joyMove(px,py){
 function joyEnd(){
   if(!joyCtl) return;
   joyCtl.active=false;
+  joyCtl.prev=null;
   joyCtl.nub.style.transform='';
   joyCtl.base.classList.remove('hit');
   try{ clearInterval(joyCtl.jIv); }catch(e){} joyCtl.jIv=0;
