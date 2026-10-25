@@ -688,7 +688,7 @@ function gamesInScope(){
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
 /* 运行中的页面版本：遥测里带出来，确认设备加载的到底是不是刚部署的这一版
    （WebKit 启发式缓存曾让"部署了但还在跑旧代码"，不要再靠猜）。 */
-var APP_VER='1.28.0';
+var APP_VER='1.29.0';
 var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
 /* 退出原因台账：记录最近几次"游戏是怎么没的"（玩家按退出、长按返回、
    宿主关页面、屏幕熄灭挂起、恢复），随遥测一起上报，真机复现时不用猜。 */
@@ -2261,10 +2261,43 @@ function wrapHostClose(){
     w.__e5EmuCloseWrapped=true;
   }catch(e){}
 }
+/* 运行期间直接拦住宿主的熄屏调用，而不是只靠 keep-awake：
+   宿主锁屏链是 熄屏 → T551M.power(true) → lock() → closeApp()。
+   keep-awake 只能清掉空闲计时；一旦 appOpen 被清（应用被关过），
+   宿主就不再接受 keep-awake，60 秒后必定再锁一次——这就是"反复一分钟锁一次"。
+   这里在插件运行期间让熄屏调用直接返回；用 2.5 秒有效期（每 2 秒续期），
+   插件被销毁后自动失效，不会把宿主永久卡在常亮。 */
+var hostNoSleepWanted=false;
+function hostNoSleep(on){
+  hostNoSleepWanted=!!on;
+  try{
+    var w=window.parent;
+    if(!w||w===window) return;
+    var g=w.__e5NoSleep;
+    if(!g){
+      g=w.__e5NoSleep={until:0};
+      var ob=w.setBlank;
+      if(typeof ob==='function'){
+        w.setBlank=function(on){
+          try{ if(on && Date.now()<(w.__e5NoSleep.until||0)) return; }catch(e){}
+          return ob.apply(this,arguments);
+        };
+      }
+      var op=w.T551M&&w.T551M.power;
+      if(op){
+        w.T551M.power=function(on2){
+          try{ if(on2 && Date.now()<(w.__e5NoSleep.until||0)){ return; } }catch(e){}
+          return op.apply(this,arguments);
+        };
+      }
+    }
+    g.until=on?Date.now()+2500:0;
+  }catch(e){}
+}
+setInterval(function(){ if(hostNoSleepWanted) hostNoSleep(true); },2000);
 function hostChrome(on){
   try{
-    var d=window.parent.document;
-    /* 关键：游戏期间把宿主的**状态栏**也藏掉，让 iframe 占满整块屏。
+    var d=window.parent.document;    /* 关键：游戏期间把宿主的**状态栏**也藏掉，让 iframe 占满整块屏。
        宿主有一条全局手势：在宿主自己的页面上横向滑动 ≥50px、800ms 内完成，
        就会切换页面；而切页会调用 closeApp() 直接把插件关掉。
        横屏时这条 28px 状态栏正好贴在左手握持的边缘，拇指一滑就命中——
@@ -2298,6 +2331,7 @@ function hostChrome(on){
     if(on){ try{ window.parent.__e5GamePing=Date.now(); }catch(e){} }
     d.body.classList.toggle(hostClass,!!on);
     wrapHostClose();
+    hostNoSleep(!!on);
     /* 注入 <script> 的心跳看门狗在这台 WebKit 上不执行，别指望它 */
     if(on) wrapHostClose();
   }catch(e){}

@@ -1665,6 +1665,40 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   if (!(wmKb > 0) || wmKb < 256 || wmKb > 65536) wmKb = 512;
   function wmLabel(){ return wmKb >= 1024 ? (wmKb / 1024) + 'MB' : wmKb + 'KB'; }
   var bgPlaying = false, lastPort = 9511;
+  /* 播放期间不让宿主熄屏/锁屏：宿主锁屏会 closeApp()，而 keep-awake
+     在应用被关过之后就不再被接受。这里直接拦住宿主的熄屏调用，
+     2.5 秒有效期、每 2 秒续期；页面销毁后自动失效。 */
+  var hostNoSleepWanted = false;
+  function hostNoSleep(on){
+    hostNoSleepWanted = !!on;
+    try{
+      var w = window.parent;
+      if(!w || w === window) return;
+      var g = w.__e5NoSleep;
+      if(!g){
+        g = w.__e5NoSleep = { until: 0 };
+        var ob = w.setBlank;
+        if(typeof ob === 'function') w.setBlank = function(on){
+          try{ if(on && Date.now() < (w.__e5NoSleep.until || 0)) return; }catch(e){}
+          return ob.apply(this, arguments);
+        };
+        var op = w.T551M && w.T551M.power;
+        if(op) w.T551M.power = function(on2){
+          try{ if(on2 && Date.now() < (w.__e5NoSleep.until || 0)) return; }catch(e){}
+          return op.apply(this, arguments);
+        };
+        var oc = w.closeApp;
+        if(typeof oc === 'function') w.closeApp = function(){
+          var st = '';
+          try{ st = String((new Error()).stack || ''); }catch(e){}
+          try{ if(Date.now() < (w.__e5NoSleep.until || 0) && /at lock\b/.test(st)) return; }catch(e){}
+          return oc.apply(this, arguments);
+        };
+      }
+      g.until = on ? Date.now() + 2500 : 0;
+    }catch(e){}
+  }
+  setInterval(function(){ if(hostNoSleepWanted) hostNoSleep(true); }, 2000);
 
   function syncBg(){
     var b = document.getElementById('setbg');
@@ -1680,6 +1714,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     var my = ++playToken;
     /* 取流和下载也要禁止息屏：下载几十兆要好几分钟，空闲计时器 60 秒就会锁屏 */
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
+    try{ hostNoSleep(true); }catch(e){}
     /* 先把上一个播放器收掉：不停就开下一个，端口和缓存文件都被占着，
        第二个视频会一直卡在加载。 */
     closeWs();
@@ -1754,6 +1789,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         }
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
+    try{ hostNoSleep(true); }catch(e){}
         /* 续播先问后端目标位置的数据到底在不在。
            不在（waiting）就**不要** seek：seek 到未下载区域会让播放器一直
            等数据——音频由 ffmpeg 从该位置直接解码，所以有声音；视频一帧
@@ -1925,6 +1961,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     listEl.style.display = '';
     statusEl.textContent = '排行榜 · ' + items.length + ' 个';
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(false); }catch(e){}
+    try{ hostNoSleep(false); }catch(e){}
   }
 
   function leavePlayer(){
@@ -1939,6 +1976,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       listEl.style.display = '';
       statusEl.textContent = '后台播放中 · 点这里回到画面';
       try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(false); }catch(e){}
+    try{ hostNoSleep(false); }catch(e){}
       return;
     }
     stopPlayback();
@@ -1955,6 +1993,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     statusEl.textContent = '播放中';
     connectPlayer(lastPort || 9511, 0);
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
+    try{ hostNoSleep(true); }catch(e){}
   });
   /* 应用内置输入法：点搜索框（或列表页按 0）直接在这里打字，不再走宿主那套 */
   var qEl = document.getElementById('q');

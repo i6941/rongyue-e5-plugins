@@ -157,6 +157,44 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
     return 'e5dosRotate:' + String(rom || '').replace(/[^a-z0-9]+/gi, '_');
   }
 
+  /* 运行期间不让宿主熄屏/锁屏：
+     宿主锁屏链是 熄屏 → T551M.power(true) → lock() → closeApp()，
+     而 keep-awake 只能清空闲计时；一旦应用被关过（appOpen 为空），
+     宿主就不再接受 keep-awake，于是每 60 秒锁一次。
+     这里在游戏运行期间直接拦住宿主的熄屏调用，并拦住锁屏触发的 closeApp；
+     2.5 秒有效期、每 2 秒续期，插件销毁后自动失效。 */
+  var noSleepWanted = false;
+  function hostNoSleep(on) {
+    noSleepWanted = !!on;
+    try {
+      var w = window.parent;
+      if (!w || w === window) return;
+      var g = w.__e5NoSleep;
+      if (!g) {
+        g = w.__e5NoSleep = { until: 0 };
+        var ob = w.setBlank;
+        if (typeof ob === 'function') w.setBlank = function(on) {
+          try { if (on && Date.now() < (w.__e5NoSleep.until || 0)) return; } catch(e) {}
+          return ob.apply(this, arguments);
+        };
+        var op = w.T551M && w.T551M.power;
+        if (op) w.T551M.power = function(on2) {
+          try { if (on2 && Date.now() < (w.__e5NoSleep.until || 0)) return; } catch(e) {}
+          return op.apply(this, arguments);
+        };
+        var oc = w.closeApp;
+        if (typeof oc === 'function') w.closeApp = function() {
+          var st = '';
+          try { st = String((new Error()).stack || ''); } catch(e) {}
+          try { if (Date.now() < (w.__e5NoSleep.until || 0) && /at lock\b/.test(st)) return; } catch(e) {}
+          return oc.apply(this, arguments);
+        };
+      }
+      g.until = on ? Date.now() + 2500 : 0;
+    } catch(e) {}
+  }
+  setInterval(function() { if (running) hostNoSleep(true); }, 2000);
+
   /* 清理残留缓存 */
   try {
     localStorage.removeItem('e5resume');
@@ -259,6 +297,7 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
 
   function onExitCleanup() {
     removeHideBar();
+    try { hostNoSleep(false); } catch(e) {}
     stopBackend();
   }
   applyHideBar();
@@ -279,6 +318,7 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
     loadText.textContent = '正在启动 ' + name + '…';
     loading.style.display = 'flex';
     gameview.classList.add('active');
+    try { hostNoSleep(true); } catch(e) {}
     /* DOS 游戏普遍是横向 4:3 画面，竖屏看字太小；默认横屏键右，用户可按需切竖屏。 */
     rotateKey = rotateKeyFor(rom);
     try {
@@ -311,6 +351,7 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
 
   function quitGame() {
     running = false;
+    try { hostNoSleep(false); } catch(e) {}
     if (ws) {
       try { ws.close(); } catch(e) {}
       ws = null;
