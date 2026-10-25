@@ -87,7 +87,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
         if (!style) {
           style = window.parent.document.createElement('style');
           style.id = STYLE_ID;
-          style.textContent = '#mobile-toolbar, #mobile-nav { display: none !important; } #app-frame { top: 0 !important; height: 100% !important; }';
+          style.textContent = '#mobile-toolbar, #mobile-nav, #bar { display: none !important; } #app-frame { top: 0 !important; bottom: 0 !important; height: 100% !important; }';
           window.parent.document.head.appendChild(style);
         }
       }

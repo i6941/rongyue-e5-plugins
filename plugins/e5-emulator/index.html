@@ -565,9 +565,9 @@ var kaTick=0;
 function nativeTick(){
   /* 游戏在跑的时候每 5 秒重申一次「别锁屏」：这一条消息一旦丢了，
      60 秒后宿主就会按空闲锁屏，表现就是玩着玩着黑屏、回来像被强制退出 */
-  /* 宿主 idle=60 秒就关屏。这里每 2 秒续一次（原来 10 秒一次，且挂起时不续，
-     消息一丢就会被锁屏）。续的是 keepAwake，不是输入，不影响用户主动息屏。 */
-  if(++kaTick%2===0){ try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){} }
+  /* 宿主 idle=60 秒就关屏。这里每秒续一次 keepAwake（原来 2 秒一次，
+     消息一丢就会在 60 秒后黑屏）；续的是 keepAwake，不是输入，不影响用户主动息屏。 */
+  try{ if(typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true); }catch(e){}
   if(susp.on) return;          /* 挂起期间不刷帧率、不续宿主心跳，让看门狗把菜单栏还回去 */
   fit();
   var now=Date.now();
@@ -577,6 +577,7 @@ function nativeTick(){
   if(nat.frames>0&&phase!=='running'){
     phase='running'; marks.firstFrame=now-t0;
     try{ $('status').textContent='运行中 · '+current.sys+' '+current.n; }catch(e){}
+    if(susp.count){ loadTip(true,'已从息屏恢复',1500); }
     if(selftestWant&&!selftestDone){ selftestDone=true; try{ runSelftest(); }catch(e){} }
   }
   if(nat.frames===0&&now-t0>9000){ natFail('原生核心没有出帧（设置里可切到运行库）'); }
@@ -689,10 +690,34 @@ var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSav
 /* 退出原因台账：记录最近几次"游戏是怎么没的"（玩家按退出、长按返回、
    宿主关页面、屏幕熄灭挂起、恢复），随遥测一起上报，真机复现时不用猜。 */
 var exitLog=[];
+var bootAt=new Date().toISOString(), hostMsgs=[];
+/* 父页面（宿主）的真实状态：这是判断"谁把游戏弄没了"的关键证据——
+   是宿主 body.blank（息屏）、app-frame 被 hidden（应用被关）、还是宿主窗口直接变 0。 */
+function hostSnap(){
+  try{
+    var w=window.parent, d=w.document, f=d.getElementById('app-frame');
+    var bar=d.getElementById('bar');
+    return {pw:w.innerWidth, ph:w.innerHeight,
+      frameHidden:f?!!f.hidden:null,
+      barDisplay:bar?getComputedStyle(bar).display:'none',
+      body:String(d.body.className||'').slice(0,90),
+      vis:d.visibilityState,
+      src:(f&&f.getAttribute('src')||'').slice(0,60)};
+  }catch(e){ return 'ERR'+e; }
+}
+try{
+  window.addEventListener('message',function(e){
+    try{
+      if(e.source!==window.parent||!e.data||!e.data.e5) return;
+      hostMsgs.push(e.data.e5+(e.data.on!==undefined?(':'+e.data.on):''));
+      if(hostMsgs.length>8) hostMsgs.shift();
+    }catch(x){}
+  });
+}catch(e){}
 function noteExit(r){
   try{
     exitLog.push({r:r, t:new Date().toISOString(), kc:keyCount, ph:phase,
-      iw:window.innerWidth||0, su:susp.on?1:0, hid:document.hidden});
+      iw:window.innerWidth||0, su:susp.on?1:0, hid:document.hidden, host:hostSnap()});
     if(exitLog.length>8) exitLog.shift();
     window.__lastExit=exitLog[exitLog.length-1];
   }catch(e){}
@@ -1580,6 +1605,7 @@ function handleKey(kind,key,repeat,id,code){
   return kindAct[kind]?true:false;
 }
 window.addEventListener('keydown',function(e){
+  try{ window.__rawKeys=(window.__rawKeys||0)+1; window.__lastRawKind=keyKindOf(e); }catch(x){}
   if(handleKey(keyKindOf(e),e.key,e.repeat,backIdOf(e),e.keyCode)) e.preventDefault();
 },true);
 window.addEventListener('keyup',function(e){
@@ -1914,7 +1940,7 @@ function addVB(txt,cls,pos,btns){
    - 行程 36px：从中心到最大位移；
    - 8 向扇区（每 45°）+ 6° 迟滞：过边界不会来回抖，斜向很好出。 */
 var joyCtl=null, joyDocBound=false;
-var JOY_DEAD=8, JOY_R=36, JOY_HYST=6;
+var JOY_DEAD=6, JOY_R=36, JOY_HYST=5;
 try{
   var jt=(new URLSearchParams(location.search).get('jtune')||'').split(',');
   if(jt.length===3){
@@ -1977,7 +2003,7 @@ function joyMove(px,py){
     /* 斜向要"推得更出去"才算：刚出死区的轻微偏移只给主导轴，
        否则拇指轻轻一碰就判成斜走，平台游戏会感觉在抖。 */
     var diag=(want.up&&want.left)||(want.up&&want.right)||(want.down&&want.left)||(want.down&&want.right);
-    if(diag && ulen < JOY_DEAD*1.8){
+    if(diag && ulen < JOY_DEAD*1.25){
       if(Math.abs(ux)>=Math.abs(uy)) want=ux>0?{right:1}:{left:1};
       else want=uy>0?{up:1}:{down:1};
     }
@@ -2156,14 +2182,23 @@ function wrapHostClose(){
 function hostChrome(on){
   try{
     var d=window.parent.document;
-    if(!hostStyleInjected){
-      var st=d.createElement('style');
+    /* 关键：游戏期间把宿主的**状态栏**也藏掉，让 iframe 占满整块屏。
+       宿主有一条全局手势：在宿主自己的页面上横向滑动 ≥50px、800ms 内完成，
+       就会切换页面；而切页会调用 closeApp() 直接把插件关掉。
+       横屏时这条 28px 状态栏正好贴在左手握持的边缘，拇指一滑就命中——
+       表现就是"只碰了摇杆和按键，游戏却退出了"。
+       iframe 占满后宿主收不到任何触摸，这个手势就无从触发。
+       规矩：只改 body 上的类，退出/页面销毁时撤掉；不写宿主 uci 全局配置。 */
+    var st=d.getElementById('e5-game-chrome');
+    var css='body.'+hostClass+' #mobile-toolbar,body.'+hostClass+' #mobile-nav,body.'+hostClass+' #bar{display:none!important}'+
+            'body.'+hostClass+' #app-frame{top:0;bottom:0;height:100%!important}';
+    if(!st){
+      st=d.createElement('style');
       st.id='e5-game-chrome';
-      st.textContent='body.'+hostClass+' #mobile-toolbar,body.'+hostClass+' #mobile-nav{display:none!important}'+
-        'body.'+hostClass+' #app-frame{top:var(--status-h);bottom:0;height:calc(100% - var(--status-h))!important}';
       d.head.appendChild(st);
-      hostStyleInjected=true;
     }
+    if(st.textContent!==css) st.textContent=css;
+    hostStyleInjected=true;
     /* 宿主侧看门狗：插件每秒刷新一次心跳，超过 5 秒没有心跳就把隐藏撤掉。
        这样即使插件页被浏览器直接销毁（没机会执行任何清理代码），
        宿主的菜单栏也会自己回来，不会把用户关在"没有菜单"的界面里。 */
@@ -2443,6 +2478,8 @@ function snapshot(){
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
   s.selftest=window.__selftest||'';
   s.exitLog=exitLog.slice(-8);
+  s.bootAt=bootAt; s.host=hostSnap(); s.hostMsgs=hostMsgs.slice(-8);
+  s.rawKeys=window.__rawKeys||0; s.lastRawKind=window.__lastRawKind||'';
   return s;
 }
 

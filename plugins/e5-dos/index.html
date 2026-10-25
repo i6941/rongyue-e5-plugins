@@ -233,7 +233,7 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
         if (!s) {
           s = window.parent.document.createElement('style');
           s.id = STYLE_ID;
-          s.textContent = '#mobile-toolbar, #mobile-nav { display: none !important; } #app-frame { top: 0 !important; height: 100% !important; }';
+          s.textContent = '#mobile-toolbar, #mobile-nav, #bar { display: none !important; } #app-frame { top: 0 !important; bottom: 0 !important; height: 100% !important; }';
           window.parent.document.head.appendChild(s);
         }
       }
