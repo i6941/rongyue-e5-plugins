@@ -196,9 +196,9 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
       scale = Math.min(ww / gh, wh / gw);
       cvs.style.width = Math.round(gw * scale) + 'px';
       cvs.style.height = Math.round(gh * scale) + 'px';
-      /* 键右：机身逆时针转 90°，键盘落在右手；画面相对逆时针 -90°。
-         键左：机身顺时针转 90°，键盘落在左手；画面相对顺时针 +90°。 */
-      var deg = rotateMode === 'right' ? -90 : 90;cvs.style.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
+      /* 键左：机身顺时针转（顶部朝东），键盘落在左手；画面 CSS -90°。
+         键右：机身逆时针转（顶部朝西），键盘落在右手；画面 CSS +90°。 */
+      var deg = rotateMode === 'right' ? 90 : -90;cvs.style.transform = 'translate(-50%, -50%) rotate(' + deg + 'deg)';
     } else {
       scale = Math.min(ww / gw, wh / gh);
       cvs.style.width = Math.round(gw * scale) + 'px';
@@ -381,15 +381,15 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
     relY = Math.max(0, Math.min(1, relY));
 
     if (rotateMode === 'right') {
-      /* 画面 -90°（逆时针）：屏幕横轴对应游戏纵轴的反向 */
+      /* 画面 +90°（顺时针）：屏幕横轴对应游戏纵轴的反向 */
       var u = relX, v = relY;
-      relX = 1 - v;
-      relY = u;
+      relX = v;
+      relY = 1 - u;
     } else if (rotateMode === 'left') {
-      /* 画面 +90°（顺时针） */
+      /* 画面 -90°（逆时针） */
       var u2 = relX, v2 = relY;
-      relX = v2;
-      relY = 1 - u2;
+      relX = 1 - v2;
+      relY = u2;
     }
 
     var px = Math.round(relX * 65534 - 32767);

@@ -129,11 +129,13 @@ body.ingame footer{display:none}
 body.ingame header{display:none}
 body.ingame main{top:0;bottom:0}
 /* ---- 横屏三态 + 虚拟按键 ----
-   键右 = rotate(-90deg)：机身逆时针转、实体键盘落在右手（与 DOS 插件同一套方向）；
-   键左 = rotate(90deg)：实体键盘在左手，画面铺满后整体转回来。
+   方向约定（以画面转正为准倒推机身转向）：
+   键左 = rotate(-90deg)：画面顺时针出现在机身里，用户要把机身顺时针转
+   （顶部朝东）才看着是正的，此时键盘（机身底部）落在左手；
+   键右 = rotate(90deg)：机身逆时针转（顶部朝西），键盘落在右手。
    旋转只作用在 #ejs_game（顶条/操作条/虚拟按键都保持屏幕方向）。 */
-body.rot-r #ejs_game{transform:rotate(-90deg)}
-body.rot-l #ejs_game{transform:rotate(90deg)}
+body.rot-r #ejs_game{transform:rotate(90deg)}
+body.rot-l #ejs_game{transform:rotate(-90deg)}
 #vpad{position:absolute;left:0;right:0;top:18px;bottom:40px;z-index:9;display:none;
   pointer-events:none;user-select:none;-webkit-user-select:none}
 #vpad.on{display:block}
@@ -142,10 +144,12 @@ body.rot-l #ejs_game{transform:rotate(90deg)}
   color:#dce8f8;font-size:20px;font-weight:700;touch-action:none;-webkit-tap-highlight-color:transparent}
 #vpad .vb.hit{background:rgba(96,146,224,.8);color:#fff;border-color:#8fb4e8}
 #vpad .vb.sm{width:70px;height:32px;border-radius:6px;font-size:10px}
-#vpad .vb.dp{width:50px;height:50px;border-radius:9px;font-size:13px}
-#vpad .vb.tur{width:70px;height:32px;border-radius:6px;font-size:10px;font-weight:600;
-  border-color:rgba(201,161,90,.7);color:#ffd479}
-#vpad .vb.tur.hit{background:rgba(255,196,80,.55);border-color:#ffd479;color:#fff}
+/* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，输出四方向，斜向=两键同按） */
+#vpad .joy{position:absolute;left:22px;bottom:64px;width:104px;height:104px;border-radius:50%;
+  background:rgba(19,29,44,.45);border:1px solid rgba(89,121,170,.6);pointer-events:auto;touch-action:none}
+#vpad .joy.hit{border-color:#8fb4e8}
+#vpad .joy .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
+  border-radius:50%;background:rgba(96,146,224,.65);border:1px solid #8fb4e8;pointer-events:none}
 #vpadclose{position:absolute;right:6px;top:6px;z-index:2;display:none;width:28px;height:28px;border-radius:14px;
   align-items:center;justify-content:center;background:rgba(19,29,44,.6);border:1px solid rgba(89,121,170,.5);
   color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
@@ -938,31 +942,56 @@ var NUMPAD_KEYS=DEFAULT_KEYS;
    （上一轮调试时留下的"数字键方案"）会让新默认不生效，所以版本对不上
    就整份丢掉，重新用默认。用户自己改过之后版本会更新，不会被顶掉。 */
 var KEYMAP_VERSION=4;   /* 4: 默认键位改成 6=A / 3=B / #=START / *=SELECT，不再绑 L/R */
-/* 键位按机种分开存：FC / MD / GBA 各有各的一套，互不影响。
-   旧版只有一份全局 e5keymap，第一次按机种拆开时沿用它（不丢用户改过的键位）。 */
-var keymapSys='FC';
+/* 键位按「机种 × 横竖屏方向」分开存（-portrait / -left / -right 三套）：
+   机身换成横屏握持后，键盘上的按键组整体转了 90°——"现在看着是上"
+   的那颗键，不再是竖屏时那颗。所以每个方向各存一套，互不影响，
+   在设置面板里改的是"当前这一套"。 */
+var keymapSys='FC', keymapRot='portrait';
+function keymapKey(sys){ return 'e5keymap-'+sys+'-'+keymapRot; }
+function keymapVerKey(sys){ return 'e5keymapver-'+sys+'-'+keymapRot; }
+function keyRotTag(){ return keymapRot==='portrait'?'':('·'+(keymapRot==='left'?'键左':'键右')); }
+/* 横屏默认键位：把竖屏默认里的四个方向按物理转向转 90°。
+   键右（机身逆时针、顶朝西）：竖屏的"右"现在看起来是"上"；
+   键左（机身顺时针、顶朝东）：竖屏的"左"现在看起来是"上"。
+   方向键之外的按键默认先沿用竖屏值（横屏下主要靠虚拟键/调整后再存）。 */
+function buildRotDefaults(mode){
+  var rot= mode==='right'
+    ? {up:'right',right:'down',down:'left',left:'up'}
+    : {up:'left',left:'down',down:'right',right:'up'};
+  var out={};
+  for(var i=0;i<ACTIONS.length;i++){
+    var id=ACTIONS[i].id;
+    out[id]=((rot[id]?DEFAULT_KEYS[rot[id]]:DEFAULT_KEYS[id])||[]).slice();
+  }
+  return out;
+}
+var ROT_DEFAULTS={left:buildRotDefaults('left'),right:buildRotDefaults('right')};
+function defaultKeysFor(){ return keymapRot==='portrait'?DEFAULT_KEYS:ROT_DEFAULTS[keymapRot]; }
+/* 会话里只加载一次的当前键位表（切机种/切方向时会重载） */
 var keymap=loadKeymap(keymapSys);
-function keymapKey(sys){ return 'e5keymap-'+sys; }
 function loadKeymap(sys){
   var m=null;
   try{
-    var ver=localStorage.getItem('e5keymapver-'+sys);
+    var ver=localStorage.getItem(keymapVerKey(sys));
     if(ver===String(KEYMAP_VERSION)){
       var s=localStorage.getItem(keymapKey(sys)); if(s) m=JSON.parse(s);
     }else{
       localStorage.removeItem(keymapKey(sys));
-      localStorage.setItem('e5keymapver-'+sys,String(KEYMAP_VERSION));
-      /* 只沿用版本号对得上的旧全局键位：过期版本的调试残留不继承。 */
-      var lv=localStorage.getItem('e5keymapver');
-      if(lv===String(KEYMAP_VERSION)){
-        var legacy=localStorage.getItem('e5keymap');
-        if(legacy){ try{ m=JSON.parse(legacy); }catch(e){} }
+      localStorage.setItem(keymapVerKey(sys),String(KEYMAP_VERSION));
+      /* 只沿用版本号对得上的旧全局键位：过期版本的调试残留不继承。
+         竖屏才继承旧表；横屏是新增方向，直接用转向后的默认键位。 */
+      if(keymapRot==='portrait'){
+        var lv=localStorage.getItem('e5keymapver');
+        if(lv===String(KEYMAP_VERSION)){
+          var legacy=localStorage.getItem('e5keymap');
+          if(legacy){ try{ m=JSON.parse(legacy); }catch(e){} }
+        }
       }
     }
   }catch(e){}
   var out={};
   for(var i=0;i<ACTIONS.length;i++){
-    var id=ACTIONS[i].id, v=(m&&Array.isArray(m[id]))?m[id]:(DEFAULT_KEYS[id]||[]);
+    var id=ACTIONS[i].id, v=(m&&Array.isArray(m[id]))?m[id]:(defaultKeysFor()[id]||[]);
     out[id]=v.filter(function(x){ return typeof x==='string'&&x; });
   }
   /* 第一次按机种拆开（或迁移旧全局键位）时立刻落盘：否则用户没编辑就重载，
@@ -976,7 +1005,7 @@ function loadKeymap(sys){
 function saveKeymap(){
   try{
     localStorage.setItem(keymapKey(keymapSys),JSON.stringify(keymap));
-    localStorage.setItem('e5keymapver-'+keymapSys,String(KEYMAP_VERSION));
+    localStorage.setItem(keymapVerKey(keymapSys),String(KEYMAP_VERSION));
   }catch(e){}
 }
 /* 切到某个机种的键位：先把当前这套存回自己的槽，再载入目标机种的。 */
@@ -986,7 +1015,16 @@ function useKeymapFor(sys){
   keymapSys=sys;
   keymap=loadKeymap(sys);
   try{ refreshCfg(); }catch(e){}
-  try{ var b=$('cfgsys'); if(b) b.textContent=sys; }catch(e){}
+  try{ var b=$('cfgsys'); if(b) b.textContent=keymapSys+keyRotTag(); }catch(e){}
+}
+/* 切横竖屏方向时切键位表：同一机种下 竖/键左/键右 三套独立记忆 */
+function setKeymapRot(rot){
+  if(!rot||rot===keymapRot) return;
+  saveKeymap();
+  keymapRot=rot;
+  keymap=loadKeymap(keymapSys);
+  try{ refreshCfg(); }catch(e){}
+  try{ var b=$('cfgsys'); if(b) b.textContent=keymapSys+keyRotTag(); }catch(e){}
 }
 function btnOf(id){ for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btn; return undefined; }
 /* 一个键可以同时绑多个动作 */
@@ -1650,7 +1688,7 @@ function openCfg(){
      在列表里就是当前选中的机种页（全部时沿用上一次的）。 */
   useKeymapFor((running&&current&&current.sys)||(tabSys!=='ALL'?tabSys:keymapSys));
   buildCfg(); $('cfg').classList.add('open');
-  try{ var b=$('cfgsys'); if(b) b.textContent=keymapSys; }catch(e){}
+  try{ var b=$('cfgsys'); if(b) b.textContent=keymapSys+keyRotTag(); }catch(e){}
   $('cfgtip').textContent='选一项，再按一个键';
   /* 挡住这一次按压的合成点击（否则会点到「关闭」） */
   try{
@@ -1725,12 +1763,13 @@ bindTap($('bview'),cycleFit);
 bindTap($('cfgscale'),cycleFit);
 
 /* ---- 横屏三态（键左/键右/竖屏）+ 虚拟按键 ----
-   键左（默认）：掌机握法——机身顺时针转，实体键盘落在左手当方向键，
-   右手在屏幕右侧点虚拟动作键（A/B/START/SELECT，FC 还有连发，GBA/MD/街机补 L/R）。
-   键右：实体键盘在右手当动作键，左手在屏幕左侧点虚拟十字键。
+   键左（默认）：掌机握法——机身顺时针转（顶部朝东），实体键盘落在左手；
+   左手方向键躲不开就靠默认转向键位，屏幕右侧只放虚拟动作键 A/B。
+   键右：机身逆时针转（顶部朝西），实体键盘落在右手当动作键，
+   左手在屏幕左下用摇杆样式的虚拟十字键。
    两种横屏里虚拟键和实体键共用同一张按键位图（pressBtn/releaseBtn），同时生效。
-   方向语义与 DOS 插件一致：键右 = 旋转 -90°，键左 = 旋转 +90°。
-   每个游戏单独记忆（e5rot:<机种>-<游戏名>），按机种的默认值开场。 */
+   键位按「机种 × 方向」三套独立记忆，切方向时一并切换。
+   每个游戏单独记忆旋转偏好（e5rot:<机种>-<游戏名>），按机种默认开场。 */
 var ROT_MODES=['left','right','portrait'];
 var ROT_LABEL={left:'键左',right:'键右',portrait:'竖'};
 var rotateMode='left';
@@ -1751,6 +1790,11 @@ function setRotate(m){
     if(rotateMode==='left') document.body.classList.add('rot-l');
     else if(rotateMode==='right') document.body.classList.add('rot-r');
   }catch(e){}
+  /* 横竖屏换方向的同时换这套方向的键位（键位三套独立记忆） */
+  try{ setKeymapRot(rotateMode); }catch(e){}
+  /* 游戏中切方向要连虚拟键一起重建：键左是右侧 A/B、键右是左侧摇杆，
+     不重建的话切换后屏幕上还是上一模式的旧按钮（第一次部署就栽在这里） */
+  try{ if(running&&current&&vpadEl){ stopTurbo(); ensureVpad(current.sys); } }catch(e){}
   var h=$('brot'); if(h){ h.textContent=ROT_LABEL[rotateMode];
     h.title='横屏方向：'+(rotateMode==='left'?'键左（键盘在左手）':(rotateMode==='right'?'键右（键盘在右手）':'竖屏')); }
   var c=$('cfgrot'); if(c) c.textContent='方向：'+ROT_LABEL[rotateMode];
@@ -1773,21 +1817,7 @@ function vpadUpdate(){
   var s=$('vpadshow');
   if(s) s.classList.toggle('on',!!running&&rotateMode!=='portrait'&&!vpadOn);
 }
-/* 连发：每 100ms 把这个按钮在按下/松开之间来回切换 */
-function toggleTurbo(btn,el){
-  var t=turbo[btn];
-  if(t&&t.on){
-    t.on=false; try{ clearInterval(t.iv); }catch(e){} t.iv=0;
-    if(held[btn]) releaseBtn(btn);
-    el.classList.remove('hit');
-  }else{
-    if(t&&t.iv){ try{ clearInterval(t.iv); }catch(e){} }
-    turbo[btn]={on:true,iv:setInterval(function(){
-      try{ if(held[btn]) releaseBtn(btn); else pressBtn(btn); }catch(e){}
-    },100)};
-    el.classList.add('hit');
-  }
-}
+/* 连发已按用户要求去掉：键左模式下屏幕只放 A/B，连发靠实体键或以后再说 */
 function stopTurbo(){
   for(var k in turbo){
     var t=turbo[k];
@@ -1809,8 +1839,20 @@ function vKeepAlive(btns){
   }
 }
 function vbindGroup(btns,el){
-  function press(){ el.classList.add('hit'); for(var i=0;i<btns.length;i++) pressBtn(btns[i]); }
-  function release(){ el.classList.remove('hit'); for(var i=0;i<btns.length;i++) releaseBtn(btns[i]); }
+  var iv=0;
+  function press(){
+    el.classList.add('hit');
+    for(var i=0;i<btns.length;i++) pressBtn(btns[i]);
+    /* 长按兜底：pressBtn 的自动松开定时器每 4 秒续一次期，
+       按住跑图多久都不会中途断 */
+    try{ clearInterval(iv); }catch(e){}
+    iv=setInterval(function(){ vKeepAlive(btns); },4000);
+  }
+  function release(){
+    el.classList.remove('hit');
+    try{ clearInterval(iv); }catch(e){} iv=0;
+    for(var i=0;i<btns.length;i++) releaseBtn(btns[i]);
+  }
   return {press:press,release:release,keep:function(){ vKeepAlive(btns); }};
 }
 function addVB(txt,cls,pos,btns){
@@ -1828,15 +1870,69 @@ function addVB(txt,cls,pos,btns){
   vpadEl.appendChild(d);
   return d;
 }
-function addTurboVB(txt,btn,pos){
-  var d=document.createElement('div');
-  d.className='vb tur'; d.textContent=txt;
-  for(var k in pos) d.style[k]=pos[k];
-  function tg(){ toggleTurbo(btn,d); }
-  d.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} tg(); },{passive:false});
-  d.addEventListener('mousedown',function(){ tg(); });
-  vpadEl.appendChild(d);
-  return d;
+/* 虚拟摇杆（键右模式的左手方向）：圆盘 + 可拖动帽。
+   输出上下左右四个按钮位，斜向=两键同时置位；松手回中并全部松开。 */
+var joyCtl=null, joyDocBound=false;
+function joyStart(px,py){
+  if(!joyCtl) return;
+  if(!joyCtl.active){
+    joyCtl.active=true;
+    joyCtl.jIv=setInterval(function(){ try{ vKeepAlive([4,5,6,7]); }catch(e){} },4000);
+  }
+  joyMove(px,py);
+}
+function joyMove(px,py){
+  if(!joyCtl||!joyCtl.active) return;
+  var base=joyCtl.base, nub=joyCtl.nub;
+  var r=base.getBoundingClientRect();
+  var dx=px-(r.left+r.width/2), dy=py-(r.top+r.height/2);
+  var len=Math.sqrt(dx*dx+dy*dy)||1, R=32, T=13;
+  if(len>R){ dx=dx/len*R; dy=dy/len*R; }
+  nub.style.transform='translate('+Math.round(dx)+'px,'+Math.round(dy)+'px)';
+  base.classList.add('hit');
+  var want={up:dy<-T,down:dy>T,left:dx<-T,right:dx>T};
+  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
+  for(var i=0;i<DIRS.length;i++){
+    var k2=DIRS[i];
+    if(want[k2]&&!joyCtl.cur[k2]){ pressBtn(MAP[k2]); joyCtl.cur[k2]=1; }
+    else if(!want[k2]&&joyCtl.cur[k2]){ releaseBtn(MAP[k2]); delete joyCtl.cur[k2]; }
+  }
+}
+function joyEnd(){
+  if(!joyCtl) return;
+  joyCtl.active=false;
+  joyCtl.nub.style.transform='';
+  joyCtl.base.classList.remove('hit');
+  try{ clearInterval(joyCtl.jIv); }catch(e){} joyCtl.jIv=0;
+  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
+  for(var i=0;i<DIRS.length;i++){
+    if(joyCtl.cur[DIRS[i]]){ releaseBtn(MAP[DIRS[i]]); delete joyCtl.cur[DIRS[i]]; }
+  }
+}
+function addJoystick(){
+  var base=document.createElement('div'); base.className='joy';
+  var nub=document.createElement('div'); nub.className='nub';
+  base.appendChild(nub);
+  joyCtl={base:base,nub:nub,cur:{},active:false,jIv:0};
+  base.addEventListener('touchstart',function(e){
+    try{ e.preventDefault(); }catch(x){}
+    var t=e.touches&&e.touches[0]; if(!t) return;
+    joyStart(t.clientX,t.clientY);
+  },{passive:false});
+  base.addEventListener('touchmove',function(e){
+    var t=e.touches&&e.touches[0]; if(t) joyMove(t.clientX,t.clientY);
+  },{passive:true});
+  base.addEventListener('touchend',function(){ joyEnd(); },{passive:true});
+  base.addEventListener('touchcancel',function(){ joyEnd(); },{passive:true});
+  base.addEventListener('mousedown',function(e){ try{ e.preventDefault(); }catch(x){} joyStart(e.clientX,e.clientY); });
+  base.addEventListener('mousemove',function(e){ joyMove(e.clientX,e.clientY); });
+  /* 鼠标拖到圆盘外也能跟：文档级一直挂一份，只在 active 时干活 */
+  if(!joyDocBound){
+    joyDocBound=true;
+    document.addEventListener('mousemove',function(e){ joyMove(e.clientX,e.clientY); });
+    document.addEventListener('mouseup',function(){ joyEnd(); });
+  }
+  vpadEl.appendChild(base);
 }
 function ensureVpad(sys){
   var st=$('stage');
@@ -1858,20 +1954,13 @@ function ensureVpad(sys){
   stopTurbo();
   while(vpadEl.childNodes.length>1) vpadEl.removeChild(vpadEl.lastChild);
   if(rotateMode==='left'){
-    /* 键左：右侧虚拟动作键。A 在下、B 在左上（经典斜位），
-       下面一行是 L/R（若机种没有 L/R 动作则是 FC 的连发）和 START/SELECT。 */
-    addVB('A','',        {right:'20px',bottom:'120px'},[8]);
-    addVB('B','',        {right:'94px',bottom:'90px'},[0]);
-    if(sys==='FC'){ addTurboVB('A连',8,{right:'20px',bottom:'62px'}); addTurboVB('B连',0,{right:'94px',bottom:'62px'}); }
-    else{ addVB('R','sm',{right:'20px',bottom:'62px'},[11]); addVB('L','sm',{right:'94px',bottom:'62px'},[10]); }
-    addVB('ST','sm',     {right:'20px',bottom:'26px'},[3]);
-    addVB('SE','sm',     {right:'94px',bottom:'26px'},[2]);
+    /* 键左：方向靠左手的实体键盘（键位已按转向换成对应的套），
+       屏幕上只在右手一侧放 A/B 两个动作键（经典 GB 斜位：B 在左上、A 在右下）。 */
+    addVB('B','', {right:'26px',bottom:'104px'},[0]);
+    addVB('A','', {right:'26px',bottom:'30px'},[8]);
   }else if(rotateMode==='right'){
-    /* 键右：左侧虚拟十字键。两个手指可以同时点相邻两键出斜向。 */
-    addVB('↑','dp',{left:'62px',bottom:'146px'},[4]);
-    addVB('←','dp',{left:'14px',bottom:'96px'},[6]);
-    addVB('→','dp',{left:'110px',bottom:'96px'},[7]);
-    addVB('↓','dp',{left:'62px',bottom:'46px'},[5]);
+    /* 键右：动作键就是右手的实体键盘，左下放一个摇杆样式的虚拟方向。 */
+    addJoystick();
   }
   vpadUpdate();
 }
