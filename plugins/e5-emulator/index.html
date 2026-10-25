@@ -541,6 +541,7 @@ function natFail(msg){
 /* 挂起：宿主把框架藏起来（通知/来电/菜单键），先停进程，别让游戏白跑 */
 function nativeSuspend(why){
   if(susp.on) return;
+  noteExit('suspend:'+(why||'hidden'));
   susp.on=true; susp.count++; susp.at=Date.now(); susp.why=why||'hidden';
   phase='suspended';
   try{ natCmd2(1,0); }catch(e){}      /* 先把自动槽落盘，回来能接着打 */
@@ -550,6 +551,7 @@ function nativeSuspend(why){
 /* 框架回来了：重新拉起进程，3 秒后自动读回上一次的即时存档 */
 function nativeResume(){
   if(!susp.on||!running||!current) return;
+  noteExit('resume');
   susp.on=false; susp.ticks=0;
   phase='loading'; nat.autoLoaded=false; nat.seen=-1; nat.stallTicks=0;
   try{ $('status').textContent='恢复中…'; }catch(e){}
@@ -682,6 +684,32 @@ function gamesInScope(){
 
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
 var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
+/* 退出原因台账：记录最近几次"游戏是怎么没的"（玩家按退出、长按返回、
+   宿主关页面、屏幕熄灭挂起、恢复），随遥测一起上报，真机复现时不用猜。 */
+var exitLog=[];
+function noteExit(r){
+  try{
+    exitLog.push({r:r, t:new Date().toISOString(), kc:keyCount, ph:phase,
+      iw:window.innerWidth||0, su:susp.on?1:0, hid:document.hidden});
+    if(exitLog.length>8) exitLog.shift();
+    window.__lastExit=exitLog[exitLog.length-1];
+  }catch(e){}
+}
+/* 页面被销毁（宿主 closeApp / 刷新 / 崩溃重载）时也要留一条：
+   fetch keepalive 和 sendBeacon 都能在卸载阶段尽量把请求发出去。 */
+function flushStat(reason){
+  try{
+    var body={tag:'exit', reason:reason, t:new Date().toISOString(), phase:phase, snap:snapshot()};
+    var raw=JSON.stringify(body);
+    if(raw.length>3800){ body.snap.keyLog=String(body.snap.keyLog||'').slice(0,360); raw=JSON.stringify(body); }
+    if(navigator.sendBeacon){
+      navigator.sendBeacon('/api/plugins/e5-emulator/stat', new Blob([raw],{type:'application/json'}));
+    }else{
+      fetch('/api/plugins/e5-emulator/stat',{method:'POST',body:raw,keepalive:true,
+        headers:{'Content-Type':'application/json'}});
+    }
+  }catch(e){}
+}
 /* ?auto=N 自动开局。这个参数和"断点续玩"标记可能同时指向一个游戏，
    两个 start() 会互相把原生核心杀掉（后端开新核心前要先收掉上一个），
    所以自动开局全局只允许一次。 */
@@ -940,7 +968,7 @@ function btnsOf(id){
   for(var i=0;i<ACTIONS.length;i++) if(ACTIONS[i].id===id) return ACTIONS[i].btns||[ACTIONS[i].btn];
   return [];
 }
-/* 默认键位（验收标准）：方向用物理方向键；OK 键 = A；返回键短按 = B、长按 1.2 秒退出；
+/* 默认键位（验收标准）：方向用物理方向键；OK 键 = A；返回键 = B（射击/确认）；
    数字键 0=START、1=SELECT、2=L、3=R。
    方向键和 OK 键在 handleKey 里按"键的种类"直接映射（不靠 key 字面值），
    因为手机上报的 key 名不一定是 ArrowUp / Enter。 */
@@ -1268,7 +1296,8 @@ function reallyStart(i){
   s.onerror=function(){ phase='loader-error'; $('status').textContent='无法加载运行库'; };
   document.head.appendChild(s);
 }
-function leave(){
+function leave(why){
+  noteExit('leave:'+(why||'quit'));
   running=false; phase='menu';
   /* 退出后的 0.9 秒内吞掉返回键：长按退出的余波不能把插件也关掉 */
   backGuardUntil=Date.now()+900;
@@ -1313,7 +1342,7 @@ function leave(){
      表现就是"进游戏几十秒后画面定格、CPU 空闲"。旧实例靠上面的停机逻辑收尾即可。 */
 }
 var reloadTimer=0;
-bindTap($('quit'),function(){ leave(); });
+bindTap($('quit'),function(){ leave('quit'); });
 /* 列表页底栏：设置走同一个面板；返回才是真的退出插件（交给宿主 closeApp） */
 bindTap($('fset'),function(){ openCfg(); });
 bindTap($('fexit'),function(){
@@ -1506,17 +1535,13 @@ function handleKey(kind,key,repeat,id,code){
   /* 游戏里按 # 也能进按键设置：先把核心暂停，关面板再继续 */
   /* 游戏里 # 不再打开设置：它是游戏键，按用户的键位表发给核心。 */
   if(kind==='back'){
-    /* 系统长按会自动重复发 keydown：不理会 repeat，否则 1.2 秒的退出计时器被一次次推迟，长按永远退不出去。 */
     backHeld=true;
     if(repeat) return true;
     backDownAt=Date.now();
     var now=Date.now();
     /* 硬件返回键一次按压会上报 KEY_BACK+Backspace 两个按下事件（<150ms，宿主 app.js 有同样窗口的去重）。
-       不去重的话单击会被当双击，一按就直接退出游戏。 */
-    /* 同一次按压的孪生事件（身份与上一次不同）丢掉；同身份连按不限速，
-       保证格斗/射击游戏的连续出拳不会被吞键。
-       兜底：身份不可靠（取不到 keyCode，两个事件看起来一样）时退回时间窗去重；
-       同一身份在 150ms 内重复且期间没有 keyup，也按孪生处理。 */
+       同一次按压的孪生事件（身份与上一次不同）丢掉；同身份连按不限速，
+       保证格斗/射击游戏的连续出拳不会被吞键。 */
     var pairable=(id==='bb'||id==='bs');
     if(pairable){
       if(lastBackId && ((id!==lastBackId&&now-lastBackTime<250) ||
@@ -1525,21 +1550,10 @@ function handleKey(kind,key,repeat,id,code){
       if(lastBackId && now-lastBackTime<150) return true;
     }
     lastBackId=id||''; lastBackTime=now; backKeyupSincePress=false;
-    /* 返回键：短按当 B（开枪/确认），按住超过 1.2 秒退出游戏。
-       短按的 B 在 keyup 时松开；长按到点直接退出。 */
+    /* 返回键在游戏里只当 B（开枪/确认），不再兼任"长按退出"：
+       射击游戏里拇指按住这个键当连发时，1.2/1.8 秒的计时会把游戏直接退回列表，
+       这就是"玩着玩着突然退出"的主要来源。退出一律用 HUD 上的「退」。 */
     pressBtn(btnOf('b'));
-    try{ clearInterval(backTick); }catch(e){}
-    var bt0=Date.now();
-    backTick=setInterval(function(){
-      var left=1.2-(Date.now()-bt0)/1000;
-      if(left<=0){
-        try{ clearInterval(backTick); }catch(e){}
-        backTick=0;
-        releaseBtn(btnOf('b'));
-        leave(); return;
-      }
-      try{ $('tkey').textContent='长按退出 '+left.toFixed(1)+'s'; }catch(e){}
-    },100);
     return true;
   }
   /* 方向键和确认键按"键的种类"映射：手机上的方向键/确认键上报的 key 名
@@ -1605,7 +1619,7 @@ document.addEventListener('visibilitychange',function(){ if(document.hidden){ tr
 if(typeof e5!=='undefined'){
   /* 游戏里连 menu 类按键也吞掉：宿主收到 menu 会直接 closeApp()，
      而多键同按时键盘矩阵偶尔会报出一个幽灵 menu 键，正打着就被弹回应用列表。
-     退出游戏仍有两个明确入口：HUD 上的「退」和长按返回 2.5 秒。 */
+     退出游戏只有一个明确入口：HUD 上的「退」。返回键在游戏里只当 B，不再兼任退出。 */
   /* 返回键在「不在游戏里」时也要自己处理，不能让 SDK 发 e5:exit：
      长按 1.2 秒退出后手指还按着，键盘会继续送 keydown，超过 1.5 秒的那些
      以前就漏出去了，宿主 closeApp() 直接把插件关掉 —— 表现就是"退出直接到主页"。 */
@@ -1640,7 +1654,7 @@ function cfgLabel(tok){
 /* 开局提示：按当前键位配置生成，改了配置提示也跟着变 */
 function hintText(){
   function k(id){ var ks=keymap[id]||[]; return ks.length?ks.map(cfgLabel).join('/'):'—'; }
-  return '方向 '+k('up')+k('left')+k('down')+k('right')+'　A '+k('a')+'　B '+k('b')+'　START '+k('start')+'　SELECT '+k('select')+'　「转」=键左/键右/竖屏';
+  return '方向 '+k('up')+k('left')+k('down')+k('right')+'　A '+k('a')+'　B '+k('b')+'　START '+k('start')+'　SELECT '+k('select')+'　「转」=键左/键右/竖屏　退出用「退」';
 }
 function buildCfg(){
   var g=$('cfgrid');
@@ -2037,9 +2051,15 @@ document.addEventListener('visibilitychange',function(){
 /* 插件页被关掉/刷新时，务必把宿主工具栏和底部主菜单放回去 */
 window.addEventListener('pagehide',function(){
   try{ window.__pagehideAt=new Date().toISOString(); }catch(e){}
+  noteExit('pagehide');
+  try{ flushStat('pagehide'); }catch(e){}
   hostChrome(false);
   /* 页面关掉就把原生进程收掉，别让它占着 ROM 和 CPU（服务端自己也会 120 秒超时退出） */
   try{ if(nativeActive()) natStop(); }catch(e){}
+},true);
+window.addEventListener('beforeunload',function(){
+  noteExit('beforeunload');
+  try{ flushStat('beforeunload'); }catch(e){}
 },true);
 
 /* 宿主自己的 keydown 处理只做两件事：记日志、把焦点搬进 iframe，然后就 return，
@@ -2205,7 +2225,7 @@ setInterval(function(){
     susp.ticks++;
     if(susp.ticks>=2){
       if(nativeWanted(current)) nativeSuspend('innerWidth0');
-      else { susp.ticks=0; try{ leave(); }catch(e){} }
+      else { susp.ticks=0; try{ leave('hidden'); }catch(e){} }
     }
   }else if(susp.ticks){
     susp.ticks=0;
@@ -2372,6 +2392,7 @@ function snapshot(){
   try{ s.nat={w:nat.w,h:nat.h,frames:nat.frames,open:nat.open,err:(nat.err||'').slice(0,80),mask:nat.mask,paused:nat.paused,installed:nat.installed}; }catch(e){}
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
   s.selftest=window.__selftest||'';
+  s.exitLog=exitLog.slice(-8);
   return s;
 }
 
@@ -2420,8 +2441,8 @@ window.addEventListener('unhandledrejection',function(e){ logs.push('rejection: 
       return;
     }
     if(kt==='backrepeat'){
-      /* 系统长按会自动重复发 keydown：这些重复不能把 1.2 秒的退出计时器往后推，
-         否则长按返回键永远退不出去。检查点放在 1.6 秒：应已退出。 */
+      /* 系统长按会自动重复发 keydown：这些重复不能把任何计时器往后推。
+         现在返回键不再兼任退出，所以期望是「一直留在游戏里」。检查点放在 1.6 秒。 */
       var ty3=0, iv3=setInterval(function(){
         if(!(window.__fps>0)){ if(++ty3>60){ clearInterval(iv3); window.__keytest='no-frames'; } return; }
         clearInterval(iv3);
@@ -2486,7 +2507,7 @@ window.addEventListener('unhandledrejection',function(e){ logs.push('rejection: 
     if(kt==='backpair'||kt==='backpair2'||kt==='backhold'){
       /* backpair：硬件返回键一次按压的特征（BrowserBack + Backspace 两个按下，<150ms）→ 期望仍留在游戏里
          backpair2：350ms 后再来一次独立按压 → 期望仍留在游戏里（连按 B 不误退）
-         backhold：按下后不松 → 期望长按 1.2 秒退出 */
+         backhold：按下后一直不松 → 期望仍留在游戏里（返回键只当 B，长按不再退出） */
       var ty2=0, iv2=setInterval(function(){
         if(!(window.__fps>0)){ if(++ty2>60){ clearInterval(iv2); window.__keytest='no-frames'; } return; }
         clearInterval(iv2);
