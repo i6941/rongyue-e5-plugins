@@ -1668,7 +1668,13 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   /* 播放期间不让宿主熄屏/锁屏：宿主锁屏会 closeApp()，而 keep-awake
      在应用被关过之后就不再被接受。这里直接拦住宿主的熄屏调用，
      2.5 秒有效期、每 2 秒续期；页面销毁后自动失效。 */
-  var hostNoSleepWanted = false;
+  var hostNoSleepWanted = false, powerAllowUntil = 0;
+  window.addEventListener('keydown', function(e){
+    if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
+      powerAllowUntil = Date.now() + 2500;
+      try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+    }
+  }, true);
   function hostNoSleep(on){
     hostNoSleepWanted = !!on;
     try{
@@ -1676,15 +1682,20 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       if(!w || w === window) return;
       var g = w.__e5NoSleep;
       if(!g){
-        g = w.__e5NoSleep = { until: 0 };
+        g = w.__e5NoSleep = { until: 0, allowUntil: 0, activeUntil: 0 };
+        var blocked = function(){
+          var n = Date.now();
+          if(n < (g.allowUntil || 0)) return false;
+          return n < (g.until || 0);
+        };
         var ob = w.setBlank;
         if(typeof ob === 'function') w.setBlank = function(on){
-          try{ if(on && Date.now() < (w.__e5NoSleep.until || 0)) return; }catch(e){}
+          try{ if(on && blocked()) return; }catch(e){}
           return ob.apply(this, arguments);
         };
         var op = w.T551M && w.T551M.power;
         if(op) w.T551M.power = function(on2){
-          try{ if(on2 && Date.now() < (w.__e5NoSleep.until || 0)) return; }catch(e){}
+          try{ if(on2 && blocked()) return; }catch(e){}
           return op.apply(this, arguments);
         };
         var oc = w.closeApp;
@@ -1695,7 +1706,9 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
           return oc.apply(this, arguments);
         };
       }
+      g.allowUntil = powerAllowUntil;
       g.until = on ? Date.now() + 2500 : 0;
+      g.activeUntil = on ? Date.now() + 8000 : 0;
     }catch(e){}
   }
   setInterval(function(){ if(hostNoSleepWanted) hostNoSleep(true); }, 2000);

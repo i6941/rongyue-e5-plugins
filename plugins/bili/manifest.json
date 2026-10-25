@@ -1,7 +1,7 @@
 {
   "id": "bili",
   "api_version": 2,
-  "version": "0.3.2",
+  "version": "0.3.4",
   "name": {
     "zh": "哔哩哔哩",
     "en": "Bilibili"

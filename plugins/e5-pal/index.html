@@ -67,11 +67,15 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
   var backDownAt = 0;
   var backGuardUntil = 0;
 
-  /* 运行期间不让宿主熄屏/锁屏（同模拟器、DOS 的做法）：
-     宿主的锁屏会 closeApp()，而 keep-awake 在应用被关过后就不再被接受，
-     于是变成"每分钟锁一次"。这里在游戏运行期间拦住熄屏调用和锁屏触发的关闭，
-     2.5 秒有效期、每 2 秒续期；插件销毁后自动失效。 */
-  var noSleepWanted = false;
+  /* 熄屏策略（与模拟器共享 e5IdleHold）：电源键永远有效；最近 N 分钟有输入保持常亮；
+     N 分钟无输入交还宿主锁屏；锁屏不关游戏（closeApp 在锁屏栈下被拦，解锁回原局）。 */
+  function idleHoldMs() {
+    var m = 10;
+    try { var v = localStorage.getItem('e5IdleHold'); if (v !== null) m = parseFloat(v); } catch(e) {}
+    if (!isFinite(m) || m < 0) m = 10;
+    return m <= 0 ? 0 : m * 60000;
+  }
+  var noSleepWanted = false, lastInputAt = Date.now(), powerAllowUntil = 0;
   function hostNoSleep(on) {
     noSleepWanted = !!on;
     try {
@@ -79,29 +83,45 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
       if (!w || w === window) return;
       var g = w.__e5NoSleep;
       if (!g) {
-        g = w.__e5NoSleep = { until: 0 };
+        g = w.__e5NoSleep = { until: 0, allowUntil: 0, activeUntil: 0 };
+        var blocked = function() {
+          var n = Date.now();
+          if (n < (g.allowUntil || 0)) return false;
+          return n < (g.until || 0);
+        };
         var ob = w.setBlank;
-        if (typeof ob === 'function') w.setBlank = function(on) {
-          try { if (on && Date.now() < (w.__e5NoSleep.until || 0)) return; } catch(e) {}
+        if (typeof ob === 'function') w.setBlank = function(on2) {
+          try { if (on2 && blocked()) return; } catch(e) {}
           return ob.apply(this, arguments);
         };
         var op = w.T551M && w.T551M.power;
         if (op) w.T551M.power = function(on2) {
-          try { if (on2 && Date.now() < (w.__e5NoSleep.until || 0)) return; } catch(e) {}
+          try { if (on2 && blocked()) return; } catch(e) {}
           return op.apply(this, arguments);
         };
         var oc = w.closeApp;
         if (typeof oc === 'function') w.closeApp = function() {
           var st = '';
           try { st = String((new Error()).stack || ''); } catch(e) {}
-          try { if (Date.now() < (w.__e5NoSleep.until || 0) && /at lock\b/.test(st)) return; } catch(e) {}
+          try { if (Date.now() < (g.activeUntil || 0) && /at lock\b/.test(st)) return; } catch(e) {}
           return oc.apply(this, arguments);
         };
       }
-      g.until = on ? Date.now() + 2500 : 0;
+      var now = Date.now(), hold = idleHoldMs();
+      g.allowUntil = powerAllowUntil;
+      g.until = (on && (hold <= 0 || now - lastInputAt < hold)) ? now + 2500 : 0;
+      g.activeUntil = on ? now + 8000 : 0;
     } catch(e) {}
   }
-  setInterval(function() { if (running) hostNoSleep(true); }, 2000);
+  setInterval(function() {
+    hostNoSleep(running);
+    try {
+      var hold = idleHoldMs();
+      if (running && (hold <= 0 || Date.now() - lastInputAt < hold) && typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true);
+    } catch(e) {}
+  }, 2000);
+  window.addEventListener('touchstart', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
+  window.addEventListener('mousedown', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
 
   /* 画面自适应缩放（物理屏 320x480，游戏 320x200） */
   function fit() {
@@ -203,6 +223,11 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 
   function onKeyDown(e) {
     if (e.repeat) return;
+    lastInputAt = Date.now();
+    if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
+      powerAllowUntil = Date.now() + 2500;
+      try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+    }
     if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
       if (Date.now() < backGuardUntil) { e.preventDefault(); return; }
       backDownAt = Date.now();
