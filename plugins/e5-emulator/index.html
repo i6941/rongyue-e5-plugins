@@ -116,9 +116,14 @@ body.ingame #hint.show{display:block}
 .cfgcell .clr{position:absolute;right:3px;top:3px;width:28px;height:28px;padding:0;font:inherit;font-size:15px;line-height:26px;
   color:#9fb4cf;background:#182234;border:1px solid #2b3a52;border-radius:4px}
 .cfgcell .clr.hit{background:#3a5f96;color:#fff}
-#cfgfoot{flex:0 0 auto;display:flex;gap:6px;padding:6px;background:#101827;border-top:1px solid #29354a}
-#cfgfoot button{flex:1 1 0;height:40px;font:inherit;font-size:14px;color:#dce8f8;background:#22304a;border:1px solid #3a4c6b;border-radius:6px}
-#cfgfoot button:active{background:#31527f}
+/* 方向选择：三个手机简笔画（竖持 / 横持键盘在左 / 横持键盘在右）。
+   选中项高亮边框，当前方向一眼可见。 */
+#cfgrot{flex:0 0 auto;display:flex;gap:6px;padding:6px 6px 0;background:#101827}
+#cfgrot button{flex:1 1 0;height:44px;padding:0;color:#a8bad0;background:#182234;border:1px solid #2b3a52;border-radius:8px;
+  display:flex;align-items:center;justify-content:center}
+#cfgrot button svg{width:30px;height:30px;display:block}
+#cfgrot button.on{color:#04121f;background:#65bdff;border-color:#65bdff}
+#cfgrot button:active{opacity:.85}
 #cfgfx{flex:0 0 auto;display:flex;gap:6px;padding:6px 6px 0;background:#101827}
 #cfgfx button{flex:1 1 0;height:38px;font:inherit;font-size:13px;color:#dce8f8;background:#182234;border:1px solid #2b3a52;border-radius:6px}
 #cfgfx button:active{background:#31527f}
@@ -144,8 +149,9 @@ body.rot-l #ejs_game{transform:rotate(-90deg)}
   color:#dce8f8;font-size:20px;font-weight:700;touch-action:none;-webkit-tap-highlight-color:transparent}
 #vpad .vb.hit{background:rgba(96,146,224,.8);color:#fff;border-color:#8fb4e8}
 #vpad .vb.sm{width:70px;height:32px;border-radius:6px;font-size:10px}
-/* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，输出四方向，斜向=两键同按） */
-#vpad .joy{position:absolute;left:22px;bottom:64px;width:104px;height:104px;border-radius:50%;
+/* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，输出四方向，斜向=两键同按）。
+   位置落在用户视角左下角：CSS 左边缘 + 上边缘（横屏后 CSS 的 y 轴是用户的左右轴）。 */
+#vpad .joy{position:absolute;left:22px;top:24px;width:104px;height:104px;border-radius:50%;
   background:rgba(19,29,44,.45);border:1px solid rgba(89,121,170,.6);pointer-events:auto;touch-action:none}
 #vpad .joy.hit{border-color:#8fb4e8}
 #vpad .joy .nub{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;
@@ -155,10 +161,17 @@ body.rot-l #ejs_game{transform:rotate(-90deg)}
   color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
 #vpad.on #vpadclose{display:flex}
 #vpadclose.hit{background:rgba(96,146,224,.8);color:#fff}
+/* × 的位置要避开虚拟键：键左时键在用户右下（CSS 右上），
+   所以 × 放 CSS 左下（=用户左上）；键右时键在用户左下（CSS 左上），
+   × 放 CSS 右下（=用户右上）。 */
+body.rot-l #vpadclose{left:6px;bottom:6px;right:auto;top:auto}
+body.rot-r #vpadclose{right:6px;bottom:6px;left:auto;top:auto}
 #vpadshow{position:absolute;left:6px;top:24px;z-index:9;display:none;width:30px;height:30px;border-radius:8px;
   align-items:center;justify-content:center;background:rgba(19,29,44,.6);border:1px solid rgba(89,121,170,.5);
   color:#a8bad0;font-size:14px;pointer-events:auto;user-select:none;-webkit-user-select:none;touch-action:none}
 #vpadshow.on{display:flex}
+/* 收起虚拟键后的唤回按钮，放在和 × 相同的角，避免压住游戏画面中心 */
+body.rot-r #vpadshow{left:auto;right:6px;bottom:6px;top:auto}
 /* 运行库自带的 UI 全部藏掉：菜单栏、上下文菜单、弹窗、开始按钮、虚拟手柄、设置页… */
 .ejs_menu_bar,.ejs_menu_button,.ejs_context_menu,.ejs_popup_container,.ejs_popup_box,.ejs_popup_body,
 .ejs_start_button,.ejs_message,.ejs_control_bar,.ejs_control_body,.ejs_settings_parent,.ejs_settings_main_bar,
@@ -196,10 +209,14 @@ body.rot-l #ejs_game{transform:rotate(-90deg)}
   <button id="fset" type="button" title="设置" aria-label="设置">⚙ 设置</button>
   <button id="fexit" type="button">退出</button></footer>
 <div id="cfg">
-  <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button" aria-label="关闭" style="font-size:18px;line-height:28px">×</button></div>
+  <div id="cfghead"><b>设置</b><span id="cfgsys">FC</span><span id="cfgtip">选一项，再按一个键</span><span class="sp"></span><button id="cfgclose" type="button" aria-label="保存并关闭" style="font-size:14px;line-height:28px;padding:0 10px">保存</button></div>
   <div id="cfgrid"></div>
-  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button><button id="cfgrot" type="button">方向：键左</button><button id="cfgengine" type="button">引擎 原生</button></div>
-  <div id="cfgfoot"><button id="cfgdef" type="button">默认按键</button><button id="cfgnum" type="button">九键方案</button><button id="cfgdone" type="button">完成</button></div>
+  <div id="cfgfx"><button id="cfgscan" type="button">滤镜：关</button><button id="cfgscale" type="button">比例：宽铺</button></div>
+  <div id="cfgrot">
+    <button type="button" data-rot="portrait" title="竖着拿" aria-label="竖屏"><svg viewBox="0 0 30 30"><rect x="9" y="3" width="12" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="10.5" y="21" width="9" height="4" rx="0.6" fill="currentColor"/></svg></button>
+    <button type="button" data-rot="left" title="横着拿，键盘在左手" aria-label="横屏键盘在左"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="4.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+    <button type="button" data-rot="right" title="横着拿，键盘在右手" aria-label="横屏键盘在右"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="21.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+  </div>
 </div>
 <script src="/sdk/e5.js"></script>
 <script>
@@ -314,14 +331,13 @@ var APP_VER='1.17.0';
    wasm 抛陷阱、主循环停摆，反复开关还会把 WebGL2 上下文耗尽。所以 FC 游戏
    默认走原生：后端拉起 /usr/bin/e5emu，它把 RGB565 帧通过本机 WebSocket 推给
    这个页面，页面只负责把帧画出来、把按键位图发回去。
-   想退回旧路径：地址加 ?engine=ejs，或者在按键设置里把「引擎」切到运行库
-   （切换后从下一局开始生效，打游戏中途不会换引擎）。 */
+   运行库（EmulatorJS）只作为原生二进制缺失时的自动兜底，设置里不再提供切换；
+   调试时仍可用 ?engine=ejs 临时指定。 */
 var ENGINE='native';
 (function(){
   try{
     var p=new URLSearchParams(location.search).get('engine');
     if(p==='ejs'||p==='native') ENGINE=p;
-    else if(localStorage.getItem('e5engine')==='ejs') ENGINE='ejs';
   }catch(e){}
 })();
 var nat={ws:null,cvs:null,ctx:null,img:null,w:0,h:0,frames:0,lastFrames:0,fpsAt:0,open:false,
@@ -1716,19 +1732,10 @@ function closeCfg(){
 /* 游戏内打开设置的唯一入口：HUD 上的「设」。键盘上的 # 留给游戏自己用。 */
 bindTap($('bset'),function(){ openCfg(); });
 try{ bindTap($('bcore'),function(){ coreInstall(); }); }catch(e){}
-bindTap($('cfgclose'),function(){ closeCfg(); });
-bindTap($('cfgdone'),function(){ closeCfg(); });
-bindTap($('cfgdef'),function(){
-  for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(DEFAULT_KEYS[ACTIONS[i].id]||[]).slice();
-  saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='已恢复默认按键（方向 + OK跳 + 返回射击）';
-  try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('已恢复默认按键'); }catch(e){}
-});
-bindTap($('cfgnum'),function(){
-  for(var i=0;i<ACTIONS.length;i++) keymap[ACTIONS[i].id]=(NUMPAD_KEYS[ACTIONS[i].id]||[]).slice();
-  saveKeymap(); applyKeymap(); refreshCfg();
-  $('cfgtip').textContent='已切到九键方案（5=A、6=B、7/9=斜角）';
-  try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('已切到九键方案'); }catch(e){}
+/* 右上角改成「保存」：改键本来就已经即时落盘，这里只负责收起并确认一下 */
+bindTap($('cfgclose'),function(){
+  closeCfg();
+  try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('已保存'); }catch(e){}
 });
 
 /* 画面模式（按顺序循环）：
@@ -1797,7 +1804,7 @@ function setRotate(m){
   try{ if(running&&current&&vpadEl){ stopTurbo(); ensureVpad(current.sys); } }catch(e){}
   var h=$('brot'); if(h){ h.textContent=ROT_LABEL[rotateMode];
     h.title='横屏方向：'+(rotateMode==='left'?'键左（键盘在左手）':(rotateMode==='right'?'键右（键盘在右手）':'竖屏')); }
-  var c=$('cfgrot'); if(c) c.textContent='方向：'+ROT_LABEL[rotateMode];
+  rotUI();
   vpadUpdate();
   if(running&&current){ try{ fit(); }catch(e){} }
 }
@@ -1806,7 +1813,22 @@ function cycleRotate(){
   saveRot();
 }
 bindTap($('brot'),cycleRotate);
-bindTap($('cfgrot'),cycleRotate);
+/* 设置面板里的三格方向图标：点哪个就切哪个（图标本身就是"手机怎么拿"） */
+function rotUI(){
+  var bs=document.querySelectorAll('#cfgrot button');
+  for(var i=0;i<bs.length;i++){
+    var on=bs[i].getAttribute('data-rot')===rotateMode;
+    if(on) bs[i].classList.add('on'); else bs[i].classList.remove('on');
+  }
+}
+(function(){
+  var bs=document.querySelectorAll('#cfgrot button');
+  for(var i=0;i<bs.length;i++){
+    (function(b){
+      bindTap(b,function(){ setRotate(b.getAttribute('data-rot')); saveRot(); });
+    })(bs[i]);
+  }
+})();
 
 /* ---------- 虚拟按键层 ----------
    只在游戏内 + 横屏两种模式下出现；位置固定在屏幕坐标，不随画面旋转。
@@ -1890,8 +1912,16 @@ function joyMove(px,py){
   if(len>R){ dx=dx/len*R; dy=dy/len*R; }
   nub.style.transform='translate('+Math.round(dx)+'px,'+Math.round(dy)+'px)';
   base.classList.add('hit');
-  var want={up:dy<-T,down:dy>T,left:dx<-T,right:dx>T};
-  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
+  var want={up:dy<-T,down:dy>T,left:dx<-T,right:dx>T};  var DIRS=['up','down','left','right'], MAP={up:4,down:5,left:6,right:7};
+  /* 横屏后 CSS 坐标轴和用户看到的轴差 90°：
+     键右（机身逆时针）：CSS +x = 用户上，CSS +y = 用户右；
+     键左（机身顺时针）：CSS +x = 用户下，CSS +y = 用户左。
+     摇杆方向必须按用户方向判断，否则上下左右全歪。 */
+  var ux,uy;
+  if(rotateMode==='right'){ ux=dy; uy=dx; }
+  else if(rotateMode==='left'){ ux=-dy; uy=-dx; }
+  else { ux=dx; uy=-dy; }
+  want={up:uy>T,down:uy<-T,left:ux<-T,right:ux>T};
   for(var i=0;i<DIRS.length;i++){
     var k2=DIRS[i];
     if(want[k2]&&!joyCtl.cur[k2]){ pressBtn(MAP[k2]); joyCtl.cur[k2]=1; }
@@ -1954,12 +1984,14 @@ function ensureVpad(sys){
   stopTurbo();
   while(vpadEl.childNodes.length>1) vpadEl.removeChild(vpadEl.lastChild);
   if(rotateMode==='left'){
-    /* 键左：方向靠左手的实体键盘（键位已按转向换成对应的套），
-       屏幕上只在右手一侧放 A/B 两个动作键（经典 GB 斜位：B 在左上、A 在右下）。 */
-    addVB('B','', {right:'26px',bottom:'104px'},[0]);
-    addVB('A','', {right:'26px',bottom:'30px'},[8]);
+    /* 键左：方向靠左手实体键盘，屏幕上是**用户视角右下角**的 A/B。
+       注意：横屏后 CSS 的 x 轴变成用户的上下、y 轴变成用户的左右，
+       所以"用户右下"= CSS 右边缘 + 上边缘（不是 bottom）。 */
+    addVB('A','', {right:'26px',top:'34px'},[8]);
+    addVB('B','', {right:'26px',top:'104px'},[0]);
   }else if(rotateMode==='right'){
-    /* 键右：动作键就是右手的实体键盘，左下放一个摇杆样式的虚拟方向。 */
+    /* 键右：动作键是右手实体键盘，虚拟摇杆要落在**用户视角左下角**
+       （= CSS 左边缘 + 上边缘）。 */
     addJoystick();
   }
   vpadUpdate();
@@ -1988,20 +2020,8 @@ function applyFx(){
 }
 bindTap($('cfgscan'),function(){ fxMode=FXS[(FXS.indexOf(fxMode)+1)%FXS.length]; applyFx(); });
 
-/* 引擎：原生核心 / 运行库。开局时决定走哪条路，打游戏中途不切换——
-   中途换引擎要重载页面，正是"进游戏以后才处理"那不稳定的来源。
-   改了之后从下一局开始生效。 */
-function applyEngine(){
-  var b=$('cfgengine');
-  if(b) b.textContent='引擎 '+(ENGINE==='native'?'原生':'运行库');
-}
-bindTap($('cfgengine'),function(){
-  ENGINE=(ENGINE==='native')?'ejs':'native';
-  try{ localStorage.setItem('e5engine',ENGINE); }catch(e){}
-  applyEngine();
-  var tip=$('cfgtip');
-  if(tip) tip.textContent=(running?'引擎已改为'+(ENGINE==='native'?'原生':'运行库')+'，下一局生效':'引擎：'+(ENGINE==='native'?'原生核心':'运行库'));
-});
+/* 引擎固定用原生核心：运行库（EmulatorJS wasm）这条旧路已经从设置里去掉，
+   二进制缺失时才由 nativeWanted() 自己退回运行库。 */
 
 /* 同一源：可以给宿主页面注入样式。游戏期间把宿主自己的工具栏和底部主菜单藏掉，
    把整块竖向空间让给画面；退出时立刻恢复。宿主不需要改代码，也不改全局配置。 */
@@ -2535,7 +2555,6 @@ try{
 
 applyFitMode();
 applyFx();
-applyEngine();
 /* 标签必须先按本插件的机种范围生成，drawMenu 才有 tabSys 可用 */
 try{ buildTabs(); }catch(e){}
 drawMenu();
