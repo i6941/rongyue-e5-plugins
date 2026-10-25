@@ -205,6 +205,7 @@ return function (ctx) {
             if (tail4 === '.nes') bin = '/usr/bin/e5emu';
             else if (tail3 === '.md') bin = '/usr/bin/e5emu-genesis';
             else if (tail4 === '.gba') bin = '/usr/bin/e5emu-gba';
+            else if (index(clean, 'pal/') === 0) bin = '/usr/bin/e5emu-pal';   /* 仙剑重制版（SDLPAL 原生引擎） */
             else if (tail5 === '.dosz' || tail4 === '.dos' || index(clean, 'dos/') === 0) bin = '/usr/bin/e5emu-dos';
             else if (tail3 === 'zip' || index(clean, 'arc/') === 0) bin = '/usr/bin/e5emu-arcade';   /* 街机：FBNeo，ROM 是 .zip */
             if (bin === '') return { ok: false, error: 'unsupported rom' };
@@ -290,7 +291,8 @@ return function (ctx) {
                 md: has('/usr/bin/e5emu-genesis'),
                 gba: has('/usr/bin/e5emu-gba'),
                 arcade: has('/usr/bin/e5emu-arcade'),
-                dos: has('/usr/bin/e5emu-dos')
+                dos: has('/usr/bin/e5emu-dos'),
+                pal: has('/usr/bin/e5emu-pal')
             };
             let pid = read_text('/var/run/e5emu.pid');
             return { ok: true, installed: bins.nes, bins: bins, pid: pid };
