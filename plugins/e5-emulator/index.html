@@ -686,11 +686,68 @@ function gamesInScope(){
 }
 
 var logs=[], phase='menu', lastErr='', t0=0, marks={}, running=false, current=null;
+/* 运行中的页面版本：遥测里带出来，确认设备加载的到底是不是刚部署的这一版
+   （WebKit 启发式缓存曾让"部署了但还在跑旧代码"，不要再靠猜）。 */
+var APP_VER='1.28.0';
 var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSave='', keyCount=0;
 /* 退出原因台账：记录最近几次"游戏是怎么没的"（玩家按退出、长按返回、
    宿主关页面、屏幕熄灭挂起、恢复），随遥测一起上报，真机复现时不用猜。 */
 var exitLog=[];
-var bootAt=new Date().toISOString(), hostMsgs=[];
+var bootAt=new Date().toISOString(), hostMsgs=[], hostKeys=[], hostTrace=[];
+/* 宿主状态轨迹：每 500ms 记一条，宿主 body 类/iframe 可见性变化时也立刻记一条。
+   真机上如果游戏"消失"，这条轨迹能指出是锁屏、翻页还是错点电源键。 */
+function traceHost(tag){
+  try{
+    var ts=hostSnap();
+    hostTrace.push({t:Date.now()%1000000, tag:tag||'', b:(ts&&ts.body)||'', fh:(ts&&ts.frameHidden),
+      bar:(ts&&ts.barDisplay)||'', iw:window.innerWidth, ph:phase, r:running?1:0});
+    if(hostTrace.length>60) hostTrace.shift();
+  }catch(e){}
+}
+setInterval(function(){ traceHost(''); },500);
+/* 锁屏守卫：宿主给了 screen-locked 类就暂停核心（否则锁屏界面后还在出声、白烧 CPU），
+   解锁后自动恢复同一局。配合上面 closeApp 的拦截，"熄屏/锁屏"不再等于"游戏没了"。 */
+var lockSusp=false;
+function lockGuard(){
+  try{
+    var d=window.parent.document;
+    var on=d.body.classList.contains('screen-locked');
+    if(on && running && !susp.on){ lockSusp=true; nativeSuspend('lock'); traceHost('lock-on'); }
+    else if(!on && lockSusp){
+      lockSusp=false; traceHost('lock-off');
+      if(running && susp.on) nativeResume();
+    }
+  }catch(e){}
+}
+setInterval(lockGuard,500);
+/* 自测入口：
+   ?locktest=1 调宿主 T551M.power(true) 走真实锁屏；
+   ?locktest=2 用同名 lock() 包一层调 closeApp，验证"锁屏关应用"被拦下；
+   ?locktest=3 直接给宿主 body 加 screen-locked，验证暂停/恢复。 */
+try{
+  var lt=(new URLSearchParams(location.search).get('locktest')||'');
+  if(lt==='1'){
+    setTimeout(function(){
+      try{ window.parent.T551M.power(true); window.__locktest='power-ok'; }
+      catch(e){ window.__locktest='power-err '+e; }
+    },8000);
+  }else if(lt==='2'){
+    setTimeout(function(){
+      try{
+        var w=window.parent;
+        (function lock(){ w.closeApp(); })();
+        window.__locktest='close-called';
+      }catch(e){ window.__locktest='close-err '+e; }
+    },8000);
+  }else if(lt==='3'){
+    setTimeout(function(){
+      try{ window.parent.document.body.classList.add('screen-locked'); window.__locktest='cls-on'; }catch(e){}
+    },8000);
+    setTimeout(function(){
+      try{ window.parent.document.body.classList.remove('screen-locked'); window.__locktest='cls-off'; }catch(e){}
+    },16000);
+  }
+}catch(e){}
 /* 父页面（宿主）的真实状态：这是判断"谁把游戏弄没了"的关键证据——
    是宿主 body.blank（息屏）、app-frame 被 hidden（应用被关）、还是宿主窗口直接变 0。 */
 function hostSnap(){
@@ -2149,6 +2206,12 @@ function hostKeyForward(){
     d.__e5KeyFwd=true;
     /* 同源，直接挂监听。注入 <script> 在这台 WebKit 上不执行，别再走那条路。 */
     d.addEventListener('keydown',function(e){
+      /* 宿主侧按键轨迹：能看出电源键（kind=power）有没有被按到。
+         这是判断"锁屏是谁触发"的关键证据。 */
+      try{
+        hostKeys.push({k:keyKindOf(e)||e.key, key:e.key, code:e.keyCode, t:new Date().toISOString()});
+        if(hostKeys.length>12) hostKeys.shift();
+      }catch(x){}
       try{
         var f=d.getElementById('app-frame');
         if(!f||f.hidden) return;
@@ -2173,6 +2236,25 @@ function wrapHostClose(){
     if(typeof w.closeApp!=='function') return;
     var orig=w.closeApp;
     w.closeApp=function(){
+      var st='';
+      try{ st=String((new Error()).stack||''); }catch(e){}
+      try{
+        /* 记录"是谁关的"：栈里会显示 closeApp 的调用者
+           （mobile.js 的 lock() → 锁屏；navigate() → 翻页；菜单键等）。 */
+        window.__closeStack=st.split('\n').slice(1,5).join(' | ').slice(0,320);
+        /* 锁屏导致的关闭：不让它真的关。宿主的 lock() 会对 appOpen 调 closeApp()，
+           于是"屏幕熄一下/误触电源键/系统锁屏"就等于把正在跑的游戏扔掉。
+           这里拦下来，交给 lockGuard 暂停核心；解锁后自动恢复同一局。 */
+        if(running && /at lock\b/.test(st)){
+          noteExit('closeApp-blocked:lock');
+          traceHost('lock');
+          flushStat('blocked-lock');
+          return;
+        }
+        noteExit('closeApp');
+        traceHost('closeApp');
+        flushStat('closeApp');
+      }catch(e){}
       try{ if(w.document && w.document.body) w.document.body.classList.remove(hostClass); }catch(e){}
       return orig.apply(this,arguments);
     };
@@ -2479,7 +2561,11 @@ function snapshot(){
   s.selftest=window.__selftest||'';
   s.exitLog=exitLog.slice(-8);
   s.bootAt=bootAt; s.host=hostSnap(); s.hostMsgs=hostMsgs.slice(-8);
+  s.closeStack=window.__closeStack||'';
+  s.hostKeys=hostKeys.slice(-8); s.hostTrace=hostTrace.slice(-40);
   s.rawKeys=window.__rawKeys||0; s.lastRawKind=window.__lastRawKind||'';
+  s.locktest=window.__locktest||'';
+  s.ver=APP_VER;
   return s;
 }
 
