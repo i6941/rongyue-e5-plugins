@@ -17,7 +17,19 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
   image-rendering: -webkit-optimize-contrast;
   object-fit: contain;
   background: #000;
+  transform-origin: center center;
 }
+#rotgroup {
+  position: absolute; left: 6px; top: 6px; z-index: 9; display: flex; gap: 3px;
+}
+#rotgroup button {
+  width: 34px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center;
+  background: rgba(20,16,12,0.55); border: 1px solid rgba(216,201,168,0.45); border-radius: 6px;
+  color: #d8c9a8; -webkit-tap-highlight-color: transparent;
+}
+#rotgroup svg { width: 22px; height: 22px; display: block; }
+#rotgroup button.on { background: rgba(216,201,168,0.85); border-color: #d8c9a8; color: #1a140c; }
+#rotgroup button:active { background: rgba(216,201,168,0.35); }
 #tip {
   position: absolute; bottom: 8px; left: 0; right: 0;
   text-align: center; color: rgba(255,255,255,0.4); font-size: 11px;
@@ -50,6 +62,11 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 
 <div id="view">
   <canvas id="screen"></canvas>
+  <div id="rotgroup">
+    <button type="button" data-rot="portrait" title="竖着拿" aria-label="竖屏"><svg viewBox="0 0 30 30"><rect x="9" y="3" width="12" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10.5" y="21" width="9" height="4" rx="0.6" fill="currentColor"/></svg></button>
+    <button type="button" data-rot="right" title="横着拿，键盘在右手" aria-label="横屏键盘在右"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="21.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+    <button type="button" data-rot="left" title="横着拿，键盘在左手" aria-label="横屏键盘在左"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+  </div>
   <div id="tip">按键：OK/Enter 调查/确认 · 返回/3 菜单/取消</div>
   <button id="exitbtn" type="button" aria-label="退出">退出</button>
   <div id="loading"><div class="spinner"></div><div>正在启动仙剑奇侠传…</div></div>
@@ -130,13 +147,50 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
   window.addEventListener('touchstart', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
   window.addEventListener('mousedown', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
 
-  /* 画面自适应缩放（物理屏 320x480，游戏 320x200） */
+  /* 显示方向：竖屏 / 横屏键盘在右 / 横屏键盘在左（只旋转画面，仙剑没有触屏输入） */
+  var rotateMode = 'portrait';
+  try {
+    var savedRot = localStorage.getItem('e5palRotate');
+    if (savedRot === 'portrait' || savedRot === 'left' || savedRot === 'right') rotateMode = savedRot;
+  } catch(e) {}
+  function rotUI() {
+    var bs = document.querySelectorAll('#rotgroup button');
+    for (var i = 0; i < bs.length; i++) {
+      var on = bs[i].getAttribute('data-rot') === rotateMode;
+      if (on) bs[i].classList.add('on'); else bs[i].classList.remove('on');
+    }
+  }
+  function setRotate(m) {
+    rotateMode = (m === 'left' || m === 'right') ? m : 'portrait';
+    try { localStorage.setItem('e5palRotate', rotateMode); } catch(e) {}
+    fit();
+  }
+  (function () {
+    var bs = document.querySelectorAll('#rotgroup button');
+    for (var i = 0; i < bs.length; i++) {
+      (function (b) {
+        b.addEventListener('click', function () { setRotate(b.getAttribute('data-rot')); });
+      })(bs[i]);
+    }
+  })();
+
+  /* 画面自适应缩放（物理屏 320x480，游戏 320x200）；横屏按旋转后的外框算 */
   function fit() {
     var ww = window.innerWidth || 320, wh = window.innerHeight || 480;
     var gw = 320, gh = 200;
-    var scale = Math.min(ww / gw, wh / gh);
-    cvs.style.width = Math.round(gw * scale) + 'px';
-    cvs.style.height = Math.round(gh * scale) + 'px';
+    var scale;
+    if (rotateMode === 'left' || rotateMode === 'right') {
+      scale = Math.min(ww / gh, wh / gw);
+      cvs.style.width = Math.round(gw * scale) + 'px';
+      cvs.style.height = Math.round(gh * scale) + 'px';
+      cvs.style.transform = 'rotate(' + (rotateMode === 'right' ? '90deg' : '-90deg') + ')';
+    } else {
+      scale = Math.min(ww / gw, wh / gh);
+      cvs.style.width = Math.round(gw * scale) + 'px';
+      cvs.style.height = Math.round(gh * scale) + 'px';
+      cvs.style.transform = '';
+    }
+    rotUI();
   }
   window.addEventListener('resize', fit);
   fit();

@@ -332,7 +332,7 @@ try{
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版
    （遥测里也带 s.ver，用来确认设备加载的不是缓存里的旧页面） */
-var APP_VER='1.32.2';
+var APP_VER='1.33.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1047,6 +1047,9 @@ var ACTIONS=[
   {id:'upleft',name:'左上',btns:[4,6]},{id:'upright',name:'右上',btns:[4,7]},
   {id:'downleft',name:'左下',btns:[5,6]},{id:'downright',name:'右下',btns:[5,7]},
   {id:'a',name:'A',btn:8},{id:'b',name:'B',btn:0},
+  /* X/Y 是 RetroPad 的 9/1 号位：GBA/MD/街机 的扩展键靠它们，
+     虚拟键或实体键都能绑（默认留空，不占物理键位）。 */
+  {id:'x',name:'X',btn:9},{id:'y',name:'Y',btn:1},
   {id:'start',name:'START',btn:3},{id:'select',name:'SELECT',btn:2},
   {id:'l',name:'L',btn:10},{id:'r',name:'R',btn:11}
 ];
@@ -1062,7 +1065,7 @@ function btnsOf(id){
    （L/R 原来占了 2 和 3，和 B 撞车，按 3 会同时触发两个动作） */
 var DEFAULT_KEYS={up:['ArrowUp','1'],down:['ArrowDown','7'],left:['ArrowLeft','4'],right:['ArrowRight','5'],
                   upleft:[],upright:['2'],downleft:[],downright:['8'],
-                  a:['6'],b:['3'],start:['#'],select:['*'],l:[],r:[]};
+                  a:['6'],b:['3'],x:[],y:[],start:['#'],select:['*'],l:[],r:[]};
 /* 数字键方案：在十字键之外，补一套数字键（5=A、6=B、7/9=两个斜角）。
    0/1/2/3 固定是 START/SELECT/L/R（验收标准），这套方案不占用它们，
    所以按键含义跟默认方案不冲突。 */
@@ -2152,11 +2155,22 @@ function ensureVpad(sys){
   stopTurbo();
   while(vpadEl.childNodes.length>1) vpadEl.removeChild(vpadEl.lastChild);
   if(rotateMode==='left'){
-    /* 键左：方向靠左手实体键盘，屏幕上是**用户视角右下角**的 A/B。
+    /* 键左：方向靠左手实体键盘，屏幕上是**用户视角右下角**的动作键。
+       不同机种键数不一样：FC 两键；GBA 加 L/R；MD 是 A/B/C；街机加 X/Y。
        注意：横屏后 CSS 的 x 轴变成用户的上下、y 轴变成用户的左右，
        所以"用户右下"= CSS 右边缘 + 上边缘（不是 bottom）。 */
-    addVB('A','', {right:'26px',top:'34px'},[8]);
+    var isMD=(sys==='MD'), isARC=(sys==='ARC'), isGBA=(sys==='GBA');
+    addVB('A','', {right:'26px',top:'34px'},[isMD?1:8]);
     addVB('B','', {right:'26px',top:'104px'},[0]);
+    if(isMD){
+      addVB('C','sm',{right:'26px',top:'166px'},[8]);
+    }else if(isGBA){
+      addVB('L','sm',{right:'26px',top:'166px'},[10]);
+      addVB('R','sm',{right:'26px',top:'204px'},[11]);
+    }else if(isARC){
+      addVB('X','sm',{right:'26px',top:'166px'},[9]);
+      addVB('Y','sm',{right:'26px',top:'204px'},[1]);
+    }
   }else if(rotateMode==='right'){
     /* 键右：动作键是右手实体键盘，虚拟摇杆要落在**用户视角左下角**
        （= CSS 左边缘 + 上边缘）。 */

@@ -64,10 +64,16 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
   background: #000; touch-action: none;
 }
 #osd {
-  position: absolute; top: 6px; right: 8px; display: flex; gap: 8px; z-index: 30;
+  position: absolute; top: 6px; right: 8px; display: flex; gap: 6px; z-index: 30; align-items: center;
 }
+#rotgroup { display: flex; gap: 3px; }
+#rotgroup button {
+  width: 34px; height: 30px; padding: 0; display: flex; align-items: center; justify-content: center;
+}
+#rotgroup svg { width: 22px; height: 22px; display: block; }
+#rotgroup button.on { background: rgba(101,189,255,0.85); border-color: #65bdff; color: #04121f; }
 #osd button {
-  height: 28px; padding: 0 10px; background: rgba(20,30,45,0.85);
+  height: 30px; padding: 0 10px; background: rgba(20,30,45,0.85);
   border: 1px solid rgba(255,255,255,0.3); border-radius: 4px;
   color: #fff; font-size: 12px; cursor: pointer;
 }
@@ -103,13 +109,17 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
 
 <div id="gameview">
   <div id="osd">
-    <button id="btn-rotate" type="button">键右→</button>
+    <div id="rotgroup">
+      <button type="button" data-rot="portrait" title="竖着拿" aria-label="竖屏"><svg viewBox="0 0 30 30"><rect x="9" y="3" width="12" height="24" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="10.5" y="21" width="9" height="4" rx="0.6" fill="currentColor"/></svg></button>
+      <button type="button" data-rot="right" title="横着拿，键盘在右手" aria-label="横屏键盘在右"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="21.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+      <button type="button" data-rot="left" title="横着拿，键盘在左手" aria-label="横屏键盘在左"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
+    </div>
     <button id="btn-quit" type="button">退出游戏</button>
   </div>
   <div id="canvas-wrap">
     <canvas id="screen"></canvas>
   </div>
-  <div id="gametip">触屏可直接点 · OK确认/返回取消 · 横屏按钮可切换键左/键右 · 退出游戏用右上角按钮</div>
+  <div id="gametip">触屏可直接点 · OK确认/返回取消 · 右上角切换竖屏/键盘左/键盘右 · 退出游戏用右上角按钮</div>
   <div id="loading" style="display:none;"><div class="spinner"></div><div id="load-text">正在启动…</div></div>
 </div>
 
@@ -129,7 +139,6 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
   var loading = document.getElementById('loading');
   var loadText = document.getElementById('load-text');
   var btnQuit = document.getElementById('btn-quit');
-  var btnRotate = document.getElementById('btn-rotate');
   var gametip = document.getElementById('gametip');
 
   var ws = null;
@@ -271,9 +280,15 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
       cvs.style.height = Math.round(gh * scale) + 'px';
       cvs.style.transform = 'translate(-50%, -50%)';
     }
-    if (btnRotate) {
-      btnRotate.textContent = rotateMode === 'portrait' ? '横屏' :
-        (rotateMode === 'right' ? '键右→' : '键左←');
+    rotUI();
+  }
+
+  /* 三个手机简笔画：竖持 / 横持键盘在右 / 横持键盘在左，当前项高亮 */
+  function rotUI() {
+    var bs = document.querySelectorAll('#rotgroup button');
+    for (var i = 0; i < bs.length; i++) {
+      var on = bs[i].getAttribute('data-rot') === rotateMode;
+      if (on) bs[i].classList.add('on'); else bs[i].classList.remove('on');
     }
   }
 
@@ -287,6 +302,15 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
     setRotate(rotateMode === 'portrait' ? 'right' :
               (rotateMode === 'right' ? 'left' : 'portrait'));
   }
+
+  (function bindRotGroup() {
+    var bs = document.querySelectorAll('#rotgroup button');
+    for (var i = 0; i < bs.length; i++) {
+      (function (b) {
+        b.addEventListener('click', function () { setRotate(b.getAttribute('data-rot')); });
+      })(bs[i]);
+    }
+  })();
 
   window.addEventListener('resize', fit);
 
@@ -389,8 +413,7 @@ html, body { width: 100%; height: 100%; background: #080c14; overflow: hidden; f
       ctx.clearRect(0, 0, cvs.width, cvs.height);
     });
   }
-  btnQuit.addEventListener('click', quitGame);
-  if (btnRotate) btnRotate.addEventListener('click', cycleRotate);
+  if (btnQuit) btnQuit.addEventListener('click', quitGame);
 
   /* WebSocket 建立与帧渲染 */
   function connectWS() {
