@@ -30,6 +30,35 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 #rotgroup svg { width: 22px; height: 22px; display: block; }
 #rotgroup button.on { background: rgba(216,201,168,0.85); border-color: #d8c9a8; color: #1a140c; }
 #rotgroup button:active { background: rgba(216,201,168,0.35); }
+/* 设置面板：按键重绑 + 说明 */
+#btnset {
+  position: absolute; right: 64px; top: 6px; z-index: 9;
+  height: 30px; padding: 0 8px; border-radius: 15px;
+  font: inherit; font-size: 12px; color: #d8c9a8;
+  background: rgba(20,16,12,0.55); border: 1px solid rgba(216,201,168,0.45);
+  -webkit-tap-highlight-color: transparent;
+}
+#btnset:active { background: rgba(216,201,168,0.35); color: #fff; }
+#cfg {
+  position: absolute; inset: 0; z-index: 20; display: none; flex-direction: column;
+  background: rgba(8,7,5,0.96); color: #e8dcc4;
+}
+#cfg.open { display: flex; }
+#cfghead { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+  background: #14100c; border-bottom: 1px solid #3a3020; font-size: 13px; }
+#cfghead .sp { flex: 1 1 auto; }
+#cfghead button { height: 30px; padding: 0 12px; border-radius: 6px; font: inherit; font-size: 13px;
+  color: #e8dcc4; background: #241c14; border: 1px solid #4a3c28; }
+#cfglist { flex: 1 1 auto; overflow-y: auto; padding: 6px; }
+#cfglist .row { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 8px;
+  margin-bottom: 4px; background: #191410; border: 1px solid #332a1c; border-radius: 6px; font-size: 13px; }
+#cfglist .row .nm { flex: 0 0 84px; color: #cbb995; }
+#cfglist .row .kv { flex: 1 1 auto; color: #8ff0b0; font-size: 12px; overflow: hidden;
+  white-space: nowrap; text-overflow: ellipsis; }
+#cfglist .row.listen { border-color: #ffd479; background: #2a2410; }
+#cfglist .row.listen .kv { color: #ffd479; }
+#cfgfoot { flex: 0 0 auto; padding: 8px; font-size: 11px; color: #9a8b70; background: #100d09;
+  border-top: 1px solid #332a1c; }
 #tip {
   position: absolute; bottom: 8px; left: 0; right: 0;
   text-align: center; color: rgba(255,255,255,0.4); font-size: 11px;
@@ -68,8 +97,15 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
     <button type="button" data-rot="left" title="横着拿，键盘在左手" aria-label="横屏键盘在左"><svg viewBox="0 0 30 30"><rect x="3" y="9" width="24" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><rect x="4.5" y="10.5" width="4" height="9" rx="0.6" fill="currentColor"/></svg></button>
   </div>
   <div id="tip">按键：OK/Enter 调查/确认 · 返回/3 菜单/取消</div>
+  <button id="btnset" type="button" aria-label="设置">设置</button>
   <button id="exitbtn" type="button" aria-label="退出">退出</button>
   <div id="loading"><div class="spinner"></div><div>正在启动仙剑奇侠传…</div></div>
+</div>
+
+<div id="cfg">
+  <div id="cfghead"><b>设置 · 按键</b><span class="sp"></span><button id="cfgclose" type="button">保存并关闭</button></div>
+  <div id="cfglist"></div>
+  <div id="cfgfoot">点一行，再按一个实体键即可改绑；方向/确认/取消/菜单/自动战斗都能改。返回键固定在方框外使用。</div>
 </div>
 
 <script>
@@ -270,21 +306,97 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
     ws.send(b);
   }
 
-  function keyBit(code, key) {
-    if (code === 'ArrowUp' || key === '1') return 4;
-    if (code === 'ArrowDown' || key === '7') return 5;
-    if (code === 'ArrowLeft' || key === '4') return 6;
-    if (code === 'ArrowRight' || key === '5') return 7;
-    if (code === 'Enter' || key === '6' || code === 'Space') return 3; /* START/Enter */
-    if (code === 'Backspace' || code === 'Escape' || key === '3') return 0; /* B/Esc */
-    if (key === '9' || code === 'Tab') return 2; /* SELECT/Tab */
-    if (key === '0') return 13; /* 自动战斗 */
+  /* 按键表：动作 -> 位图位。可在「设置」里改绑，存 localStorage。 */
+  var ACTS = [
+    { id: 'up', name: '上', bit: 4 },
+    { id: 'down', name: '下', bit: 5 },
+    { id: 'left', name: '左', bit: 6 },
+    { id: 'right', name: '右', bit: 7 },
+    { id: 'ok', name: '确认/调查', bit: 3 },
+    { id: 'cancel', name: '菜单/取消', bit: 0 },
+    { id: 'select', name: '状态(Tab)', bit: 2 },
+    { id: 'auto', name: '自动战斗', bit: 13 }
+  ];
+  var DEF_KEYS = {
+    up: ['ArrowUp', '1'], down: ['ArrowDown', '7'], left: ['ArrowLeft', '4'], right: ['ArrowRight', '5'],
+    ok: ['Enter', '6', 'Space'], cancel: ['Backspace', '3', 'Escape'], select: ['9', 'Tab'], auto: ['0']
+  };
+  var keys = {};
+  try {
+    var savedKeys = JSON.parse(localStorage.getItem('e5palKeys') || 'null');
+    ACTS.forEach(function (a) {
+      var v = savedKeys && savedKeys[a.id];
+      keys[a.id] = (v && v.length) ? v.slice() : DEF_KEYS[a.id].slice();
+    });
+  } catch(e) {
+    ACTS.forEach(function (a) { keys[a.id] = DEF_KEYS[a.id].slice(); });
+  }
+  function saveKeys() { try { localStorage.setItem('e5palKeys', JSON.stringify(keys)); } catch(e) {} }
+  function keyTok(e) {
+    if (e.key && e.key !== 'Unidentified') return e.key;
+    return 'code:' + (e.keyCode || 0);
+  }
+  function bitFor(code, key) {
+    var tok = key || ('code:0');
+    for (var i = 0; i < ACTS.length; i++) {
+      var ks = keys[ACTS[i].id] || [];
+      for (var j = 0; j < ks.length; j++) {
+        if (ks[j] === tok) return ACTS[i].bit;
+      }
+    }
     return -1;
   }
+
+  /* 设置面板：点一行再按实体键改绑 */
+  var cfgOpen = false, listenId = '';
+  var cfgEl = document.getElementById('cfg');
+  var cfgList = document.getElementById('cfglist');
+  function labelOf(t) {
+    var m = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Enter: '确认', Space: '空格', Escape: 'Esc', Tab: 'Tab' };
+    if (m[t]) return m[t];
+    if (t.indexOf('code:') === 0) return '码' + t.slice(5);
+    return t;
+  }
+  function renderCfg() {
+    if (!cfgList) return;
+    cfgList.innerHTML = '';
+    ACTS.forEach(function (a) {
+      var row = document.createElement('div');
+      row.className = 'row' + (listenId === a.id ? ' listen' : '');
+      row.innerHTML = '<span class="nm"></span><span class="kv"></span>';
+      row.querySelector('.nm').textContent = a.name;
+      row.querySelector('.kv').textContent = listenId === a.id ? '按一个键…' : (keys[a.id] || []).map(labelOf).join(' / ') || '未设置';
+      row.addEventListener('click', function () {
+        listenId = a.id;
+        renderCfg();
+      });
+      cfgList.appendChild(row);
+    });
+  }
+  function openCfg() { cfgOpen = true; listenId = ''; cfgEl.classList.add('open'); renderCfg(); }
+  function closeCfg() { cfgOpen = false; listenId = ''; cfgEl.classList.remove('open'); saveKeys(); }
+  var setBtn = document.getElementById('btnset');
+  if (setBtn) {
+    setBtn.addEventListener('click', function (e) { e.preventDefault(); if (cfgOpen) closeCfg(); else openCfg(); });
+    setBtn.addEventListener('touchend', function (e) { e.preventDefault(); if (cfgOpen) closeCfg(); else openCfg(); }, { passive: false });
+  }
+  var cfgCloseBtn = document.getElementById('cfgclose');
+  if (cfgCloseBtn) cfgCloseBtn.addEventListener('click', function (e) { e.preventDefault(); closeCfg(); });
 
   function onKeyDown(e) {
     if (e.repeat) return;
     lastInputAt = Date.now();
+    /* 设置面板打开时：按键用来改绑，不发给游戏 */
+    if (cfgOpen) {
+      if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Sleep' || e.keyCode === 116) return;
+      if (listenId) {
+        keys[listenId] = [keyTok(e)];
+        listenId = '';
+        saveKeys(); renderCfg();
+      }
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
       var nowP = Date.now();
       if (nowP - lastPowerPressAt < 1200) {
@@ -301,7 +413,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
       if (Date.now() < backGuardUntil) { e.preventDefault(); return; }
       backDownAt = Date.now();
     }
-    var b = keyBit(e.code, e.key);
+    var b = bitFor(e.code, keyTok(e));
     if (b >= 0) {
       btnMask |= (1 << b);
       sendButtons(btnMask);
@@ -316,7 +428,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
          而仙剑的取消/关菜单都要按住它，手一停就被踢出游戏。
          退出一律用右上角「退出」按钮。 */
     }
-    var b = keyBit(e.code, e.key);
+    var b = bitFor(e.code, keyTok(e));
     if (b >= 0) {
       btnMask &= ~(1 << b);
       sendButtons(btnMask);
