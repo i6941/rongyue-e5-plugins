@@ -332,7 +332,7 @@ try{
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版
    （遥测里也带 s.ver，用来确认设备加载的不是缓存里的旧页面） */
-var APP_VER='1.32.1';
+var APP_VER='1.32.2';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1412,10 +1412,9 @@ function leave(why){
   $('stage').style.display='none';
   $('stage').classList.remove('on');
   document.body.classList.remove('ingame');
-  /* 退出游戏必须把宿主菜单还回去：hostChrome(false) 才是去掉隐藏类。
-     这里原来写的是 hostChrome(true)，等于继续藏菜单，只能靠注入脚本的看门狗救，
-     而那台 WebKit 不执行注入脚本 —— 所以退出后主页只剩中间内容。 */
-  hostChrome(false);
+  /* 回到游戏列表时保持全屏：宿主工具栏/返回箭头一出现，很容易被当成"退出插件"点掉。
+     退出插件由列表页底部的「退出」按钮或列表里的返回键负责（pagehide 时宿主一定恢复）。 */
+  hostChrome(true);
   releaseAll();
   try{ stopTurbo(); vpadUpdate(); }catch(e){}   /* 退出把虚拟键/连发都清掉，别带进菜单 */
   $('menu').style.display='grid';
@@ -1445,7 +1444,9 @@ bindTap($('fexit'),function(){
   var hidden=false;
   function keep(){
     try{
-      var want=!!running;
+      /* 插件整个生命周期都占满屏幕（含列表页）：退出插件只走列表页的「退出」，
+         避免宿主工具栏出现后被误点成"退到桌面"。插件页销毁时 pagehide/watchdog 会恢复。 */
+      var want=true;
       if(want!==hidden){ hidden=want; hostChrome(want); }
     }catch(e){}
   }
