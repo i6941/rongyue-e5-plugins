@@ -33,12 +33,15 @@ def check(plugin_dir: Path):
     if not html.rstrip().endswith("</html>"):
         problems.append("页面没有以 </html> 结束（可能被截断）")
     if name in LONG_RUNNING:
-        if "hostNoSleep" not in html:
-            problems.append("缺少 hostNoSleep（宿主熄屏/锁屏保护）")
-        if "lastPowerPressAt" not in html:
-            problems.append("电源键没有双击确认（缺 lastPowerPressAt）")
-        if "keepAwake" not in html:
-            problems.append("缺少 e5.keepAwake")
+        if "E5NoSleep" not in html:
+            problems.append("没有接入共享的熄屏保护（E5NoSleep）")
+        else:
+            if "E5NoSleep.start(" not in html:
+                problems.append("接入了 E5NoSleep 但没有 start()")
+            if "E5NoSleep.powerKey(" not in html:
+                problems.append("电源键没有走共享组件（缺 E5NoSleep.powerKey）")
+        if "keepAwake" not in html and "E5NoSleep" not in html:
+            problems.append("缺少 keep-awake 或 E5NoSleep")
         if not re.search(r"pagehide|beforeunload", html):
             problems.append("缺少 pagehide/beforeunload 清理")
         if "mobile-toolbar" in html and "#bar" not in html:

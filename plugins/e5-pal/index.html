@@ -86,6 +86,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 <script src="/sdk/e5.js"></script>
+<script src="/shared/e5-no-sleep.js"></script>
 </head>
 <body>
 
@@ -120,68 +121,17 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
   var backDownAt = 0;
   var backGuardUntil = 0;
 
-  /* 熄屏策略（与模拟器共享 e5IdleHold）：电源键永远有效；最近 N 分钟有输入保持常亮；
-     N 分钟无输入交还宿主锁屏；锁屏不关游戏（closeApp 在锁屏栈下被拦，解锁回原局）。 */
+  /* 熄屏策略统一交给 /shared/e5-no-sleep.js（四插件共用）。这里只读窗口时长。 */
   function idleHoldMs() {
     var m = 10;
     try { var v = localStorage.getItem('e5IdleHold'); if (v !== null) m = parseFloat(v); } catch(e) {}
     if (!isFinite(m) || m < 0) m = 10;
     return m <= 0 ? 0 : m * 60000;
   }
-  var noSleepWanted = false, lastInputAt = Date.now(), powerAllowUntil = 0, lastPowerPressAt = 0;
-  function hostNoSleep(on) {
-    noSleepWanted = !!on;
-    try {
-      var w = window.parent;
-      if (!w || w === window) return;
-      var g = w.__e5NoSleep;
-      if (!g) {
-        g = w.__e5NoSleep = { until: 0, allowUntil: 0, activeUntil: 0 };
-        var blocked = function() {
-          var n = Date.now();
-          if (n < (g.allowUntil || 0)) return false;
-          return n < (g.until || 0);
-        };
-        var ob = w.setBlank;
-        if (typeof ob === 'function') w.setBlank = function(on2) {
-          try { if (on2 && blocked()) return; } catch(e) {}
-          return ob.apply(this, arguments);
-        };
-        var op = w.T551M && w.T551M.power;
-        if (op) w.T551M.power = function(on2) {
-          try { if (on2 && blocked()) return; } catch(e) {}
-          return op.apply(this, arguments);
-        };
-        var oc = w.closeApp;
-        if (typeof oc === 'function') w.closeApp = function() {
-          var st = '';
-          try { st = String((new Error()).stack || ''); } catch(e) {}
-          try { if (Date.now() < (g.activeUntil || 0) && /at lock\b/.test(st)) return; } catch(e) {}
-          return oc.apply(this, arguments);
-        };
-      }
-      var now = Date.now(), hold = idleHoldMs();
-      g.allowUntil = powerAllowUntil;
-      g.until = (on && (hold <= 0 || now - lastInputAt < hold)) ? now + 2500 : 0;
-      g.activeUntil = on ? now + 8000 : 0;
-    } catch(e) {}
+  function noSleepStart() {
+    try { if (typeof E5NoSleep !== 'undefined') E5NoSleep.start({ minutes: Math.round(idleHoldMs() / 60000) }); } catch(e) {}
   }
-  setInterval(function() {
-    var alive = true;
-    try {
-      var w = window.parent;
-      var f = (w && w !== window) ? w.document.getElementById('app-frame') : null;
-      if (w && w !== window && !(f && !f.hidden)) alive = false;
-    } catch(e) {}
-    if (!alive) { hostNoSleep(false); return; }
-    hostNoSleep(true);
-    try {
-      var hold = idleHoldMs();
-      if ((hold <= 0 || Date.now() - lastInputAt < hold) && typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true);
-    } catch(e) {}
-  }, 2000);
-  window.addEventListener('touchstart', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
-  window.addEventListener('mousedown', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
+  noSleepStart();
 
   /* 显示方向：竖屏 / 横屏键盘在右 / 横屏键盘在左（只旋转画面，仙剑没有触屏输入） */
   var rotateMode = 'portrait';
@@ -266,7 +216,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 
   function onExitCleanup() {
     removeHideBar();
-    try { hostNoSleep(false); } catch(e) {}
+    try { if (typeof E5NoSleep !== 'undefined') E5NoSleep.stop(); } catch(e) {}
     stopBackend();
   }
   applyHideBar();
@@ -385,10 +335,9 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
 
   function onKeyDown(e) {
     if (e.repeat) return;
-    lastInputAt = Date.now();
-    /* 设置面板打开时：按键用来改绑，不发给游戏 */
+    /* 设置面板打开时：按键用来改绑，不发给游戏（电源键仍交给共享组件处理） */
     if (cfgOpen) {
-      if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Sleep' || e.keyCode === 116) return;
+      if (typeof E5NoSleep !== 'undefined' && E5NoSleep.powerKey(e)) return;
       if (listenId) {
         keys[listenId] = [keyTok(e)];
         listenId = '';
@@ -397,18 +346,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
       e.preventDefault();
       return;
     }
-    if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
-      var nowP = Date.now();
-      if (nowP - lastPowerPressAt < 1200) {
-        powerAllowUntil = nowP + 2500;
-        try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
-        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('正在锁屏'); } catch(x) {}
-        lastPowerPressAt = 0;
-      } else {
-        lastPowerPressAt = nowP;
-        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('再按一次电源键锁屏'); } catch(x) {}
-      }
-    }
+    if (typeof E5NoSleep !== 'undefined' && E5NoSleep.powerKey(e)) { /* 电源键防误触：共享组件处理 */ }
     if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
       if (Date.now() < backGuardUntil) { e.preventDefault(); return; }
       backDownAt = Date.now();

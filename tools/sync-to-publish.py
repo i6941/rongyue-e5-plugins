@@ -30,7 +30,7 @@ SOURCE = r"D:\workspace\Rongyue-E5"
 PUBLISH = r"D:\workspace\rongyue-e5-plugins"
 
 # Directories copied wholesale from the working directory.
-SYNC_DIRS = ("plugins", "tools", "tests", "overlays")
+SYNC_DIRS = ("plugins", "shared", "tools", "tests", "overlays")
 
 # Files at the root of the working directory that belong in the published
 # repository too (the one-line installer users pipe into the device).

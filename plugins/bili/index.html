@@ -368,6 +368,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   <div class="hint">2-9 拼音 · 1 标点 · 0 空格 · ←→ 选字 · ↑↓ 翻页 · OK 上屏/搜索 · 返回 收起</div>
 </div>
 <script src="/sdk/e5.js"></script>
+<script src="/shared/e5-no-sleep.js"></script>
 <script src="qrcode.js"></script>
 <script src="ime-dict.js"></script>
 <script src="ime.js"></script>
@@ -1665,81 +1666,21 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   if (!(wmKb > 0) || wmKb < 256 || wmKb > 65536) wmKb = 512;
   function wmLabel(){ return wmKb >= 1024 ? (wmKb / 1024) + 'MB' : wmKb + 'KB'; }
   var bgPlaying = false, lastPort = 9511;
-  /* 播放期间不让宿主熄屏/锁屏：宿主锁屏会 closeApp()，而 keep-awake
-     在应用被关过之后就不再被接受。这里直接拦住宿主的熄屏调用，
-     2.5 秒有效期、每 2 秒续期；页面销毁后自动失效。 */
-  var hostNoSleepWanted = false, powerAllowUntil = 0, lastPowerPressAt = 0;
-  var lastInputAt = Date.now(), playingNow = false;
-  /* 与模拟器同一个规则：最近 N 分钟（e5IdleHold，默认 10）有输入就保持常亮；
-     播放中始终常亮；超过 N 分钟无输入交还宿主锁屏。电源键需双击确认。 */
+  /* 熄屏策略统一交给 /shared/e5-no-sleep.js（四插件共用）：
+     插件打开就申请窗口，播放中不受窗口限制；暂停/停止后恢复普通规则。 */
   function idleHoldMs(){
     var m = 10;
     try { var v = localStorage.getItem('e5IdleHold'); if (v !== null) m = parseFloat(v); } catch(e) {}
     if (!isFinite(m) || m < 0) m = 10;
     return m <= 0 ? 0 : m * 60000;
   }
-  window.addEventListener('touchstart', function(){ lastInputAt = Date.now(); }, { passive: true, capture: true });
-  window.addEventListener('mousedown', function(){ lastInputAt = Date.now(); }, { passive: true, capture: true });
-  window.addEventListener('keydown', function(e){
-    lastInputAt = Date.now();
-    if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
-      var nowP = Date.now();
-      if (nowP - lastPowerPressAt < 1200) {
-        powerAllowUntil = nowP + 2500;
-        try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
-        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('正在锁屏'); } catch(x) {}
-        lastPowerPressAt = 0;
-      } else {
-        lastPowerPressAt = nowP;
-        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('再按一次电源键锁屏'); } catch(x) {}
-      }
-    }
-  }, true);
-  function hostNoSleep(on){
-    hostNoSleepWanted = !!on;
-    try{
-      var w = window.parent;
-      if(!w || w === window) return;
-      var g = w.__e5NoSleep;
-      if(!g){
-        g = w.__e5NoSleep = { until: 0, allowUntil: 0, activeUntil: 0 };
-        var blocked = function(){
-          var n = Date.now();
-          if(n < (g.allowUntil || 0)) return false;
-          return n < (g.until || 0);
-        };
-        var ob = w.setBlank;
-        if(typeof ob === 'function') w.setBlank = function(on){
-          try{ if(on && blocked()) return; }catch(e){}
-          return ob.apply(this, arguments);
-        };
-        var op = w.T551M && w.T551M.power;
-        if(op) w.T551M.power = function(on2){
-          try{ if(on2 && blocked()) return; }catch(e){}
-          return op.apply(this, arguments);
-        };
-        var oc = w.closeApp;
-        if(typeof oc === 'function') w.closeApp = function(){
-          var st = '';
-          try{ st = String((new Error()).stack || ''); }catch(e){}
-          try{ if(Date.now() < (w.__e5NoSleep.until || 0) && /at lock\b/.test(st)) return; }catch(e){}
-          return oc.apply(this, arguments);
-        };
-      }
-      g.allowUntil = powerAllowUntil;
-      var hold = idleHoldMs();
-      g.until = (on && (playingNow || hold <= 0 || Date.now() - lastInputAt < hold)) ? Date.now() + 2500 : 0;
-      g.activeUntil = on ? Date.now() + 8000 : 0;
-    }catch(e){}
+  function noSleepStart(){
+    try { if (typeof E5NoSleep !== 'undefined') E5NoSleep.start({ minutes: Math.round(idleHoldMs() / 60000) }); } catch(e) {}
   }
-  setInterval(function(){
-    if(hostNoSleepWanted) hostNoSleep(true);
-    try{
-      var hold = idleHoldMs();
-      if((playingNow || hold <= 0 || Date.now() - lastInputAt < hold) && typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true);
-    }catch(e){}
-  }, 2000);
-  hostNoSleep(true);   /* 插件一打开就保护（视频列表浏览也算） */
+  window.addEventListener('keydown', function(e){
+    try { if (typeof E5NoSleep !== 'undefined') E5NoSleep.powerKey(e); } catch(x) {}
+  }, true);
+  noSleepStart();
 
   function syncBg(){
     var b = document.getElementById('setbg');
@@ -1755,7 +1696,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     var my = ++playToken;
     /* 取流和下载也要禁止息屏：下载几十兆要好几分钟，空闲计时器 60 秒就会锁屏 */
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
-    try{ playingNow=true; hostNoSleep(true); }catch(e){}
+    try{ if(typeof E5NoSleep!=='undefined') E5NoSleep.setPlaying(true); }catch(e){}
     /* 先把上一个播放器收掉：不停就开下一个，端口和缓存文件都被占着，
        第二个视频会一直卡在加载。 */
     closeWs();
@@ -1830,7 +1771,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
         }
         /* 播放期间别让宿主息屏锁屏，否则会被踢回桌面（声音还在） */
         try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
-    try{ playingNow=true; hostNoSleep(true); }catch(e){}
+    try{ if(typeof E5NoSleep!=='undefined') E5NoSleep.setPlaying(true); }catch(e){}
         /* 续播先问后端目标位置的数据到底在不在。
            不在（waiting）就**不要** seek：seek 到未下载区域会让播放器一直
            等数据——音频由 ffmpeg 从该位置直接解码，所以有声音；视频一帧
@@ -2002,7 +1943,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     listEl.style.display = '';
     statusEl.textContent = '排行榜 · ' + items.length + ' 个';
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(false); }catch(e){}
-    try{ playingNow=false; hostNoSleep(true); }catch(e){}
+    try{ if(typeof E5NoSleep!=='undefined') E5NoSleep.setPlaying(false); }catch(e){}
   }
 
   function leavePlayer(){
@@ -2017,7 +1958,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
       listEl.style.display = '';
       statusEl.textContent = '后台播放中 · 点这里回到画面';
       try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(false); }catch(e){}
-    try{ playingNow=false; hostNoSleep(true); }catch(e){}
+    try{ if(typeof E5NoSleep!=='undefined') E5NoSleep.setPlaying(false); }catch(e){}
       return;
     }
     stopPlayback();
@@ -2034,7 +1975,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
     statusEl.textContent = '播放中';
     connectPlayer(lastPort || 9511, 0);
     try{ if (typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true); }catch(e){}
-    try{ playingNow=true; hostNoSleep(true); }catch(e){}
+    try{ if(typeof E5NoSleep!=='undefined') E5NoSleep.setPlaying(true); }catch(e){}
   });
   /* 应用内置输入法：点搜索框（或列表页按 0）直接在这里打字，不再走宿主那套 */
   var qEl = document.getElementById('q');
