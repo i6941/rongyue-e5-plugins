@@ -148,6 +148,11 @@ body.rot-l #ejs_game{transform:rotate(-90deg)}
   width:58px;height:58px;border-radius:50%;background:rgba(19,29,44,.55);border:1px solid rgba(89,121,170,.65);
   color:#dce8f8;font-size:20px;font-weight:700;touch-action:none;-webkit-tap-highlight-color:transparent}
 #vpad .vb.hit{background:rgba(96,146,224,.8);color:#fff;border-color:#8fb4e8}
+/* 横屏时整个画面转了 ±90°，虚拟键本身留在屏幕坐标里，但字母会跟着侧过来。
+   这里把文字反向转回去，A/B 在你眼里才是正的。 */
+#vpad .vb span{display:inline-block}
+body.rot-l #vpad .vb span{transform:rotate(-90deg)}
+body.rot-r #vpad .vb span{transform:rotate(90deg)}
 #vpad .vb.sm{width:70px;height:32px;border-radius:6px;font-size:10px}
 /* 键右模式：左手用的虚拟摇杆（圆盘 + 可拖动帽，8 向输出，斜向=两键同按）。
    位置落在用户视角左下角：CSS 左边缘 + 上边缘（横屏后 CSS 的 y 轴是用户的左右轴）。 */
@@ -327,7 +332,7 @@ try{
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版
    （遥测里也带 s.ver，用来确认设备加载的不是缓存里的旧页面） */
-var APP_VER='1.30.1';
+var APP_VER='1.31.0';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -1987,7 +1992,9 @@ function vbindGroup(btns,el){
 }
 function addVB(txt,cls,pos,btns){
   var d=document.createElement('div');
-  d.className='vb'+(cls?' '+cls:''); d.textContent=txt;
+  d.className='vb'+(cls?' '+cls:'');
+  /* 文字单独包一层：横屏时把文字反向旋转，看起来才是正的 */
+  var sp=document.createElement('span'); sp.textContent=txt; d.appendChild(sp);
   for(var k in pos) d.style[k]=pos[k];
   var g=vbindGroup(btns,d);
   d.addEventListener('touchstart',function(e){ try{ e.preventDefault(); }catch(x){} g.press(); },{passive:false});
@@ -2606,7 +2613,10 @@ function post(){
       var raw=JSON.stringify(body);
       if(raw.length>3600){
         body.logs=[]; body.err=body.err.slice(0,60);
-        body.snap.keyLog=String(body.snap.keyLog||'').slice(0,600);
+        body.snap.keyLog=String(body.snap.keyLog||'').slice(0,240);
+        body.snap.hostTrace=(body.snap.hostTrace||[]).slice(-3);
+        body.snap.hostKeys=(body.snap.hostKeys||[]).slice(-2);
+        body.snap.exitLog=(body.snap.exitLog||[]).slice(-2);
         raw=JSON.stringify(body);
       }
       window.__bodyLen=raw.length;
@@ -2645,10 +2655,11 @@ function snapshot(){
   try{ s.nat={w:nat.w,h:nat.h,frames:nat.frames,open:nat.open,err:(nat.err||'').slice(0,80),mask:nat.mask,paused:nat.paused,installed:nat.installed}; }catch(e){}
   try{ var sr=$('stage').getBoundingClientRect(); s.sbox=Math.round(sr.width)+'x'+Math.round(sr.height); }catch(e){}
   s.selftest=window.__selftest||'';
-  s.exitLog=exitLog.slice(-8);
-  s.bootAt=bootAt; s.host=hostSnap(); s.hostMsgs=hostMsgs.slice(-8);
+  s.exitLog=exitLog.slice(-3);
+  s.bootAt=bootAt; s.host=hostSnap();
+  s.hostMsgs=hostMsgs.slice(-4);
   s.closeStack=window.__closeStack||'';
-  s.hostKeys=hostKeys.slice(-8); s.hostTrace=hostTrace.slice(-40);
+  s.hostKeys=hostKeys.slice(-4); s.hostTrace=hostTrace.slice(-6);
   s.rawKeys=window.__rawKeys||0; s.lastRawKind=window.__lastRawKind||'';
   s.locktest=window.__locktest||'';
   s.ver=APP_VER;
@@ -2836,6 +2847,15 @@ try{
 applyFitMode();
 applyFx();
 applyIdleCfg();
+/* 开机先写一条体积极小的记录：即使后续大包因超过后端 4096 字节被丢弃，
+   也能从遥测里确认设备实际加载的版本号。 */
+setTimeout(function(){
+  try{
+    if(typeof e5!=='undefined'&&e5.api){
+      e5.api('/stat',{body:{tag:statTag(),hello:APP_VER,t:new Date().toISOString()}}).catch(function(){});
+    }
+  }catch(e){}
+},700);
 /* 标签必须先按本插件的机种范围生成，drawMenu 才有 tabSys 可用 */
 try{ buildTabs(); }catch(e){}
 drawMenu();
