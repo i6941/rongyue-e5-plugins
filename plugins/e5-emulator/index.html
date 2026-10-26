@@ -332,7 +332,7 @@ try{
 var BASE='/plugins/e5-emulator/';
 /* 插件版本：和 manifest.json 的 version 保持一致，界面上能看到当前跑的是哪一版
    （遥测里也带 s.ver，用来确认设备加载的不是缓存里的旧页面） */
-var APP_VER='1.31.0';
+var APP_VER='1.32.1';
 
 /* ---------------- 原生引擎（e5emu） ----------------
    浏览器里跑 wasm 核心在这台机器上过不去：解压核心要十几秒，进游戏两三秒后
@@ -574,10 +574,6 @@ function nativeTick(){
   /* 宿主 idle=60 秒就关屏。最近有输入时每秒续一次 keepAwake；
      超过 GAME_IDLE_HOLD 没有任何输入就不再续，让宿主按自己的规则锁屏（防忘记关游戏）。 */
   if(susp.on) return;
-  try{
-    var h=idleHoldMs();
-    if((h<=0||Date.now()-lastInputAt<h) && typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true);
-  }catch(e){}
   fit();
   var now=Date.now();
   if(nat.fpsAt) window.__fps=(nat.frames-nat.lastFrames)*1000/Math.max(1,now-nat.fpsAt);
@@ -1671,10 +1667,18 @@ window.addEventListener('keydown',function(e){
   try{ lastInputAt=Date.now(); }catch(x){}
   try{
     window.__rawKeys=(window.__rawKeys||0)+1; window.__lastRawKind=keyKindOf(e);
-    /* 电源键：放开 2.5 秒的熄屏窗口，让电源键永远能锁屏（立刻同步给宿主） */
+    /* 电源键防误触：第一次只提示，1.2 秒内再按一次才真正锁屏 */
     if(keyKindOf(e)==='power'){
-      powerAllowUntil=Date.now()+2500;
-      try{ var w=window.parent; if(w&&w.__e5NoSleep) w.__e5NoSleep.allowUntil=powerAllowUntil; }catch(x){}
+      var nowP=Date.now();
+      if(nowP-lastPowerPressAt<1200){
+        powerAllowUntil=nowP+2500;
+        try{ var w=window.parent; if(w&&w.__e5NoSleep) w.__e5NoSleep.allowUntil=powerAllowUntil; }catch(x){}
+        try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('正在锁屏'); }catch(x){}
+        lastPowerPressAt=0;
+      }else{
+        lastPowerPressAt=nowP;
+        try{ if(typeof e5!=='undefined'&&e5.toast) e5.toast('再按一次电源键锁屏'); }catch(x){}
+      }
     }
   }catch(x){}
   if(handleKey(keyKindOf(e),e.key,e.repeat,backIdOf(e),e.keyCode)) e.preventDefault();
@@ -2161,6 +2165,8 @@ function ensureVpad(sys){
 }
 /* 开局就按这一局游戏的记忆切方向、装虚拟键 */
 function setGameRotate(g){
+  /* 开局先给满 10 分钟保护（从这一刻算起），之后无输入才允许宿主锁屏 */
+  try{ lastInputAt=Date.now(); }catch(e){}
   stopTurbo();
   rotGKey=rotKeyFor(g);
   loadRotateFor(g);
@@ -2307,7 +2313,7 @@ function idleHoldMs(){
   if(!isFinite(m)||m<0) m=10;
   return m<=0?0:m*60000;
 }
-var hostNoSleepWanted=false, lastInputAt=Date.now(), powerAllowUntil=0;
+var hostNoSleepWanted=false, lastInputAt=Date.now(), powerAllowUntil=0, lastPowerPressAt=0;
 var GAME_IDLE_HOLD=idleHoldMs();
 function hostNoSleep(on){
   hostNoSleepWanted=!!on;
@@ -2353,7 +2359,24 @@ function hostNoSleep(on){
     g.activeUntil=on?now+8000:0;
   }catch(e){}
 }
-setInterval(function(){ if(hostNoSleepWanted) hostNoSleep(true); },2000);
+/* 保护从插件一打开就生效：宿主的空闲计时是从"在主页点开插件"开始算的，
+   如果只在游戏运行后才拦，挑游戏超过 60 秒就会在列表里被锁。 */
+hostNoSleep(true);
+setInterval(function(){
+  try{
+    var w=window.parent;
+    var f=(w&&w!==window)?w.document.getElementById('app-frame'):null;
+    if(w&&w!==window&&!(f&&!f.hidden)){ hostNoSleep(false); return; }  /* 宿主已收走：别再撑亮 */
+  }catch(e){}
+  hostNoSleep(true);
+},2000);
+/* 列表页也要续 keep-awake（按 e5IdleHold 的规则） */
+setInterval(function(){
+  try{
+    var h=idleHoldMs();
+    if((h<=0||Date.now()-lastInputAt<h) && typeof e5!=='undefined'&&e5.keepAwake) e5.keepAwake(true);
+  }catch(e){}
+},2000);
 function hostChrome(on){
   try{
     var d=window.parent.document;    /* 关键：游戏期间把宿主的**状态栏**也藏掉，让 iframe 占满整块屏。
@@ -2390,7 +2413,8 @@ function hostChrome(on){
     if(on){ try{ window.parent.__e5GamePing=Date.now(); }catch(e){} }
     d.body.classList.toggle(hostClass,!!on);
     wrapHostClose();
-    hostNoSleep(!!on);
+    /* 保护贯穿整个插件会话（含列表页）；页面销毁后靠租约自动失效 */
+    hostNoSleep(true);
     /* 注入 <script> 的心跳看门狗在这台 WebKit 上不执行，别指望它 */
     if(on) wrapHostClose();
   }catch(e){}

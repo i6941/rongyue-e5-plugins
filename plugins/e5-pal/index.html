@@ -75,7 +75,7 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
     if (!isFinite(m) || m < 0) m = 10;
     return m <= 0 ? 0 : m * 60000;
   }
-  var noSleepWanted = false, lastInputAt = Date.now(), powerAllowUntil = 0;
+  var noSleepWanted = false, lastInputAt = Date.now(), powerAllowUntil = 0, lastPowerPressAt = 0;
   function hostNoSleep(on) {
     noSleepWanted = !!on;
     try {
@@ -114,10 +114,17 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
     } catch(e) {}
   }
   setInterval(function() {
-    hostNoSleep(running);
+    var alive = true;
+    try {
+      var w = window.parent;
+      var f = (w && w !== window) ? w.document.getElementById('app-frame') : null;
+      if (w && w !== window && !(f && !f.hidden)) alive = false;
+    } catch(e) {}
+    if (!alive) { hostNoSleep(false); return; }
+    hostNoSleep(true);
     try {
       var hold = idleHoldMs();
-      if (running && (hold <= 0 || Date.now() - lastInputAt < hold) && typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true);
+      if ((hold <= 0 || Date.now() - lastInputAt < hold) && typeof e5 !== 'undefined' && e5.keepAwake) e5.keepAwake(true);
     } catch(e) {}
   }, 2000);
   window.addEventListener('touchstart', function() { lastInputAt = Date.now(); }, { passive: true, capture: true });
@@ -225,8 +232,16 @@ html, body { width: 100%; height: 100%; background: #000; overflow: hidden; font
     if (e.repeat) return;
     lastInputAt = Date.now();
     if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
-      powerAllowUntil = Date.now() + 2500;
-      try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+      var nowP = Date.now();
+      if (nowP - lastPowerPressAt < 1200) {
+        powerAllowUntil = nowP + 2500;
+        try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('正在锁屏'); } catch(x) {}
+        lastPowerPressAt = 0;
+      } else {
+        lastPowerPressAt = nowP;
+        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('再按一次电源键锁屏'); } catch(x) {}
+      }
     }
     if (e.key === 'Backspace' || e.key === 'BrowserBack' || e.keyCode === 8 || e.keyCode === 166) {
       if (Date.now() < backGuardUntil) { e.preventDefault(); return; }

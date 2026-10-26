@@ -1668,11 +1668,19 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   /* 播放期间不让宿主熄屏/锁屏：宿主锁屏会 closeApp()，而 keep-awake
      在应用被关过之后就不再被接受。这里直接拦住宿主的熄屏调用，
      2.5 秒有效期、每 2 秒续期；页面销毁后自动失效。 */
-  var hostNoSleepWanted = false, powerAllowUntil = 0;
+  var hostNoSleepWanted = false, powerAllowUntil = 0, lastPowerPressAt = 0;
   window.addEventListener('keydown', function(e){
     if (e.key === 'Power' || e.key === 'PowerOff' || e.key === 'Standby' || e.key === 'Sleep' || e.keyCode === 116) {
-      powerAllowUntil = Date.now() + 2500;
-      try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+      var nowP = Date.now();
+      if (nowP - lastPowerPressAt < 1200) {
+        powerAllowUntil = nowP + 2500;
+        try { var w = window.parent; if (w && w.__e5NoSleep) w.__e5NoSleep.allowUntil = powerAllowUntil; } catch(x) {}
+        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('正在锁屏'); } catch(x) {}
+        lastPowerPressAt = 0;
+      } else {
+        lastPowerPressAt = nowP;
+        try { if (typeof e5 !== 'undefined' && e5.toast) e5.toast('再按一次电源键锁屏'); } catch(x) {}
+      }
     }
   }, true);
   function hostNoSleep(on){
