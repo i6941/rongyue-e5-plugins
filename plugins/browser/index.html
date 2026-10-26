@@ -376,9 +376,9 @@ p{margin:0 0 9px;word-wrap:break-word}
         var st = d.createElement('style');
         st.id = 'e5-browser-chrome';
         st.textContent = 'body.' + HOST_CLASS + ' #mobile-toolbar,body.' + HOST_CLASS +
-          ' #mobile-nav{display:none!important}' +
-          'body.' + HOST_CLASS + ' #app-frame{top:var(--status-h);bottom:0;' +
-          'height:calc(100% - var(--status-h))!important}';
+          ' #mobile-nav,body.' + HOST_CLASS + ' #bar{display:none!important}' +
+          'body.' + HOST_CLASS + ' #app-frame{top:0;bottom:0;' +
+          'height:100%!important}';
         d.head.appendChild(st);
         hostStyleInjected = true;
       }
