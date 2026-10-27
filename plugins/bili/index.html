@@ -2302,7 +2302,7 @@ body.rot-land #comments-drawer{width:480px;height:320px;left:50%;top:50%;transfo
   hostKeyForward();
   /* 插件自己的页面已经占满屏，宿主底部菜单不要出现：
      打开插件就隐藏，只有退出插件时才还回去（原来只在播放器里隐藏） */
-  setInterval(function(){ hostChrome(true); }, 1000);
+  setInterval(function(){ hostChrome(true); }, 3000);
   /* 1.2 秒没有新帧就显示缓冲中（快进到未下载区域、或下载跟不上时会这样） */
   setInterval(function(){
     if (!inPlayer || !lastFrameAt) return;

@@ -695,9 +695,13 @@ var sel=0, cells=[], flatList=[], tabSys='ALL', backTimer=0, simCalls=0, lastSav
    宿主关页面、屏幕熄灭挂起、恢复），随遥测一起上报，真机复现时不用猜。 */
 var exitLog=[];
 var bootAt=new Date().toISOString(), hostMsgs=[], hostKeys=[], hostTrace=[];
-/* 宿主状态轨迹：每 500ms 记一条，宿主 body 类/iframe 可见性变化时也立刻记一条。
-   真机上如果游戏"消失"，这条轨迹能指出是锁屏、翻页还是错点电源键。 */
+/* 宿主状态轨迹：只用于事后排查"游戏为什么消失"。
+   排查期曾每 500ms 采一次（要读宿主 getComputedStyle，会强制样式重算），
+   徒增功耗；现在默认关闭，只有地址带 ?diag=1 时才启用。 */
+var DIAG = false;
+try{ DIAG = new URLSearchParams(location.search).get('diag') === '1'; }catch(e){}
 function traceHost(tag){
+  if(!DIAG) return;
   try{
     var ts=hostSnap();
     hostTrace.push({t:Date.now()%1000000, tag:tag||'', b:(ts&&ts.body)||'', fh:(ts&&ts.frameHidden),
@@ -705,9 +709,10 @@ function traceHost(tag){
     if(hostTrace.length>60) hostTrace.shift();
   }catch(e){}
 }
-setInterval(function(){ traceHost(''); },500);
+if(DIAG) setInterval(function(){ traceHost(''); },1000);
 /* 锁屏守卫：宿主给了 screen-locked 类就暂停核心（否则锁屏界面后还在出声、白烧 CPU），
-   解锁后自动恢复同一局。配合上面 closeApp 的拦截，"熄屏/锁屏"不再等于"游戏没了"。 */
+   解锁后自动恢复同一局。配合上面 closeApp 的拦截，"熄屏/锁屏"不再等于"游戏没了"。
+   只在挂起前后各查一次，不需要高频轮询。 */
 var lockSusp=false;
 function lockGuard(){
   try{
@@ -720,7 +725,7 @@ function lockGuard(){
     }
   }catch(e){}
 }
-setInterval(lockGuard,500);
+setInterval(lockGuard,2000);
 /* 自测入口：
    ?locktest=1 调宿主 T551M.power(true) 走真实锁屏；
    ?locktest=2 用同名 lock() 包一层调 closeApp，验证"锁屏关应用"被拦下；
@@ -2453,7 +2458,7 @@ setInterval(function(){
     susp.ticks=0;
     if(susp.on) nativeResume();
   }
-  if(running&&nativeWanted(current)){ nativeTick(); post(); if(shotWant&&phase==='running'){ shotTick++; if(shotTick%5===0) shotUpload(); } return; }
+  if(running&&nativeWanted(current)){ nativeTick(); tickPost(); if(shotWant&&phase==='running'){ shotTick++; if(shotTick%5===0) shotUpload(); } return; }
   if(running){
     fit();
     applyKeymap();
@@ -2481,7 +2486,9 @@ setInterval(function(){
     /* 加载阶段把进度显示在顶部条的分辨率位置（核心编译慢，让用户知道在等什么） */
     if(phase==='loading'){ $('status').textContent='加载核心 '+current.core+' … '+Math.round((Date.now()-t0)/1000)+'s'; }
     if(phase!=='running') $('tres').textContent=$('status').textContent;
-    hostChrome(true);   /* 宿主可能因来电等重排过 body，每秒补一次 */
+    /* 宿主可能因来电等重排过 body，补一次隐藏类；3 秒一次足够，
+       每秒做会频繁触碰宿主 DOM（强制样式重算）。 */
+    if(postTick%3===0) hostChrome(true);
     if(shotWant && phase==='running') shotUpload();
     if(phase!=='running'&&window.__fps>0){ phase='running'; marks.firstFrame=Date.now()-t0;
       $('status').textContent='运行中 · '+current.sys+' '+current.n; focusCanvas();
@@ -2493,7 +2500,7 @@ setInterval(function(){
       $('status').textContent='没有开始出帧 · 页面'+(s2.hidden?'不可见':'可见')+' · 画布'+(s2.canvas||'?')+' · 帧'+(s2.frame===undefined?'?':s2.frame);
     }
   }
-  post();
+  tickPost();
 },1000);
 
 function statTag(){ try{ var qp=new URLSearchParams(location.search); var t=qp.get('tag')||qp.get('t'); return t||'ui'; }catch(e){ return 'ui'; } }
@@ -2564,6 +2571,17 @@ function shotUpload(){
   }catch(e){ shotState=3; logs.push('shot 出错 '+e); }
 }
 var shotIdx=0;
+/* 遥测不要每秒写盘：平时每 10 秒一次，且只在页面可见时发；?diag=1 才回到每秒。
+   （每秒 POST 会让 CPU 频繁唤醒，还一直往 /tmp 写文件。） */
+var postTick=0;
+function tickPost(){
+  postTick++;
+  if(!DIAG){
+    if(postTick%10!==0) return;
+    try{ if(document.hidden) return; }catch(e){}
+  }
+  post();
+}
 function post(){
   try{
     if(typeof e5!=='undefined'&&e5.api){
