@@ -188,6 +188,64 @@ def summarize_groups(path, column="phase"):
     return 0
 
 
+def summarize_autosuspend(path, start_cap=None, end_cap=None, battery_mah=None):
+    """分析 e5-autosuspend 的日志：睡眠时长、占空比，并按电量变化反推平均电流。"""
+    import re
+    from datetime import datetime as _dt
+
+    lines = [l for l in open(path, encoding="utf-8", errors="replace").read().splitlines() if l.strip()]
+    susp, resumed, blocked = [], [], []
+    for line in lines:
+        if len(line) < 19:
+            continue
+        try:
+            ts = _dt.strptime(line[:19], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+        if "suspend: arming" in line:
+            susp.append(ts)
+        elif "resumed after" in line:
+            m = re.search(r"after (\d+)s", line)
+            if m:
+                resumed.append((ts, int(m.group(1))))
+        elif "blocked:" in line:
+            blocked.append((ts, line.split("blocked:", 1)[1].strip()))
+
+    total_sleep = sum(s for _, s in resumed)
+    print(f"日志 {len(lines)} 行：挂起尝试 {len(susp)} 次，成功返回 {len(resumed)} 次")
+    if resumed:
+        first = susp[0] if susp else resumed[0][0]
+        span = (resumed[-1][0] - first).total_seconds()
+        if span > 0:
+            print(f"覆盖 {span / 3600:.1f} 小时，累计睡眠 {total_sleep / 3600:.1f} 小时"
+                  f"（占空比 {100 * total_sleep / span:.0f}%）")
+        durations = [s for _, s in resumed]
+        short = [s for s in durations if s < 540]
+        print(f"单次睡眠：中位 {statistics.median(durations):.0f}s，"
+              f"最短 {min(durations)}s，最长 {max(durations)}s，短于 540s 的 {len(short)} 次")
+        if blocked:
+            counts = {}
+            for _, reason in blocked:
+                counts[reason] = counts.get(reason, 0) + 1
+            top = sorted(counts.items(), key=lambda kv: -kv[1])[:5]
+            print("被挡下的原因：" + "，".join(f"{k}×{v}" for k, v in top))
+
+        if start_cap is not None and end_cap is not None and span > 0:
+            drop = start_cap - end_cap
+            per_hour = drop / (span / 3600)
+            print(f"电量 {start_cap}% → {end_cap}%：掉 {drop}%，即 {per_hour:.2f}%/小时")
+            if battery_mah:
+                avg_ma = per_hour / 100 * battery_mah
+                print(f"按 {battery_mah}mAh 电池折算，全程平均 {avg_ma:.0f}mA")
+                awake = total_sleep and (span - total_sleep)
+                if awake:
+                    # 设睡眠电流 x，醒着 86mA：avg = duty*x + (1-duty)*86
+                    duty = total_sleep / span
+                    x = (avg_ma - (1 - duty) * 86) / duty
+                    print(f"推算睡眠电流约 {x:.0f}mA（醒着按 86mA 计，睡眠占空比 {100 * duty:.0f}%）")
+    return 0
+
+
 def _fix_console():
     """终端里用本地代码页（Windows 中文版是 GBK）才不乱码；
     输出被重定向/管道接走时，调用方通常按 UTF-8 解码，就发 UTF-8。"""
@@ -201,11 +259,20 @@ def _fix_console():
 def main(argv):
     _fix_console()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("csv", help="power-log.csv 路径")
+    ap.add_argument("csv", nargs="?", help="power-log.csv 路径")
     ap.add_argument("--json", help="把结果另存为 JSON")
     ap.add_argument("--group", metavar="列名",
                     help="按这列分组对比（A/B 实验用，例如 --group phase）")
+    ap.add_argument("--suspend-log", metavar="文件",
+                    help="分析 e5-autosuspend 日志：睡眠时长、占空比、按电量反推平均电流")
+    ap.add_argument("--start-cap", type=float, help="配合 --suspend-log：起始电量百分比")
+    ap.add_argument("--end-cap", type=float, help="配合 --suspend-log：结束电量百分比")
+    ap.add_argument("--battery-mah", type=float, default=3082,
+                    help="配合 --suspend-log：电池容量 mAh（默认 3082，本机实测值）")
     args = ap.parse_args(argv)
+
+    if args.suspend_log:
+        return summarize_autosuspend(args.suspend_log, args.start_cap, args.end_cap, args.battery_mah)
 
     if args.group:
         return summarize_groups(args.csv, args.group)
